@@ -39,9 +39,6 @@ def load_torch_ckpt(ckpt_path_list):
 
 
 def convert_pt_name_to_ms(content: str) -> str:
-    content = content.replace(".qkv.", ".to_qkv.")
-    content = content.replace(".q_linear.", ".to_q.")
-    content = content.replace(".kv_linear.", ".to_kv.")
     return content
 
 
@@ -53,8 +50,6 @@ def torch_to_ms_weight(source_fp, target_fp):
         source_data = source_data["state_dict"]
     target_data = []
     for _name_pt in tqdm(source_data, total=len(source_data)):
-        if _name_pt == "pos_embed":
-            continue
         _name_ms = convert_pt_name_to_ms(_name_pt)
         _source_data = source_data[_name_pt].cpu().detach().numpy()
         target_data.append({"name": _name_ms, "data": ms.Tensor(_source_data)})

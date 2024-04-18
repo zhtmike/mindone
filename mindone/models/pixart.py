@@ -23,7 +23,7 @@ def get_2d_sincos_pos_embed(
 ) -> np.ndarray:
     nw = nh if nw is None else nw
     grid_h = np.arange(nh, dtype=np.float32) / (nh / base_size) / lewei_scale
-    grid_w = np.arange(nw, dtype=np.float32) / (nh / base_size) / lewei_scale
+    grid_w = np.arange(nw, dtype=np.float32) / (nw / base_size) / lewei_scale
     grid = np.meshgrid(grid_w, grid_h)  # here w goes first
     grid = np.stack(grid, axis=0)
 
@@ -96,22 +96,13 @@ class SizeEmbedder(TimestepEmbedder):
             nn.Dense(hidden_size, hidden_size, has_bias=True),
         )
         self.frequency_embedding_size = frequency_embedding_size
-        self.outdim = hidden_size
 
     def construct(self, s: Tensor, bs: int) -> Tensor:
-        if s.ndim == 1:
-            s = s[:, None]
-        assert s.ndim == 2
-
-        if s.shape[0] != bs:
-            s = s.repeat(bs // s.shape[0], 0)
-            assert s.shape[0] == bs
-
-        b = s.shape[0]
+        assert s.shape[0] == bs
         s = ops.reshape(s, (-1,))
         s_freq = self.timestep_embedding(s, self.frequency_embedding_size)
         s_emb = self.mlp(s_freq)
-        s_emb = ops.reshape(s_emb, (b, -1))
+        s_emb = ops.reshape(s_emb, (bs, -1))
         return s_emb
 
 
@@ -153,7 +144,7 @@ class SelfAttention(nn.Cell):
         self.num_heads = num_heads
         head_dim = dim // num_heads
 
-        self.to_qkv = nn.Dense(dim, dim * 3, has_bias=qkv_bias)
+        self.qkv = nn.Dense(dim, dim * 3, has_bias=qkv_bias)
         self.proj = nn.Dense(dim, dim)
         self.proj_drop = nn.Dropout(p=proj_drop)
         self.attention = Attention(head_dim, attn_drop=attn_drop)
@@ -171,7 +162,7 @@ class SelfAttention(nn.Cell):
         B, N, _ = x.shape
 
         # (b, n, 3*h*d) -> (b, n, 3, h*d)  -> (3, b, n, h*d)
-        qkv = self.to_qkv(x).reshape(B, N, 3, h, -1).permute((2, 0, 3, 1, 4))
+        qkv = self.qkv(x).reshape(B, N, 3, h, -1).permute((2, 0, 3, 1, 4))
         q, k, v = qkv.unbind(0)
 
         out = self.attention(q, k, v, mask=mask)
@@ -200,8 +191,8 @@ class CrossAttention(nn.Cell):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
 
-        self.to_q = nn.Dense(dim, dim, has_bias=qkv_bias)
-        self.to_kv = nn.Dense(dim, 2 * dim, has_bias=qkv_bias)
+        self.q_linear = nn.Dense(dim, dim, has_bias=qkv_bias)
+        self.kv_linear = nn.Dense(dim, 2 * dim, has_bias=qkv_bias)
         self.attn_drop = nn.Dropout(p=attn_drop)
         self.proj = nn.Dense(dim, dim)
         self.proj_drop = nn.Dropout(p=proj_drop)
@@ -219,8 +210,8 @@ class CrossAttention(nn.Cell):
         h = self.num_heads
         B, N, _ = x.shape
 
-        q = self.to_q(x).reshape(B, N, h, self.head_dim).permute((0, 2, 1, 3))
-        kv = self.to_kv(cond).reshape(B, -1, 2, h, self.head_dim).permute((2, 0, 3, 1, 4))
+        q = self.q_linear(x).reshape(B, N, h, self.head_dim).permute((0, 2, 1, 3))
+        kv = self.kv_linear(cond).reshape(B, -1, 2, h, self.head_dim).permute((2, 0, 3, 1, 4))
         k, v = kv.unbind(0)
 
         out = self.attention(q, k, v, mask=mask)
@@ -530,8 +521,8 @@ class PixArtMS(PixArt):
         t: (N,) tensor of diffusion timesteps
         y: (N, L, C') tensor of text embeddings
         pos_embed: (N, L') or (1, L') tensor of positional embedding
-        csize: (N,) tensor of size
-        ar: (N,) tensor of aspect ratio
+        csize: (N, 2) tensor of size
+        ar: (N, 1) tensor of aspect ratio
         mask_y: (N, L) tensor of text mask
         """
         n, _, h, w = x.shape

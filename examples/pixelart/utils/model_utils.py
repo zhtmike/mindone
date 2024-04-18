@@ -26,11 +26,12 @@ def load_ckpt_params(model, ckpt):
         param_dict = ckpt
 
     param_not_load, ckpt_not_load = ms.load_param_into_net(model, param_dict)
-    assert (
-        len(param_not_load) == len(ckpt_not_load) == 0
-    ), "Exist ckpt params not loaded: {} (total: {})\nor net params not loaded: {} (total: {})".format(
-        ckpt_not_load, len(ckpt_not_load), param_not_load, len(param_not_load)
-    )
+    if not (len(param_not_load) == len(ckpt_not_load) == 0):
+        logger.warning(
+            "Exist ckpt params not loaded: {} (total: {}), or net params not loaded: {} (total: {})".format(
+                ckpt_not_load, len(ckpt_not_load), param_not_load, len(param_not_load)
+            )
+        )
     return model
 
 

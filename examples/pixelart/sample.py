@@ -12,7 +12,7 @@ from dataset import ASPECT_RATIO_256_BIN, ASPECT_RATIO_512_BIN, ASPECT_RATIO_102
 from dataset.utils import classify_height_width_bin
 from PIL import Image
 from utils.model_utils import check_cfgs_in_parser, count_params, load_ckpt_params, remove_pname_prefix, str2bool
-from utils.plot import image_grid
+from utils.plot import image_grid, resize_and_crop_tensor
 
 import mindspore as ms
 from mindspore import ops
@@ -272,6 +272,9 @@ if __name__ == "__main__":
 
     x_samples = np.concatenate(x_samples, axis=0)
     end_time = time.time()
+
+    if args.use_resolution_binning:
+        x_samples = resize_and_crop_tensor(x_samples, orig_width, orig_height)
 
     # save result
     if not args.imagegrid:
