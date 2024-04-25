@@ -10,6 +10,8 @@ from opensora.models.layers.blocks import (
     MultiHeadCrossAttention,
     PatchEmbed,
     SelfAttention,
+    SeqParallelMultiHeadCrossAttention,
+    SeqParallelSelfAttention,
     approx_gelu,
     t2i_modulate,
 )
@@ -34,14 +36,18 @@ class STDiTBlock(nn.Cell):
         enable_flashattn=False,
         enable_layernorm_kernel=False,
         enable_sequence_parallelism=False,
+        parallel_config={},
     ):
         super().__init__()
         self.hidden_size = hidden_size
         assert not enable_layernorm_kernel, "Not implemented"
-        assert not enable_sequence_parallelism, "Not implemented"
 
-        self.attn_cls = SelfAttention
-        self.mha_cls = MultiHeadCrossAttention
+        if enable_sequence_parallelism:
+            self.attn_cls = SeqParallelSelfAttention
+            self.mha_cls = SeqParallelMultiHeadCrossAttention
+        else:
+            self.attn_cls = SelfAttention
+            self.mha_cls = MultiHeadCrossAttention
 
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
 
@@ -50,8 +56,11 @@ class STDiTBlock(nn.Cell):
             num_heads=num_heads,
             qkv_bias=True,
             enable_flash_attention=enable_flashattn,
+            parallel_config=parallel_config,
         )
-        self.cross_attn = self.mha_cls(hidden_size, num_heads, enable_flash_attention=enable_flashattn)
+        self.cross_attn = self.mha_cls(
+            hidden_size, num_heads, enable_flash_attention=enable_flashattn, parallel_config=parallel_config
+        )
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
 
         self.mlp = Mlp(
@@ -69,6 +78,7 @@ class STDiTBlock(nn.Cell):
             num_heads=num_heads,
             qkv_bias=True,
             enable_flash_attention=enable_flashattn,
+            parallel_config=parallel_config,
         )
 
     @staticmethod
@@ -275,6 +285,7 @@ class CaptionEmbedder(nn.Cell):
     """
     Embeds class labels into vector representations. Also handles label dropout for classifier-free guidance.
     """
+
     # optim parallel adapt
     # def __init__(self, in_channels, hidden_size, uncond_prob, act_layer=nn.GELU(approximate=True), token_num=120):
     def __init__(self, in_channels, hidden_size, uncond_prob, act_layer=None, token_num=120):
@@ -301,15 +312,17 @@ class CaptionEmbedder(nn.Cell):
         else:
             drop_ids = force_drop_ids == 1
 
-        caption = ops.where(drop_ids[:, None, None, None], self.y_embedding, caption.to(self.y_embedding.dtype))
+        drop_ids = ops.broadcast_to(drop_ids[:, None, None, None], self.y_embedding.shape)
+        caption = ops.where(drop_ids, self.y_embedding, caption.to(self.y_embedding.dtype))
         return caption
 
     def construct(self, caption, train, force_drop_ids=None):
         if train:
             assert caption.shape[2:] == self.y_embedding.shape
-        use_dropout = self.uncond_prob > 0
-        if (train and use_dropout) or (force_drop_ids is not None):
-            caption = self.token_drop(caption, force_drop_ids)
+        # TODO: fix token drop
+        # use_dropout = self.uncond_prob > 0
+        # if (train and use_dropout) or (force_drop_ids is not None):
+        #     caption = self.token_drop(caption, force_drop_ids)
         caption = self.y_proj(caption)
         return caption
 
@@ -358,6 +371,7 @@ class STDiT(nn.Cell):
         enable_sequence_parallelism=False,
         use_recompute=False,
         patchify_conv3d_replace=None,
+        parallel_config={},
     ):
         super().__init__()
         self.pred_sigma = pred_sigma
@@ -425,6 +439,7 @@ class STDiT(nn.Cell):
                     enable_sequence_parallelism=enable_sequence_parallelism,
                     d_t=self.num_temporal,
                     d_s=self.num_spatial,
+                    parallel_config=parallel_config,
                 )
                 for i in range(self.depth)
             ]
@@ -523,6 +538,7 @@ class STDiT(nn.Cell):
         x = x.astype(ms.float32)
         return x
 
+    @ms.jit
     def construct_with_cfg(self, x, t, y, mask=None, cfg_scale=4.0):
         """
         Forward pass of DiT, but also batches the unconditional forward pass for classifier-free guidance.
@@ -612,13 +628,11 @@ class STDiT(nn.Cell):
         # w = self.x_embedder.proj.weight
         # w_flatted = w.reshape(w.shape[0], -1)
         # w.set_data(initializer(XavierUniform(), w_flatted.shape, w_flatted.dtype).reshape(w.shape))
-        
+
         # optim paralllel adapt. FIXME: the adapt changes the init value!!! need fix.
         w = self.x_embedder.proj.weight.init_data()
-        w_flatted = w.reshape(w.shape[0], -1)
+        # w_flatted = w.reshape(w.shape[0], -1)
         w.set_data(initializer(XavierUniform(), w.shape, w.dtype).init_data())
-
-
 
         # Initialize timestep embedding MLP:
         normal_(self.t_embedder.mlp[0].weight, std=0.02)

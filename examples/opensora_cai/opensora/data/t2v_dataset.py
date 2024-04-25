@@ -285,7 +285,7 @@ class TextVideoDataset:
             else:
                 raise ValueError("tokenizer must be provided to generate text mask if text embeddings are not cached.")
 
-        return pixel_values, text_data, mask.astype(np.uint8)
+        return pixel_values, text_data, mask.astype(np.int8)
 
 
 def create_dataloader(

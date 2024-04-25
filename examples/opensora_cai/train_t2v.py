@@ -22,7 +22,7 @@ sys.path.insert(0, mindone_lib_path)
 from opensora.data.t2v_dataset import create_dataloader
 from opensora.diffusion import create_diffusion
 from opensora.models.autoencoder import SD_CONFIG, AutoencoderKL
-from opensora.models.layers.blocks import Attention, LayerNorm
+from opensora.models.layers.blocks import Attention, LayerNorm, SeqParallelAttention
 from opensora.models.stdit import STDiT_XL_2
 from opensora.pipelines import DiffusionWithLoss
 
@@ -75,20 +75,30 @@ def init_env(
             # optim paralel adapt. TODO: cannot set precision_mode in optim parallel mode??
             # ascend_config={"precision_mode": "must_keep_origin_dtype"},  # TODO: tune
         )
-        if enable_dvm: 
+        if enable_dvm:
             print("D--: enable dvm")
             ms.set_context(enable_graph_kernel=True)
 
-        if parallel_mode == "optim":
-            print("D--: use optim parallel")
-            ms.set_auto_parallel_context(
-                parallel_mode=ms.ParallelMode.SEMI_AUTO_PARALLEL,
-                enable_parallel_optimizer=True,
-            )
+        if parallel_mode == "semi":
             init()
             device_num = get_group_size()
             rank_id = get_rank()
-        else:
+            logger.debug(f"rank_id: {rank_id}, device_num: {device_num}")
+
+            ms.set_auto_parallel_context(
+                parallel_mode=ms.ParallelMode.SEMI_AUTO_PARALLEL,
+                gradients_mean=False,
+                enable_parallel_optimizer=True,
+                enable_alltoall=True,
+                device_num=device_num,
+                dataset_strategy=(
+                    (args.data_parallel, 1, 1, 1, 1),  # video or latent
+                    (args.data_parallel, 1, 1),  # text embed
+                    (args.data_parallel, 1),  # text mask
+                ),
+            )
+
+        elif parallel_mode == "data":
             init()
             device_num = get_group_size()
             rank_id = get_rank()
@@ -117,21 +127,47 @@ def init_env(
     return rank_id, device_num
 
 
+def check_sequence_parallel_condition(args, device_num):
+    if not args.use_parallel:
+        raise ValueError("Sequence parallelism can only be used in paralle mode.")
+
+    total_nprocs = args.data_parallel * args.model_parallel * args.sequence_parallel
+    if total_nprocs != device_num:
+        raise ValueError(
+            "The product of data parallel, model parallel and sequence parallel must be equal to the number fo devices, "
+            f"but get `{args.data_parallel}, {args.model_parallel}, {args.sequence_parallel}` and `{device_num}` respectively."
+        )
+    if args.enable_flash_attention:
+        if args.model_parallel < 3:
+            raise ValueError(
+                "Model parallel much be larger than 2, such that for BSH mode, the sharding along hidden size can be less thatn 512."
+            )
+
+        if args.model_parallel % 4 != 0:
+            raise ValueError(
+                "Model parallel much be be divisible by 4, such that for BSH mode, the sharding along hidden size can be divisible thatn 16."
+            )
+
+
 def main(args):
     time_str = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     args.output_path = os.path.join(args.output_path, time_str)
 
     # 1. init
+    parallel_mode = "semi" if args.enable_sequence_parallelism else args.parallel_mode
     rank_id, device_num = init_env(
         args.mode,
         seed=args.seed,
         distributed=args.use_parallel,
         device_target=args.device_target,
         max_device_memory=args.max_device_memory,
-        parallel_mode=args.parallel_mode,
+        parallel_mode=parallel_mode,
         enable_dvm=args.enable_dvm,
     )
     set_logger(name="", output_dir=args.output_path, rank=rank_id, log_level=eval(args.log_level))
+
+    if args.enable_sequence_parallelism:
+        check_sequence_parallel_condition(args, device_num)
 
     # 2. model initiate and weight loading
     # 2.1 stdit
@@ -150,6 +186,12 @@ def main(args):
         time_scale=args.time_scale,
         patchify_conv3d_replace="conv2d",  # for Ascend
         enable_flashattn=args.enable_flash_attention,
+        enable_sequence_parallelism=args.enable_sequence_parallelism,
+        parallel_config=dict(
+            data_parallel=args.data_parallel,
+            model_parallel=args.model_parallel,
+            sequence_parallel=args.sequence_parallel,
+        ),
         use_recompute=args.use_recompute,
     )
     logger.info(f"STDiT input size: {input_size}")
@@ -164,7 +206,13 @@ def main(args):
             latte_model,
             amp_level="O2",
             dtype=model_dtype,
-            custom_fp32_cells=[LayerNorm, Attention], #, nn.SiLU], TODO: tmp remove for testing max frames
+            custom_fp32_cells=[
+                LayerNorm,
+                Attention,
+                SeqParallelAttention,
+                nn.SiLU,
+                nn.GELU,
+            ],
         )
     # load checkpoint
     if len(args.pretrained_model_path) > 0:
@@ -201,6 +249,11 @@ def main(args):
         video_emb_cached=False,
     )
 
+    if parallel_mode == "semi":
+        for param in latent_diffusion_with_loss.get_parameters():
+            if len(param.data.shape) == 1:
+                param.parallel_optimizer = False
+
     # 3. create dataset
     ds_config = dict(
         csv_path=args.csv_path,
@@ -215,9 +268,29 @@ def main(args):
         caption_column=args.caption_column,
         disable_flip=args.disable_flip,
     )
-    dataset = create_dataloader(
-        ds_config, batch_size=args.batch_size, shuffle=True, device_num=device_num, rank_id=rank_id, num_parallel_workers=args.num_parallel_workers,
-    )
+
+    if args.enable_sequence_parallelism:
+        group = rank_id // (device_num // args.data_parallel)
+        print(
+            f"Creating dataloader: ID={rank_id}, group={group}, num_groups={args.data_parallel}, global_bs={args.batch_size * args.data_parallel}."
+        )
+        dataset = create_dataloader(
+            ds_config,
+            batch_size=args.batch_size,
+            shuffle=True,
+            device_num=args.data_parallel,
+            rank_id=group,
+            num_parallel_workers=args.num_parallel_workers,
+        )
+    else:
+        dataset = create_dataloader(
+            ds_config,
+            batch_size=args.batch_size,
+            shuffle=True,
+            device_num=device_num,
+            rank_id=rank_id,
+            num_parallel_workers=args.num_parallel_workers,
+        )
     dataset_size = dataset.get_dataset_size()
 
     # 4. build training utils: lr, optim, callbacks, trainer
