@@ -155,13 +155,13 @@ def parse_train_args(parser):
     )
     parser.add_argument(
         "--enable_flash_attention",
-        default=None,
+        default=False,
         type=str2bool,
         help="whether to enable flash attention.",
     )
     parser.add_argument(
         "--enable_sequence_parallelism",
-        default=None,
+        default=False,
         type=str2bool,
         help="whether to enable sequence parallelism.",
     )

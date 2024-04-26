@@ -253,6 +253,7 @@ def main(args):
         video_emb_cached=train_with_vae_latent,
     )
 
+    # do not perform optimizer parallel for one-dim tensor
     if parallel_mode == "semi":
         for param in latent_diffusion_with_loss.get_parameters():
             if len(param.data.shape) == 1:
@@ -281,6 +282,8 @@ def main(args):
         print(
             f"Creating dataloader: ID={rank_id}, group={group}, num_groups={args.data_parallel}, global_bs={args.batch_size * args.data_parallel}."
         )
+
+        # given N cards and data parallel = dp, make sure that data are same for ID (0, ... ,dp), (dp+1, ... 2*dp), ..., (N-dp, ..., N-1)
         dataset = create_dataloader(
             ds_config,
             batch_size=args.batch_size,
