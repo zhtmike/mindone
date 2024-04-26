@@ -149,7 +149,7 @@ def check_sequence_parallel_condition(args, device_num):
         )
     if args.enable_flash_attention:
         if args.model_parallel > 12:
-            raise ValueError(f"Model parallel ({args.model_parallel}) can not be largert than the number of heads (12)")
+            raise ValueError(f"Model parallel ({args.model_parallel}) can not be larger than the number of heads (12)")
 
 
 def main(args):
