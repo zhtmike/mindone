@@ -52,6 +52,7 @@ def init_env(
     parallel_mode: str = "data",
     enable_dvm: bool = False,
     data_parallel: int = 1,
+    use_sequence_parallel: bool = False,
 ) -> Tuple[int, int, int]:
     """
     Initialize MindSpore environment.
@@ -82,18 +83,26 @@ def init_env(
             rank_id = get_rank()
             logger.debug(f"rank_id: {rank_id}, device_num: {device_num}")
 
-            ms.set_auto_parallel_context(
-                parallel_mode=ms.ParallelMode.SEMI_AUTO_PARALLEL,
-                gradients_mean=False,
-                enable_parallel_optimizer=True,
-                enable_alltoall=True,
-                device_num=device_num,
-                dataset_strategy=(
-                    (data_parallel, 1, 1, 1, 1),  # video or latent
-                    (data_parallel, 1, 1),  # text embed
-                    (data_parallel, 1),  # text mask
-                ),
-            )
+            if use_sequence_parallel:
+                ms.set_auto_parallel_context(
+                    parallel_mode=ms.ParallelMode.SEMI_AUTO_PARALLEL,
+                    gradients_mean=False,
+                    enable_parallel_optimizer=True,
+                    enable_alltoall=True,
+                    device_num=device_num,
+                    dataset_strategy=(
+                        (data_parallel, 1, 1, 1, 1),  # video or latent
+                        (data_parallel, 1, 1),  # text embed
+                        (data_parallel, 1),  # text mask
+                    ),
+                )
+            else:
+                ms.set_auto_parallel_context(
+                    parallel_mode=ms.ParallelMode.SEMI_AUTO_PARALLEL,
+                    gradients_mean=False,
+                    enable_parallel_optimizer=True,
+                    device_num=device_num,
+                )
 
         elif parallel_mode == "data":
             init()
@@ -158,6 +167,7 @@ def main(args):
         parallel_mode=parallel_mode,
         enable_dvm=args.enable_dvm,
         data_parallel=args.data_parallel,
+        use_sequence_parallel=args.enable_sequence_parallelism,
     )
     set_logger(name="", output_dir=args.output_path, rank=rank_id, log_level=eval(args.log_level))
 
@@ -242,6 +252,11 @@ def main(args):
         text_emb_cached=True,
         video_emb_cached=train_with_vae_latent,
     )
+
+    if parallel_mode == "semi":
+        for param in latent_diffusion_with_loss.get_parameters():
+            if len(param.data.shape) == 1:
+                param.parallel_optimizer = False
 
     # 3. create dataset
     ds_config = dict(
