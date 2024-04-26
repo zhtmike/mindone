@@ -374,7 +374,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
             x = self.transpose_a2a(x, (0, 1, 3, 2, 4))
             x = self.transpose(x, (0, 1, 2, 3, 4))
         x = ops.reshape(x, (b, n, h, -1))
-        x = self.pad(x, ((0, 0), (0, 0), (0, 0), (0, 8)))
+        x = self.pad(x, (0, 0, 0, 8), 0)
         x = ops.reshape(x, (b, n, -1))
         return x
 
@@ -635,7 +635,7 @@ class SeqParallelSelfAttention(nn.Cell):
             x = self.transpose_a2a(x, (0, 1, 3, 2, 4))
             x = self.transpose(x, (0, 1, 2, 3, 4))
         x = ops.reshape(x, (b, n, h, -1))
-        x = self.pad(x, ((0, 0), (0, 0), (0, 0), (0, 8)))
+        x = self.pad(x, (0, 0, 0, 8), 0)
         x = ops.reshape(x, (b, n, -1))
         return x
 
