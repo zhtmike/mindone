@@ -624,7 +624,7 @@ class STDiT(nn.Cell):
 
         # Initialize patch_embed like nn.Linear (instead of nn.Conv2d):
         # xavier_uniform_(w.view([w.shape[0], -1]))
-        w = self.x_embedder.proj.weight
+        w = self.x_embedder.proj.weight.init_data()
         # w_flatted = w.reshape(w.shape[0], -1)
         # FIXME: incompatible in optim parallel mode
         # FIXME: impl in torch can be incorrect. can be reshape order mismatch
