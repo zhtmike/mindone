@@ -283,7 +283,7 @@ def main(args):
             f"Creating dataloader: ID={rank_id}, group={group}, num_groups={args.data_parallel}, global_bs={args.batch_size * args.data_parallel}."
         )
 
-        # given N cards and data parallel = dp, make sure that data are same for ID (0, ... ,dp), (dp+1, ... 2*dp), ..., (N-dp, ..., N-1)
+        # given N cards and data parallel = dp, make sure that data are same for ID (0, ..., dp-1), (dp, ..., 2*dp-1), ..., (N-dp, ..., N-1)
         dataset = create_dataloader(
             ds_config,
             batch_size=args.batch_size,
