@@ -546,6 +546,9 @@ class SelfAttention(nn.Cell):
         qkv = ops.reshape(qkv, (B, N, 3, self.num_heads, self.head_dim))
         # q, k, v = ops.unstack(qkv, axis=2)  # (b n h d)
         q, k, v = ops.split(qkv, 1, axis=2)
+        q = ops.reshape(q, (B, self.num_heads, N, self.head_dim))
+        k = ops.reshape(k, (B, self.num_heads, N, self.head_dim))
+        v = ops.reshape(v, (B, self.num_heads, N, self.head_dim))
 
         # (b n h d) -> (b h n d)
         q = q.transpose(0, 2, 1, 3)
