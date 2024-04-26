@@ -41,7 +41,6 @@ class STDiTBlock(nn.Cell):
         super().__init__()
         self.hidden_size = hidden_size
         assert not enable_layernorm_kernel, "Not implemented"
-        assert not enable_sequence_parallelism, "Not implemented"
 
         if enable_sequence_parallelism:
             self.attn_cls = SeqParallelSelfAttention
