@@ -138,11 +138,6 @@ def check_sequence_parallel_condition(args, device_num):
             f"but get `{args.data_parallel}, {args.model_parallel}, {args.sequence_parallel}` and `{device_num}` respectively."
         )
     if args.enable_flash_attention:
-        if args.model_parallel != 12:
-            logger.warning(
-                f"Model parallel ({args.model_parallel}) is suggest to be 12 to fullfill the sharding requirement of Flash Attention."
-            )
-
         if args.model_parallel > 12:
             raise ValueError(f"Model parallel ({args.model_parallel}) can not be largert than the number of heads (12)")
 
