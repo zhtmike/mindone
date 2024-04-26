@@ -138,15 +138,13 @@ def check_sequence_parallel_condition(args, device_num):
             f"but get `{args.data_parallel}, {args.model_parallel}, {args.sequence_parallel}` and `{device_num}` respectively."
         )
     if args.enable_flash_attention:
-        if args.model_parallel < 3:
-            raise ValueError(
-                "Model parallel much be larger than 2, such that for BSH mode, the sharding along hidden size can be less thatn 512."
+        if args.model_parallel != 12:
+            logger.warning(
+                f"Model parallel ({args.model_parallel}) is suggest to be 12 to fullfill the sharding requirement of Flash Attention."
             )
 
-        if args.model_parallel % 4 != 0:
-            raise ValueError(
-                "Model parallel much be be divisible by 4, such that for BSH mode, the sharding along hidden size can be divisible thatn 16."
-            )
+        if args.model_parallel > 12:
+            raise ValueError(f"Model parallel ({args.model_parallel}) can not be largert than the number of heads (12)")
 
 
 def main(args):

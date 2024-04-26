@@ -127,6 +127,8 @@ class DiffusionWithLoss(nn.Cell):
             x = ops.reshape(x, (-1, C, H, W))
 
             z = ops.stop_gradient(self.vae_encode(x))
+            # TODO: Just for testing the max frames with vae caching, uncomment below
+            # z = ops.zeros((B * F, 4, H // 8, W // 8), dtype=ms.float16)
 
             # (b*f c h w) -> (b f c h w)
             z = ops.reshape(z, (B, F, z.shape[1], z.shape[2], z.shape[3]))

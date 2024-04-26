@@ -329,6 +329,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.tile = ops.Tile()
         self.tile_fa = ops.Tile()
         self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
+        self.stride_slice = ops.StridedSlice(15, 7, 0, 0, 0)  # for head_dim=72 only
         self.shard()
 
         if self.enable_flash_attention:
@@ -376,7 +377,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
             x = self.transpose(x, (0, 1, 2, 3, 4))
             x = self.merge_head_transpose_a2a(x, (0, 1, 3, 2, 4))
         x = ops.reshape(x, (b, n, h, -1))
-        x = x[:, :, :, : self.head_dim]
+        x = self.stride_slice(x, (0, 0, 0, 0), (0, 0, 0, self.head_dim), (1, 1, 1, 1))
         x = ops.reshape(x, (b * n, -1))
         return x
 
@@ -450,15 +451,16 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
-        self.tile.shard(((1, 1, 1, 1, 1),))
-        self.tile_fa.shard(((1, 1, 1, 1),))
+        self.tile.shard(((self.dp, 1, 1, 1, 1),))
+        self.tile_fa.shard(((self.dp, 1, 1, 1),))
 
         self.proj.matmul.shard(((self.dp * self.sp, self.mp), (1, self.mp)))
         self.proj.bias_add.shard(((self.dp * self.sp, 1), (1,)))
 
         self.proj_drop.dropout.shard(((self.dp * self.sp, 1),))
 
-        self.pad.shard(((1, 1, 1, 1),))
+        self.pad.shard(((self.dp, 1, self.mp, 1),))
+        self.stride_slice.shard(((self.dp, 1, self.mp, 1),))
 
 
 class SelfAttention(nn.Cell):
@@ -587,6 +589,7 @@ class SeqParallelSelfAttention(nn.Cell):
         self.tile = ops.Tile()
         self.tile_fa = ops.Tile()
         self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
+        self.stride_slice = ops.StridedSlice(15, 7, 0, 0, 0)  # for head_dim=72 only
 
         self.shard()
 
@@ -635,7 +638,7 @@ class SeqParallelSelfAttention(nn.Cell):
             x = self.transpose(x, (0, 1, 2, 3, 4))
             x = self.merge_head_transpose_a2a(x, (0, 1, 3, 2, 4))
         x = ops.reshape(x, (b, n, h, -1))
-        x = x[:, :, :, : self.head_dim]
+        x = self.stride_slice(x, (0, 0, 0, 0), (0, 0, 0, self.head_dim), (1, 1, 1, 1))
         x = ops.reshape(x, (b * n, -1))
         return x
 
@@ -693,15 +696,16 @@ class SeqParallelSelfAttention(nn.Cell):
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
-        self.tile.shard(((1, 1, 1, 1, 1),))
-        self.tile_fa.shard(((1, 1, 1, 1),))
+        self.tile.shard(((self.dp, 1, 1, 1, 1),))
+        self.tile_fa.shard(((self.dp, 1, 1, 1),))
 
         self.proj.matmul.shard(((self.dp * self.sp, self.mp), (1, self.mp)))
         self.proj.bias_add.shard(((self.dp * self.sp, 1), (1,)))
 
         self.proj_drop.dropout.shard(((self.dp * self.sp, 1),))
 
-        self.pad.shard(((1, 1, 1, 1),))
+        self.pad.shard(((self.dp, 1, self.mp, 1),))
+        self.stride_slice.shard(((self.dp, 1, self.mp, 1),))
 
 
 class LayerNorm(nn.Cell):
