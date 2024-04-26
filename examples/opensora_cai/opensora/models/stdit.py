@@ -625,10 +625,10 @@ class STDiT(nn.Cell):
         # Initialize patch_embed like nn.Linear (instead of nn.Conv2d):
         # xavier_uniform_(w.view([w.shape[0], -1]))
         w = self.x_embedder.proj.weight
-        w_flatted = w.reshape(w.shape[0], -1)
+        # w_flatted = w.reshape(w.shape[0], -1)
         # FIXME: incompatible in optim parallel mode
         # FIXME: impl in torch can be incorrect. can be reshape order mismatch
-        w.set_data(initializer(XavierUniform(), w_flatted.shape, w_flatted.dtype).reshape(w.shape))
+        w.set_data(initializer(XavierUniform(), w.shape, w.dtype).init_data())
 
         # Initialize timestep embedding MLP:
         normal_(self.t_embedder.mlp[0].weight, std=0.02)
