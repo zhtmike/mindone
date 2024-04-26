@@ -36,6 +36,7 @@ class STDiTBlock(nn.Cell):
         enable_flashattn=False,
         enable_layernorm_kernel=False,
         enable_sequence_parallelism=False,
+        parallel_config={},
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -56,8 +57,11 @@ class STDiTBlock(nn.Cell):
             num_heads=num_heads,
             qkv_bias=True,
             enable_flash_attention=enable_flashattn,
+            parallel_config=parallel_config,
         )
-        self.cross_attn = self.mha_cls(hidden_size, num_heads, enable_flash_attention=enable_flashattn)
+        self.cross_attn = self.mha_cls(
+            hidden_size, num_heads, enable_flash_attention=enable_flashattn, parallel_config=parallel_config
+        )
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         # TODO: check parsing approx_gelu
         self.mlp = Mlp(
@@ -75,6 +79,7 @@ class STDiTBlock(nn.Cell):
             num_heads=num_heads,
             qkv_bias=True,
             enable_flash_attention=enable_flashattn,
+            parallel_config=parallel_config,
         )
 
     @staticmethod

@@ -5,7 +5,7 @@ import numpy as np
 
 import mindspore as ms
 from mindspore import Parameter, Tensor, nn, ops
-from mindspore.common.initializer import XavierUniform, Zero, initializer
+from mindspore.common.initializer import initializer
 
 from mindone.models.modules.flash_attention import FLASH_IS_AVAILABLE, MSFlashAttention
 
@@ -13,10 +13,11 @@ from .flash_attention import FlashAttentionSP
 
 
 class Attention(nn.Cell):
-    def __init__(self, dim_head: int, attn_drop: float = 0.0) -> None:
+    def __init__(self, dim_head: int, attn_drop: float = 0.0, attn_dtype=ms.float32) -> None:
         super().__init__()
         self.scale = dim_head**-0.5
         self.attn_drop = nn.Dropout(p=attn_drop)
+        self.attn_dtype = attn_dtype
 
     def construct(self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None) -> Tensor:
         """
@@ -202,7 +203,9 @@ class MultiHeadCrossAttention(nn.Cell):
         ```
     """
 
-    def __init__(self, d_model, num_heads, attn_drop=0.0, proj_drop=0.0, has_bias=True, enable_flash_attention=False):
+    def __init__(
+        self, d_model, num_heads, attn_drop=0.0, proj_drop=0.0, has_bias=True, enable_flash_attention=False, **kwargs
+    ):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
@@ -491,6 +494,7 @@ class SelfAttention(nn.Cell):
         attn_drop=0.0,
         proj_drop=0.0,
         enable_flash_attention=False,
+        **kwargs,
     ):
         super().__init__()
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
@@ -583,11 +587,11 @@ class SeqParallelSelfAttention(nn.Cell):
         self.qkv_bias = qkv_bias
         self.enable_flash_attention = enable_flash_attention
 
-        self.qkv = nn.Dense(dim, dim * 3, has_bias=qkv_bias, weight_init=XavierUniform(), bias_init=Zero()).to_float(
+        self.qkv = nn.Dense(dim, dim * 3, has_bias=qkv_bias, weight_init="XavierUniform", bias_init="Zero").to_float(
             self.dtype
         )
         self.split = ops.Split(-1, 3)
-        self.proj = nn.Dense(dim, dim, weight_init=XavierUniform(), bias_init=Zero()).to_float(self.dtype)
+        self.proj = nn.Dense(dim, dim, weight_init="XavierUniform", bias_init="Zero").to_float(self.dtype)
         self.proj_drop = nn.Dropout(p=proj_drop)
         self.softmax = ops.Softmax(axis=-1)
         self.transpose = ops.Transpose()

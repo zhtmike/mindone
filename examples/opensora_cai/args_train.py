@@ -49,10 +49,10 @@ def parse_train_args(parser):
     parser.add_argument("--max_device_memory", type=str, default=None, help="e.g. `30GB` for 910a, `59GB` for 910b")
     parser.add_argument("--mode", default=0, type=int, help="Specify the mode: 0 for graph mode, 1 for pynative mode")
     parser.add_argument("--use_parallel", default=False, type=str2bool, help="use parallel")
-    parser.add_argument("--enable_dvm", default=False, type=str2bool, help="enable dvm mode")
     parser.add_argument(
         "--parallel_mode", default="data", type=str, choices=["data", "semi"], help="parallel mode: data, semi"
     )
+    parser.add_argument("--enable_dvm", default=False, type=str2bool, help="enable dvm mode")
 
     # training hyper-params
     parser.add_argument(
