@@ -467,16 +467,16 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
-        self.tile.shard(((self.dp, 1, 1, 1, 1),))
-        self.tile_fa.shard(((self.dp, 1, 1, 1),))
+        self.tile.shard(((self.dp, 1, 1, self.sp_co, 1),))
+        self.tile_fa.shard(((self.dp, 1, self.sp, 1),))
 
         self.proj.matmul.shard(((self.dp * self.sp, self.mp), (1, self.mp)))
         self.proj.bias_add.shard(((self.dp * self.sp, 1), (1,)))
 
         self.proj_drop.dropout.shard(((self.dp * self.sp, 1),))
 
-        self.pad.shard(((self.dp, 1, self.mp, 1),))
-        self.stride_slice.shard(((self.dp, 1, self.mp, 1),))
+        self.pad.shard(((self.dp, self.sp, self.mp, 1),))
+        self.stride_slice.shard(((self.dp, self.sp, self.mp, 1),))
 
 
 class SelfAttention(nn.Cell):
@@ -719,16 +719,16 @@ class SeqParallelSelfAttention(nn.Cell):
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
-        self.tile.shard(((self.dp, 1, 1, 1, 1),))
-        self.tile_fa.shard(((self.dp, 1, 1, 1),))
+        self.tile.shard(((self.dp, 1, 1, self.sp_co, 1),))
+        self.tile_fa.shard(((self.dp, 1, self.sp, 1),))
 
         self.proj.matmul.shard(((self.dp * self.sp, self.mp), (1, self.mp)))
         self.proj.bias_add.shard(((self.dp * self.sp, 1), (1,)))
 
         self.proj_drop.dropout.shard(((self.dp * self.sp, 1),))
 
-        self.pad.shard(((self.dp, 1, self.mp, 1),))
-        self.stride_slice.shard(((self.dp, 1, self.mp, 1),))
+        self.pad.shard(((self.dp, self.sp, self.mp, 1),))
+        self.stride_slice.shard(((self.dp, self.sp, self.mp, 1),))
 
 
 class LayerNorm(nn.Cell):
