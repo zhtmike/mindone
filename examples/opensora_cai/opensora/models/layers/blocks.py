@@ -337,8 +337,8 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.merge_head_transpose_a2a = ops.Transpose()
         self.tile = ops.Tile()
         self.tile_fa = ops.Tile()
-        self.pad = ops.PadV3()
-        # self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
+        # self.pad = ops.PadV3()
+        self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
         self.stride_slice = ops.StridedSlice(15, 7, 0, 0, 0)  # for head_dim=72 only
         self.shard()
 
@@ -376,8 +376,8 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
             x = self.transpose_a2a(x, (0, 1, 3, 2, 4))
             x = self.transpose(x, (0, 1, 2, 3, 4))
         x = ops.reshape(x, (b, n, h, -1))
-        x = self.pad(x, (0, 8), 0)
-        # x = self.pad(x)
+        # x = self.pad(x, (0, 8), 0)
+        x = self.pad(x)
         x = ops.reshape(x, (b, n, -1))
         return x
 
@@ -598,8 +598,8 @@ class SeqParallelSelfAttention(nn.Cell):
         self.merge_head_transpose_a2a = ops.Transpose()
         self.tile = ops.Tile()
         self.tile_fa = ops.Tile()
-        self.pad = ops.PadV3()
-        # self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
+        # self.pad = ops.PadV3()
+        self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
         self.stride_slice = ops.StridedSlice(15, 7, 0, 0, 0)  # for head_dim=72 only
 
         self.shard()
@@ -638,8 +638,8 @@ class SeqParallelSelfAttention(nn.Cell):
             x = self.transpose_a2a(x, (0, 1, 3, 2, 4))
             x = self.transpose(x, (0, 1, 2, 3, 4))
         x = ops.reshape(x, (b, n, h, -1))
-        x = self.pad(x, (0, 8), 0)
-        # x = self.pad(x)
+        # x = self.pad(x, (0, 8), 0)
+        x = self.pad(x)
         x = ops.reshape(x, (b, n, -1))
         return x
 
