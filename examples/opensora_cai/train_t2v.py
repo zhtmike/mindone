@@ -151,6 +151,11 @@ def check_sequence_parallel_condition(args, device_num):
         if args.model_parallel > 12:
             raise ValueError(f"Model parallel ({args.model_parallel}) can not be larger than the number of heads (12)")
 
+    if args.num_frames % args.sequence_parallel != 0:
+        raise ValueError(
+            f"Number of frames `{args.num_frames}` must be divisible by the sequence parallel `{args.sequence_parallel}`."
+        )
+
 
 def set_all_reduce_fusion(
     params,
