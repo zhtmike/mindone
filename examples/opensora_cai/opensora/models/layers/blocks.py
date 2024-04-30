@@ -371,7 +371,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
     def _rearange_in_fa(self, x, b, n, h):
         # (b*n, h*d) -> (b, n, h*d)
         if self.sp_ds > 1:
-            # (b*n, h*d) -> (b, h/mp, mp, n, d)
+            # (b*n, h*d) -> (b, n, h/mp, mp, d)
             x = ops.reshape(x, (b, n, self.mp, h // self.mp, -1))
             x = self.transpose_a2a(x, (0, 1, 3, 2, 4))
             x = self.transpose(x, (0, 1, 2, 3, 4))
@@ -464,14 +464,14 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
         self.tile.shard(((self.dp, 1, 1, self.sp_co, 1),))
-        self.tile_fa.shard(((self.dp, 1, self.sp, 1),))
+        self.tile_fa.shard(((self.dp, 1, self.sp_co, 1),))
 
         self.proj.matmul.shard(((self.dp * self.sp, self.mp), (1, self.mp)))
         self.proj.bias_add.shard(((self.dp * self.sp, 1), (1,)))
 
         self.proj_drop.dropout.shard(((self.dp * self.sp, 1),))
 
-        self.pad.shard(((self.dp, self.sp, self.mp, 1),))
+        self.pad.shard(((self.dp, self.sp_co, self.sp_ds * self.mp, 1),))
         self.stride_slice.shard(((self.dp, self.sp, self.mp, 1),))
 
 
@@ -633,7 +633,7 @@ class SeqParallelSelfAttention(nn.Cell):
     def _rearange_in_fa(self, x, b, n, h):
         # (b*n, h*d) -> (b, n, h*d)
         if self.sp_ds > 1:
-            # (b*n, h*d) -> (b, h/mp, mp, n, d)
+            # (b*n, h*d) -> (b, n, h/mp, mp, d)
             x = ops.reshape(x, (b, n, self.mp, h // self.mp, -1))
             x = self.transpose_a2a(x, (0, 1, 3, 2, 4))
             x = self.transpose(x, (0, 1, 2, 3, 4))
@@ -710,14 +710,14 @@ class SeqParallelSelfAttention(nn.Cell):
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
         self.tile.shard(((self.dp, 1, 1, self.sp_co, 1),))
-        self.tile_fa.shard(((self.dp, 1, self.sp, 1),))
+        self.tile_fa.shard(((self.dp, 1, self.sp_co, 1),))
 
         self.proj.matmul.shard(((self.dp * self.sp, self.mp), (1, self.mp)))
         self.proj.bias_add.shard(((self.dp * self.sp, 1), (1,)))
 
         self.proj_drop.dropout.shard(((self.dp * self.sp, 1),))
 
-        self.pad.shard(((self.dp, self.sp, self.mp, 1),))
+        self.pad.shard(((self.dp, self.sp_co, self.sp_ds * self.mp, 1),))
         self.stride_slice.shard(((self.dp, self.sp, self.mp, 1),))
 
 
