@@ -296,7 +296,9 @@ class CaptionEmbedder(nn.Cell):
 
         y_embedding = ops.randn(token_num, in_channels) / in_channels**0.5
         # just for token dropping replacement, not learnable
-        self.y_embedding = ms.Parameter(Tensor(y_embedding, dtype=ms.float32), requires_grad=False)
+
+        # FIXME: in semi-parallel mode, reqruied_grad=False make the checkpoints loading fail
+        self.y_embedding = ms.Parameter(Tensor(y_embedding, dtype=ms.float32), requires_grad=True)
 
         self.uncond_prob = uncond_prob
 
