@@ -1,7 +1,6 @@
 """
 STDiT training script
 """
-import datetime
 import logging
 import os
 import sys
@@ -176,9 +175,6 @@ def set_all_reduce_fusion(
 
 
 def main(args):
-    time_str = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    args.output_path = os.path.join(args.output_path, time_str)
-
     # 1. init
     parallel_mode = "semi" if args.enable_sequence_parallelism else args.parallel_mode
     rank_id, device_num = init_env(
@@ -437,7 +433,8 @@ def main(args):
         save_cb = EvalSaveCallback(
             network=latent_diffusion_with_loss.network,
             rank_id=None,
-            ckpt_save_dir=os.path.join(ckpt_dir, f"rank_{rank_id}"),
+            ckpt_save_dir=os.path.join(args.output_path, f"rank_{rank_id}", "ckpt"),
+            output_dir=os.path.join(args.output_path, f"rank_{rank_id}", "log"),
             ema=ema,
             ckpt_save_policy="latest_k",
             ckpt_max_keep=args.ckpt_max_keep,
