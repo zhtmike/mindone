@@ -427,6 +427,7 @@ def main(args):
             start_epoch=start_epoch,
             model_name="STDiT",
             record_lr=False,
+            integrated_save=parallel_mode == "semi",
         )
         callback.append(save_cb)
         if args.profile:

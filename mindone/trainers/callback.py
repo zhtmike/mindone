@@ -47,6 +47,7 @@ class EvalSaveCallback(Callback):
         model_name="sd",
         save_trainable_only: bool = False,
         param_save_filter: List[str] = None,
+        integrated_save=False,
     ):
         """
         Args:
@@ -82,6 +83,7 @@ class EvalSaveCallback(Callback):
                 ckpt_save_dir,
                 ckpt_save_policy,
                 k=ckpt_max_keep,
+                integrated_save=integrated_save,
             )
             if self.start_epoch == 0:
                 if self.record_lr:

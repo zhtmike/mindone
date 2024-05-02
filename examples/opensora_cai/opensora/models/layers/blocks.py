@@ -27,7 +27,7 @@ class Attention(nn.Cell):
         """
 
         # (b n h d) -> (b h n d)
-        q = ops.transpose(k, (0, 2, 1, 3))
+        q = ops.transpose(q, (0, 2, 1, 3))
         k = ops.transpose(k, (0, 2, 1, 3))
         v = ops.transpose(v, (0, 2, 1, 3))
 

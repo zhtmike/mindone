@@ -110,7 +110,7 @@ class InferPipeline(ABC):
         null_emb = self.model.y_embedder.y_embedding[None, :, :].repeat(n, axis=0)
 
         if self.use_cfg:
-            y = ops.cat([text_emb, null_emb], axis=0)
+            y = ops.cat([text_emb, null_emb.to(text_emb.dtype)], axis=0)
             x_in = ops.concat([x] * 2, axis=0)
             assert y.shape[0] == x_in.shape[0], "shape mismatch!"
             inputs["mask"] = ops.concat([mask, mask], axis=0)
