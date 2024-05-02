@@ -191,7 +191,7 @@ def main(args):
     )
     set_logger(
         log_fn="stdout.log",
-        output_dir=os.path.join(args.output_path, f"rank_{rank_id}/log"),
+        output_dir=os.path.join(args.output_path, f"log/rank_{rank_id}"),
         rank=rank_id,
         log_level=eval(args.log_level),
     )
@@ -439,8 +439,8 @@ def main(args):
         save_cb = EvalSaveCallback(
             network=latent_diffusion_with_loss.network,
             rank_id=None,
-            ckpt_save_dir=os.path.join(args.output_path, f"rank_{rank_id}", "ckpt"),
-            output_dir=os.path.join(args.output_path, f"rank_{rank_id}", "log"),
+            ckpt_save_dir=os.path.join(args.output_path, "ckpt", f"rank_{rank_id}"),
+            output_dir=os.path.join(args.output_path, "log", f"rank_{rank_id}"),
             ema=ema,
             ckpt_save_policy="latest_k",
             ckpt_max_keep=args.ckpt_max_keep,
