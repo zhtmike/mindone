@@ -52,6 +52,7 @@ def init_env(
     enable_dvm: bool = False,
     data_parallel: int = 1,
     use_sequence_parallel: bool = False,
+    outdir: str = "./outputs",
 ) -> Tuple[int, int, int]:
     """
     Initialize MindSpore environment.
@@ -94,7 +95,7 @@ def init_env(
                         (data_parallel, 1, 1),  # text embed
                         (data_parallel, 1),  # text mask
                     ),
-                    strategy_ckpt_config={"save_file": "./src_strategy.ckpt"},
+                    strategy_ckpt_config={"save_file": os.path.join(outdir, "src_strategy.ckpt")},
                 )
             else:
                 ms.set_auto_parallel_context(
@@ -188,7 +189,12 @@ def main(args):
         data_parallel=args.data_parallel,
         use_sequence_parallel=args.enable_sequence_parallelism,
     )
-    set_logger(name="", output_dir=args.output_path, rank=rank_id, log_level=eval(args.log_level))
+    set_logger(
+        log_fn="stdout.log",
+        output_dir=os.path.join(args.output_path, f"rank_{rank_id}/log"),
+        rank=rank_id,
+        log_level=eval(args.log_level),
+    )
 
     if args.enable_sequence_parallelism:
         check_sequence_parallel_condition(args, device_num)
