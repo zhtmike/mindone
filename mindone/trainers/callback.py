@@ -224,14 +224,15 @@ class EvalSaveCallback(Callback):
                 append_dict = {"lora_rank": self.lora_rank} if self.use_lora else None
                 self.ckpt_manager.save(self.net_to_save, None, ckpt_name=ckpt_name, append_dict=append_dict)
 
-                ms.save_checkpoint(
-                    cb_params.train_network,
-                    os.path.join(self.ckpt_save_dir, "train_resume.ckpt"),
-                    append_dict={
-                        "epoch_num": cur_epoch,
-                        "loss_scale": self._get_scaling_value_from_cbp(cb_params),
-                    },
-                )
+                if self.save_training_resume:
+                    ms.save_checkpoint(
+                        cb_params.train_network,
+                        os.path.join(self.ckpt_save_dir, "train_resume.ckpt"),
+                        append_dict={
+                            "epoch_num": cur_epoch,
+                            "loss_scale": self._get_scaling_value_from_cbp(cb_params),
+                        },
+                    )
 
                 # swap back network weight and ema weight. MUST execute after model saving and before next-step training
                 if self.ema is not None:

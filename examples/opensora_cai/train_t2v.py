@@ -443,7 +443,7 @@ def main(args):
             output_dir=os.path.join(args.output_path, "log", f"rank_{rank_id}"),
             ema=ema,
             ckpt_save_policy="latest_k",
-            ckpt_max_keep=args.ckpt_max_keep,
+            ckpt_max_keep=1,  # make sure only one ckpt is in each folder, for later ckpt merge
             step_mode=args.step_mode,
             ckpt_save_interval=args.ckpt_save_interval,
             log_interval=args.log_interval,
