@@ -451,6 +451,7 @@ def main(args):
             model_name="STDiT",
             record_lr=False,
             integrated_save=False,
+            save_training_resume=False,  # TODO: support training resume
         )
         callback.append(save_cb)
 
