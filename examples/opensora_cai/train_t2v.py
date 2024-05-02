@@ -95,6 +95,7 @@ def init_env(
                         (data_parallel, 1, 1),  # text embed
                         (data_parallel, 1),  # text mask
                     ),
+                    strategy_ckpt_config={"save_file": "./src_strategy.ckpt"},
                 )
             else:
                 ms.set_auto_parallel_context(
@@ -413,7 +414,7 @@ def main(args):
     ofm_cb = OverflowMonitor()
     callback.append(ofm_cb)
 
-    if rank_id == 0:
+    if rank_id == 0 and parallel_mode == "data":
         save_cb = EvalSaveCallback(
             network=latent_diffusion_with_loss.network,
             rank_id=rank_id,
@@ -427,11 +428,28 @@ def main(args):
             start_epoch=start_epoch,
             model_name="STDiT",
             record_lr=False,
-            integrated_save=parallel_mode == "semi",
+            integrated_save=False,
         )
         callback.append(save_cb)
         if args.profile:
             callback.append(ProfilerCallback())
+    elif parallel_mode == "semi":
+        save_cb = EvalSaveCallback(
+            network=latent_diffusion_with_loss.network,
+            rank_id=None,
+            ckpt_save_dir=os.path.join(ckpt_dir, f"rank_{rank_id}"),
+            ema=ema,
+            ckpt_save_policy="latest_k",
+            ckpt_max_keep=args.ckpt_max_keep,
+            step_mode=args.step_mode,
+            ckpt_save_interval=args.ckpt_save_interval,
+            log_interval=args.log_interval,
+            start_epoch=start_epoch,
+            model_name="STDiT",
+            record_lr=False,
+            integrated_save=False,
+        )
+        callback.append(save_cb)
 
     # 5. log and save config
     if rank_id == 0:
