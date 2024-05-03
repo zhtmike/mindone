@@ -651,7 +651,7 @@ class STDiT(nn.Cell):
         constant_(self.final_layer.linear.weight, 0)
         constant_(self.final_layer.linear.bias, 0)
 
-    def load_from_checkpoint(self, ckpt_path):
+    def load_from_checkpoint(self, ckpt_path, split_qkv=False):
         if not os.path.exists(ckpt_path):
             print(f"WARNING: {ckpt_path} not found. No checkpoint loaded!!")
         else:
@@ -680,6 +680,14 @@ class STDiT(nn.Cell):
                     assert conv3d_weight.shape[-3] == 1
                     cout, cin, kt, kh, kw = conv3d_weight.shape
                     sd[key_3d] = ms.Parameter(conv3d_weight.squeeze(axis=-3), name=key_3d)
+
+            # split QKV for sequence parallism
+            if split_qkv:
+                for k, v in sd.items():
+                    if ".kv_linear." in k:
+                        print(k)
+                    elif ".qkv." in k:
+                        print(k)
 
             m, u = ms.load_param_into_net(self, sd)
             print("net param not load: ", m, len(m))

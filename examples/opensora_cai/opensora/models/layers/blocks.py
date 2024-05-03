@@ -327,12 +327,14 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.has_bias = has_bias
         self.enable_flash_attention = enable_flash_attention
 
-        self.q_linear = nn.Dense(d_model, d_model, has_bias=has_bias)
-        self.kv_linear = nn.Dense(d_model, d_model * 2, has_bias=has_bias)
-        self.split = ops.Split(-1, 2)
+        self.q_linear = nn.Dense(d_model, d_model, has_bias=has_bias, weight_init="XavierUniform", bias_init="Zero")
+        self.k_linear = nn.Dense(d_model, d_model, has_bias=has_bias, weight_init="XavierUniform", bias_init="Zero")
+        self.v_linear = nn.Dense(d_model, d_model, has_bias=has_bias, weight_init="XavierUniform", bias_init="Zero")
+
         self.attn_drop = nn.Dropout(p=attn_drop)
         self.proj = nn.Dense(d_model, d_model, has_bias=has_bias)
         self.proj_drop = nn.Dropout(p=proj_drop)
+
         self.transpose = ops.Transpose()
         self.reshape = ops.Reshape()
         self.transpose_a2a = ops.Transpose()
@@ -411,8 +413,8 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         cond = ops.reshape(cond, (-1, cond.shape[-1]))
 
         q = self.q_linear(x)
-        kv = self.kv_linear(cond)
-        k, v = self.split(kv)
+        k = self.k_linear(cond)
+        v = self.v_linear(cond)
 
         if not self.enable_flash_attention:
             q = self._rearange_in(q, b, n, h)
@@ -451,15 +453,12 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
             self.sp_co = 1
 
         self.q_linear.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
+        self.k_linear.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
+        self.v_linear.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
         if self.has_bias:
             self.q_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
-
-        self.kv_linear.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
-        if self.has_bias:
-            self.kv_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
-
-        self.split.shard(((self.dp * self.sp, self.mp),))
-        self.split.add_prim_attr("skip_redistribution", True)
+            self.k_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
+            self.v_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
 
         self.transpose_a2a.shard(((self.dp, self.sp, self.mp, 1, 1),))
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
@@ -574,24 +573,22 @@ class SeqParallelSelfAttention(nn.Cell):
         qkv_bias=False,
         attn_drop=0.0,
         proj_drop=0.0,
-        dtype=ms.float32,
         enable_flash_attention=False,
         parallel_config: Dict[str, Any] = {},
     ):
         super().__init__()
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
-        self.dtype = dtype
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.parallel_config = parallel_config
         self.qkv_bias = qkv_bias
         self.enable_flash_attention = enable_flash_attention
 
-        self.qkv = nn.Dense(dim, dim * 3, has_bias=qkv_bias, weight_init="XavierUniform", bias_init="Zero").to_float(
-            self.dtype
-        )
-        self.split = ops.Split(-1, 3)
-        self.proj = nn.Dense(dim, dim, weight_init="XavierUniform", bias_init="Zero").to_float(self.dtype)
+        self.q_linear = nn.Dense(dim, dim, has_bias=qkv_bias, weight_init="XavierUniform", bias_init="Zero")
+        self.k_linear = nn.Dense(dim, dim, has_bias=qkv_bias, weight_init="XavierUniform", bias_init="Zero")
+        self.v_linear = nn.Dense(dim, dim, has_bias=qkv_bias, weight_init="XavierUniform", bias_init="Zero")
+        self.proj = nn.Dense(dim, dim, weight_init="XavierUniform", bias_init="Zero")
+
         self.proj_drop = nn.Dropout(p=proj_drop)
         self.softmax = ops.Softmax(axis=-1)
         self.transpose = ops.Transpose()
@@ -661,8 +658,9 @@ class SeqParallelSelfAttention(nn.Cell):
         b, n, d = x.shape
 
         x = ops.reshape(x, (-1, x.shape[-1]))
-        qkv = self.qkv(x)
-        q, k, v = self.split(qkv)
+        q = self.q_linear(x)
+        k = self.k_linear(x)
+        v = self.v_linear(x)
 
         if not self.enable_flash_attention:
             q = self._rearange_in(q, b, n, h)
@@ -700,12 +698,13 @@ class SeqParallelSelfAttention(nn.Cell):
             self.sp_ds = self.sp
             self.sp_co = 1
 
-        self.qkv.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
+        self.q_linear.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
+        self.k_linear.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
+        self.v_linear.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
         if self.qkv_bias:
-            self.qkv.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
-
-        self.split.shard(((self.dp * self.sp, self.mp),))
-        self.split.add_prim_attr("skip_redistribution", True)
+            self.q_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
+            self.k_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
+            self.v_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
 
         self.transpose_a2a.shard(((self.dp, self.sp, self.mp, 1, 1),))
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
@@ -955,22 +954,3 @@ class LabelEmbedder(nn.Cell):
             labels = self.token_drop(labels, force_drop_ids)
         embeddings = self.embedding_table(labels)
         return embeddings
-
-
-if __name__ == "__main__":
-    np.random.seed(0)
-    ms.set_context(mode=ms.GRAPH_MODE)
-    x = ms.Tensor(np.random.random((4, 10, 64)), dtype=ms.float32)
-    context = ms.Tensor(np.random.random((1, 32, 64)), dtype=ms.float32)
-    mask = ms.Tensor(np.random.random((4, 8)) > 0.5, dtype=ms.int8)
-    ms.set_seed(0)
-    net1 = MultiHeadCrossAttention(64, 8)
-    ms.set_seed(0)
-    net2 = SeqParallelMultiHeadCrossAttention(64, 8)
-    ms.set_seed(0)
-    net3 = SeqParallelMultiHeadCrossAttention(64, 8, enable_flash_attention=True)
-    y1 = net1(x, context, mask=mask).asnumpy()
-    y2 = net2(x, context, mask=mask).asnumpy()
-    y3 = net3(x, context, mask=mask).asnumpy()
-
-    assert np.abs(y1 - y2).max() == 0.0

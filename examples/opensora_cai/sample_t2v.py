@@ -112,7 +112,7 @@ def main(args):
 
     if len(args.checkpoint) > 0:
         logger.info(f"Loading ckpt {args.checkpoint} into STDiT")
-        latte_model.load_from_checkpoint(args.checkpoint)
+        latte_model.load_from_checkpoint(args.checkpoint, split_qkv=args.enable_sequence_parallelism)
     else:
         logger.warning("STDiT uses random initialization!")
 

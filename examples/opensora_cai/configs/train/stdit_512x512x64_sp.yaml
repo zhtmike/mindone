@@ -43,3 +43,5 @@ parallel_mode: "semi"
 data_parallel: 4
 model_parallel: 2
 sequence_parallel: 1
+
+add_datetime: False
