@@ -91,6 +91,12 @@ def main(args):
         time_scale=args.time_scale,
         patchify_conv3d_replace="conv2d",  # for Ascend
         enable_flashattn=args.enable_flash_attention,
+        enable_sequence_parallelism=args.enable_sequence_parallelism,
+        parallel_config=dict(
+            data_parallel=args.data_parallel,
+            model_parallel=args.model_parallel,
+            sequence_parallel=args.sequence_parallel,
+        ),
     )
     latte_model = STDiT_XL_2(**model_extra_args)
     latte_model = latte_model.set_train(False)
@@ -317,6 +323,30 @@ def parse_args():
     parser.add_argument("--embed_path", type=str, default=None, help="path to t5 embedding")
     parser.add_argument("--ddim_sampling", type=str2bool, default=True, help="Whether to use DDIM for sampling")
     parser.add_argument("--decode_mem_save", default=True, type=str2bool, help="Usa memory save way to do decoding")
+    parser.add_argument(
+        "--enable_sequence_parallelism",
+        default=False,
+        type=str2bool,
+        help="whether to enable sequence parallelism.",
+    )
+    parser.add_argument(
+        "--data_parallel",
+        default=1,
+        type=int,
+        help="number of devices for data parallel (slicing along batch) when use sequence parallelism.",
+    )
+    parser.add_argument(
+        "--model_parallel",
+        default=1,
+        type=int,
+        help="number of devices for model parallel (slicing along heads) when use sequence parallelism.",
+    )
+    parser.add_argument(
+        "--sequence_parallel",
+        default=1,
+        type=int,
+        help="number of devices for sequence parallel (slicing along sequence length) when use sequence parallelism.",
+    )
     default_args = parser.parse_args()
     abs_path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ""))
     if default_args.config:
