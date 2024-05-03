@@ -17,7 +17,7 @@ mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../"))
 sys.path.insert(0, mindone_lib_path)
 
 from opensora.models.autoencoder import SD_CONFIG, AutoencoderKL
-from opensora.models.layers.blocks import Attention, LayerNorm
+from opensora.models.layers.blocks import Attention, LayerNorm, SeqParallelAttention
 from opensora.models.stdit import STDiT_XL_2
 from opensora.models.text_encoders import get_text_encoder_and_tokenizer
 from opensora.pipelines import InferPipeline
@@ -107,7 +107,13 @@ def main(args):
             latte_model,
             amp_level=args.amp_level,
             dtype=dtype_map[args.dtype],
-            custom_fp32_cells=[LayerNorm, Attention, nn.SiLU, nn.GELU],  # NOTE: keep it the same as training setting
+            custom_fp32_cells=[
+                LayerNorm,
+                Attention,
+                SeqParallelAttention,
+                nn.SiLU,
+                nn.GELU,
+            ],  # NOTE: keep it the same as training setting
         )
 
     if len(args.checkpoint) > 0:
@@ -210,7 +216,6 @@ def main(args):
         x_samples = pipeline(inputs, latent_save_fp=f"samples/denoised_latent_{i:02d}.npy")
 
         if x_samples is not None:
-            x_samples = x_samples.asnumpy()
             batch_time = time.time() - start_time
 
             logger.info(
