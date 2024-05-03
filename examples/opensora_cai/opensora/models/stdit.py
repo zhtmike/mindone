@@ -683,11 +683,20 @@ class STDiT(nn.Cell):
 
             # split QKV for sequence parallism
             if split_qkv:
+                new_sd = dict()
                 for k, v in sd.items():
                     if ".kv_linear." in k:
-                        print(k)
+                        k_linear, v_linear = v.chunk(2)
+                        new_sd[k.replace(".kv_linear.", ".k_linear.")] = ms.Parameter(k_linear)
+                        new_sd[k.replace(".kv_linear.", ".v_linear.")] = ms.Parameter(v_linear)
                     elif ".qkv." in k:
-                        print(k)
+                        q_linear, k_linear, v_linear = v.chunk(3)
+                        new_sd[k.replace(".qkv.", ".q_linear.")] = ms.Parameter(q_linear)
+                        new_sd[k.replace(".qkv.", ".k_linear.")] = ms.Parameter(k_linear)
+                        new_sd[k.replace(".qkv.", ".v_linear.")] = ms.Parameter(v_linear)
+                    else:
+                        new_sd[k] = v
+                sd = new_sd
 
             m, u = ms.load_param_into_net(self, sd)
             print("net param not load: ", m, len(m))
