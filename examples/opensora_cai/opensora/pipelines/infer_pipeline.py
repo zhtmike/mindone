@@ -1,6 +1,7 @@
 from abc import ABC
 
 import numpy as np
+from tqdm import tqdm
 
 import mindspore as ms
 from mindspore import ops
@@ -32,6 +33,7 @@ class InferPipeline(ABC):
         guidance_rescale=1.0,
         num_inference_steps=50,
         ddim_sampling=True,
+        decode_mem_save=True,
     ):
         super().__init__()
         self.model = model
@@ -40,6 +42,7 @@ class InferPipeline(ABC):
         self.vae = vae
         self.scale_factor = scale_factor
         self.guidance_rescale = guidance_rescale
+        self.decode_mem_save = decode_mem_save
         if self.guidance_rescale > 1.0:
             self.use_cfg = True
         else:
@@ -76,7 +79,7 @@ class InferPipeline(ABC):
 
         return y
 
-    def vae_decode_video(self, x):
+    def vae_decode_video(self, x: ms.Tensor) -> ms.Tensor:
         """
         Args:
             x: (b c t h w), denoised latent
@@ -90,6 +93,21 @@ class InferPipeline(ABC):
             y.append(self.vae_decode(x_sample))
         y = ops.stack(y, axis=0)
 
+        return y
+
+    def vae_decode_video_mem_save(self, x: ms.Tensor) -> np.ndarray:
+        """Prevent OOM during decoding
+        x: (b c t h w) denoised latent
+        """
+        y = []
+        x = ops.transpose(x, (0, 2, 1, 3, 4))
+        b, t, c, h, w = x.shape
+        x = ops.reshape(x, (-1, 1, c, h, w))
+        for x_sample in tqdm(x):
+            y.append(self.vae_decode(x_sample).asnumpy())
+        y = np.concatenate(y, axis=0)
+        _, H, W, C = y.shape
+        y = np.reshape(y, (b, t, H, W, C))
         return y
 
     def data_prepare(self, inputs, save_npz=True):
@@ -163,5 +181,8 @@ class InferPipeline(ABC):
         else:
             # latents: (b c t h w)
             # out: (b T H W C)
-            images = self.vae_decode_video(latents)
+            if self.decode_mem_save:
+                images = self.vae_decode_video_mem_save(latents)
+            else:
+                images = self.vae_decode_video(latents)
         return images

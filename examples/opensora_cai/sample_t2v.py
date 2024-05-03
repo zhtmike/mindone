@@ -152,6 +152,7 @@ def main(args):
         guidance_rescale=args.guidance_scale,
         ddim_sampling=args.ddim_sampling,
         condition="text",
+        decode_mem_save=args.decode_mem_save,
     )
 
     # 4. print key info
@@ -316,6 +317,7 @@ def parse_args():
     parser.add_argument("--batch_size", default=4, type=int, help="infer batch size")
     parser.add_argument("--embed_path", type=str, default=None, help="path to t5 embedding")
     parser.add_argument("--ddim_sampling", type=str2bool, default=True, help="Whether to use DDIM for sampling")
+    parser.add_argument("--decode_mem_save", default=True, type=str2bool, help="Usa memory save way to do decoding")
     default_args = parser.parse_args()
     abs_path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ""))
     if default_args.config:

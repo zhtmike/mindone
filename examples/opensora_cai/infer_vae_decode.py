@@ -9,6 +9,7 @@ import numpy as np
 import yaml
 from opensora.models.autoencoder import SD_CONFIG, AutoencoderKL
 from opensora.utils.model_utils import _check_cfgs_in_parser, str2bool
+from tqdm import tqdm
 
 import mindspore as ms
 from mindspore import ops
@@ -60,7 +61,7 @@ def parse_args():
         "--latent_path",
         type=str,
         nargs="+",
-        default=["samples/denoised_latent_00.npz"],
+        default=["samples/denoised_latent_00.npy"],
         help="path(s) to save t5 embedding",
     )
     parser.add_argument(
@@ -77,6 +78,7 @@ def parse_args():
         help="video format for saving the sampling output, gif or mp4",
     )
     parser.add_argument("--fps", type=int, default=8, help="FPS in the saved video")
+    parser.add_argument("--mem_save", default=True, type=str2bool, help="Usa memory save way to do decoding")
     # MS new args
     parser.add_argument("--device_target", type=str, default="Ascend", help="Ascend or GPU")
     parser.add_argument("--mode", type=int, default=0, help="Running in GRAPH_MODE(0) or PYNATIVE_MODE(1) (default=0)")
@@ -117,6 +119,7 @@ if __name__ == "__main__":
     for param in vae.get_parameters():  # freeze vae
         param.requires_grad = False
 
+    @ms.jit
     def vae_decode(x):
         """
         Args:
@@ -134,7 +137,7 @@ if __name__ == "__main__":
 
         return y
 
-    def vae_decode_video(x):
+    def vae_decode_video(x: ms.Tensor) -> ms.Tensor:
         out = []
         for x_sample in x:
             # c t h w -> t c h w
@@ -144,13 +147,31 @@ if __name__ == "__main__":
 
         return out
 
+    def vae_decode_video_mem_save(x: ms.Tensor) -> np.ndarray:
+        """Prevent OOM during decoding
+        x: (b c t h w) denoised latent
+        """
+        y = []
+        x = ops.transpose(x, (0, 2, 1, 3, 4))
+        b, t, c, h, w = x.shape
+        x = ops.reshape(x, (-1, 1, c, h, w))
+        for x_sample in tqdm(x):
+            y.append(vae_decode(x_sample).asnumpy())
+        y = np.concatenate(y, axis=0)
+        _, H, W, C = y.shape
+        y = np.reshape(y, (b, t, H, W, C))
+        return y
+
     for lpath in args.latent_path:
         z = np.load(lpath)
         z = ms.Tensor(z)
 
         logger.info(f"Decoding for latent of shape {z.shape}, from {lpath}")
-        vids = vae_decode_video(z)
-        vids = vids.asnumpy()
+        if args.mem_save:
+            vids = vae_decode_video_mem_save(z)
+        else:
+            vids = vae_decode_video(z)
+            vids = vids.asnumpy()
 
         base = Path(os.path.basename(lpath)).with_suffix("")
         for i in range(vids.shape[0]):
