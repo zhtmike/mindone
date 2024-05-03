@@ -1,4 +1,4 @@
-from abc import ABC
+from typing import Optional
 
 import numpy as np
 from tqdm import tqdm
@@ -11,7 +11,7 @@ from ..diffusion import create_diffusion
 __all__ = ["InferPipeline"]
 
 
-class InferPipeline(ABC):
+class InferPipeline:
     """An Inference pipeline for diffusion model
 
     Args:
@@ -79,7 +79,7 @@ class InferPipeline(ABC):
 
         return y
 
-    def vae_decode_video(self, x: ms.Tensor) -> ms.Tensor:
+    def vae_decode_video(self, x: ms.Tensor) -> np.ndarray:
         """
         Args:
             x: (b c t h w), denoised latent
@@ -91,7 +91,7 @@ class InferPipeline(ABC):
             # c t h w -> t c h w
             x_sample = x_sample.permute(1, 0, 2, 3)
             y.append(self.vae_decode(x_sample))
-        y = ops.stack(y, axis=0)
+        y = ops.stack(y, axis=0).asnumpy()
 
         return y
 
@@ -146,7 +146,7 @@ class InferPipeline(ABC):
 
         return text_emb
 
-    def __call__(self, inputs, latent_save_fp=None):
+    def __call__(self, inputs: ms.Tensor, latent_save_fp: Optional[str] = None) -> np.ndarray:
         """
         args:
             inputs: dict

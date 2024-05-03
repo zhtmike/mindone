@@ -203,7 +203,6 @@ def main(args):
         # infer
         start_time = time.time()
         x_samples = pipeline(inputs, latent_save_fp=f"samples/denoised_latent_{i:02d}.npy")
-        x_samples = x_samples.asnumpy()
         batch_time = time.time() - start_time
 
         logger.info(
