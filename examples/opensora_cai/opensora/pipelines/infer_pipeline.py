@@ -116,7 +116,7 @@ class InferPipeline:
 
         if inputs["text_emb"] is None:
             text_tokens = inputs["text_tokens"]
-            text_emb = self.get_condition_embeddings(text_tokens, **{"mask": mask})
+            text_emb = self.get_condition_embeddings(text_tokens, **{"mask": mask}).to(ms.float32)
         else:
             text_emb = inputs["text_emb"]
             b, max_tokens, d = text_emb.shape
@@ -176,13 +176,14 @@ class InferPipeline:
             np.save(latent_save_fp, latents.asnumpy())
             print(f"Denoised latents saved in {latent_save_fp}")
 
-        if latents.dim() == 4:
-            images = self.vae_decode(latents)
-        else:
-            # latents: (b c t h w)
-            # out: (b T H W C)
-            if self.decode_mem_save:
-                images = self.vae_decode_video_mem_save(latents)
+        if self.vae is not None:
+            if latents.dim() == 4:
+                images = self.vae_decode(latents)
             else:
-                images = self.vae_decode_video(latents)
-        return images
+                if self.decode_mem_save:
+                    images = self.vae_decode_video_mem_save(latents)
+                else:
+                    images = self.vae_decode_video(latents)
+            return images
+        else:
+            return None
