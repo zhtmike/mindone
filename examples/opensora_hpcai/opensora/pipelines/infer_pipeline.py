@@ -1,3 +1,5 @@
+from abc import ABC
+
 import mindspore as ms
 from mindspore import ops
 
@@ -6,7 +8,7 @@ from ..schedulers.iddpm import create_diffusion
 __all__ = ["InferPipeline"]
 
 
-class InferPipeline:
+class InferPipeline(ABC):
     """An Inference pipeline for diffusion model
 
     Args:
@@ -95,7 +97,7 @@ class InferPipeline:
             # c t h w -> t c h w
             x_sample = x_sample.permute(1, 0, 2, 3)
             y.append(self.vae_decode(x_sample))
-        y = ops.stack(y, axis=0).asnumpy()
+        y = ops.stack(y, axis=0)
 
         return y
 

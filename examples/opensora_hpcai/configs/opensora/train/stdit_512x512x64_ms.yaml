@@ -5,7 +5,6 @@ pretrained_model_path: "models/OpenSora-v1-HQ-16x512x512.ckpt"
 
 sd_scale_factor: 0.18215
 enable_flash_attention: True
-enable_sequence_parallelism: False
 use_recompute: True
 
 # data

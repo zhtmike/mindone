@@ -51,16 +51,14 @@ class STDiTBlock(nn.Cell):
         self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
 
         self.attn = self.attn_cls(
-            hidden_size, num_heads=num_heads, qkv_bias=True, enable_flash_attention=enable_flashattn
-        )
-        self.cross_attn = self.mha_cls(
             hidden_size,
-            num_heads,
+            num_heads=num_heads,
+            qkv_bias=True,
             enable_flash_attention=enable_flashattn,
         )
+        self.cross_attn = self.mha_cls(hidden_size, num_heads, enable_flash_attention=enable_flashattn)
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         # TODO: check parsing approx_gelu
-
         self.mlp = Mlp(
             in_features=hidden_size, hidden_features=int(hidden_size * mlp_ratio), act_layer=approx_gelu, drop=0
         )
@@ -72,7 +70,10 @@ class STDiTBlock(nn.Cell):
         self.d_t = d_t
 
         self.attn_temp = self.attn_cls(
-            hidden_size, num_heads=num_heads, qkv_bias=True, enable_flash_attention=enable_flashattn
+            hidden_size,
+            num_heads=num_heads,
+            qkv_bias=True,
+            enable_flash_attention=enable_flashattn,
         )
 
     @staticmethod
@@ -376,7 +377,6 @@ class STDiT(nn.Cell):
         self.enable_layernorm_kernel = enable_layernorm_kernel
         self.space_scale = space_scale
         self.time_scale = time_scale
-        self.enable_sequence_parallelism = enable_sequence_parallelism
 
         assert patchify_conv3d_replace in [None, "linear", "conv2d"]
 
@@ -411,7 +411,7 @@ class STDiT(nn.Cell):
         )
 
         drop_path = np.linspace(0, drop_path, depth)
-        if self.enable_sequence_parallelism:
+        if enable_sequence_parallelism:
             self.blocks = nn.CellList(
                 [
                     SeqParallelSTDiTBlock(

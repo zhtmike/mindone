@@ -488,7 +488,15 @@ class SelfAttention(nn.Cell):
         proj_drop (bool): projection dropout
     """
 
-    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0.0, proj_drop=0.0, enable_flash_attention=False):
+    def __init__(
+        self,
+        dim,
+        num_heads=8,
+        qkv_bias=False,
+        attn_drop=0.0,
+        proj_drop=0.0,
+        enable_flash_attention=False,
+    ):
         super().__init__()
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
         self.num_heads = num_heads
@@ -897,9 +905,12 @@ class CaptionEmbedder(nn.Cell):
             drop_ids = force_drop_ids == 1
 
         # manually expand dims to avoid infer-shape bug in ms2.3 daily
-        caption = ops.where(
-            drop_ids[:, None, None, None], self.y_embedding[None, None, :, :], caption.to(self.y_embedding.dtype)
-        )
+        # FIXME: use ops.where when it works OK on semi-mode
+        # caption = ops.where(
+        #     drop_ids[:, None, None, None], self.y_embedding[None, None, :, :], caption.to(self.y_embedding.dtype)
+        # )
+        flag = drop_ids[:, None, None, None].astype(ms.float32)
+        caption = flag * self.y_embedding + (1.0 - flag) * caption.astype(self.y_embedding.dtype)
 
         return caption
 

@@ -60,7 +60,6 @@ def main(args):
     for param in vae.get_parameters():  # freeze vae
         param.requires_grad = False
 
-    @ms.jit
     def vae_decode(x):
         """
         Args:
@@ -68,8 +67,6 @@ def main(args):
         Return:
             y: (b H W 3), batch of images, normalized to [0, 1]
         """
-        b, c, h, w = x.shape
-
         y = vae.decode(x / args.sd_scale_factor)
         y = ops.clip_by_value((y + 1.0) / 2.0, clip_value_min=0.0, clip_value_max=1.0)
 
@@ -78,7 +75,7 @@ def main(args):
 
         return y
 
-    def vae_decode_video(x: ms.Tensor) -> ms.Tensor:
+    def vae_decode_video(x):
         out = []
         for x_sample in x:
             # c t h w -> t c h w
