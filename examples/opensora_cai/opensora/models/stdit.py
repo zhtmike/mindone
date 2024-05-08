@@ -306,7 +306,7 @@ class SeqParallelSTDiTBlock(nn.Cell):
 
         self.transpose.shard(((self.dp, 1, 1, 1),))
         self.add_tpe.shard(((self.dp, 1, 1), (1, 1, 1)))
-        self.add_t.shard(((self.dp, 1, 1), (self.dp, 1, 1)))
+        self.add_t.shard(((self.dp, 1, 1), (1, 1, 1)))
         self.split.shard(((self.dp, 1, 1),))
 
         self.norm1.layer_norm.shard(((self.dp, self.sp, 1), (1,), (1,)))
