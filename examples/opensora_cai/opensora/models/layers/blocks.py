@@ -906,13 +906,13 @@ class SeqParallelMLP(nn.Cell):
         self.mp = self.parallel_config.get("model_parallel", 1)
         self.sp = self.parallel_config.get("sequence_parallel", 1)
 
-        self.fc1.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
-        self.fc1.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
+        self.fc1.matmul.shard(((self.dp * self.sp, self.mp), (1, self.mp)))
+        self.fc1.bias_add.shard(((self.dp * self.sp, 1), (1,)))
 
         self.act.shard(((self.dp * self.sp, self.mp),))
 
-        self.fc2.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
-        self.fc2.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
+        self.fc2.matmul.shard(((self.dp * self.sp, self.mp), (1, self.mp)))
+        self.fc2.bias_add.shard(((self.dp * self.sp, 1), (1,)))
 
         self.drop.dropout.shard(((self.dp * self.sp, 1),))
 
