@@ -211,9 +211,7 @@ class MultiHeadCrossAttention(nn.Cell):
         ```
     """
 
-    def __init__(
-        self, d_model, num_heads, attn_drop=0.0, proj_drop=0.0, has_bias=True, enable_flash_attention=False, **kwargs
-    ):
+    def __init__(self, d_model, num_heads, attn_drop=0.0, proj_drop=0.0, has_bias=True, enable_flash_attention=False):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
@@ -488,16 +486,7 @@ class SelfAttention(nn.Cell):
         proj_drop (bool): projection dropout
     """
 
-    def __init__(
-        self,
-        dim,
-        num_heads=8,
-        qkv_bias=False,
-        attn_drop=0.0,
-        proj_drop=0.0,
-        enable_flash_attention=False,
-        **kwargs,
-    ):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0.0, proj_drop=0.0, enable_flash_attention=False):
         super().__init__()
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
         self.num_heads = num_heads
@@ -879,6 +868,53 @@ class Mlp(nn.Cell):
         x = self.fc2(x)
         x = self.drop(x)
         return x
+
+
+class SeqParallelMLP(nn.Cell):
+    def __init__(
+        self,
+        in_features: int,
+        hidden_features: Optional[int] = None,
+        out_features: Optional[int] = None,
+        act_layer: Type[nn.Cell] = nn.GELU,  # no-use
+        drop: float = 0.0,
+        parallel_config: Dict[str, Any] = {},
+    ) -> None:
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Dense(in_channels=in_features, out_channels=hidden_features, has_bias=True)
+        self.act = ops.GeLU()  # FIXME: hard coded
+        self.fc2 = nn.Dense(in_channels=hidden_features, out_channels=out_features, has_bias=True)
+        self.drop = nn.Dropout(p=drop)
+        self.parallel_config = parallel_config
+        self.shard()
+
+    def construct(self, x: Tensor) -> Tensor:
+        shape = x.shape
+        x = ops.reshape(x, (-1, x.shape[-1]))
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        x = ops.reshape(x, shape)
+        return x
+
+    def shard(self):
+        self.dp = self.parallel_config.get("data_parallel", 1)
+        self.mp = self.parallel_config.get("model_parallel", 1)
+        self.sp = self.parallel_config.get("sequence_parallel", 1)
+
+        self.fc1.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
+        self.fc1.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
+
+        self.act.shard(((self.dp * self.sp, self.mp),))
+
+        self.fc2.matmul.shard(((self.dp * self.sp, 1), (self.mp, 1)))
+        self.fc2.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
+
+        self.drop.dropout.shard(((self.dp * self.sp, 1),))
 
 
 #################################################################################
