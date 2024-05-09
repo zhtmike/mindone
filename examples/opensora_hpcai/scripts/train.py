@@ -158,6 +158,9 @@ def check_sequence_parallel_condition(args, device_num):
             f"Number of frames `{args.num_frames}` must be divisible by the sequence parallel `{args.sequence_parallel}`."
         )
 
+    if args.model_parallel > 1:
+        raise NotImplementedError("Model parallel is not supported yet.")
+
 
 def set_all_reduce_fusion(
     params,

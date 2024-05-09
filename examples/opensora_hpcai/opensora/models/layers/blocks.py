@@ -343,6 +343,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.tile_fa = ops.Tile()
         # self.pad = ops.PadV3()
         self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
+        # FIXME: stride_slice does not support non-zero mask in semi-parallel mode? Remove it once FA supports dim=72.
         self.stride_slice = ops.StridedSlice(15, 7, 0, 0, 0)  # for head_dim=72 only
         self.shard()
 

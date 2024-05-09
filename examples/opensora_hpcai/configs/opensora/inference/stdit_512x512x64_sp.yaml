@@ -22,8 +22,8 @@ ddim_sampling: True
 
 # parallel
 data_parallel: 4
-model_parallel: 2
-sequence_parallel: 1
+model_parallel: 1
+sequence_parallel: 2
 
 captions:
 - "Disco light leaks disco ball light reflections shaped rectangular and line with motion blur effect."
