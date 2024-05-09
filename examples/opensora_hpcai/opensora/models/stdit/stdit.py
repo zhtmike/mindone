@@ -210,8 +210,7 @@ class SeqParallelSTDiTBlock(nn.Cell):
         self.add = ops.Add()
         self.mult = ops.Mul()
         self.transpose = ops.Transpose()
-        self.add_tpe = ops.Add()
-        self.add_t = ops.Add()
+        self.add_1 = ops.Add()
         self.split = ops.Split(axis=1, output_num=6)
 
         self.t2i_modulate_add_0 = ops.Add()
@@ -270,7 +269,7 @@ class SeqParallelSTDiTBlock(nn.Cell):
         B, _, _ = x.shape
 
         t = ops.reshape(t, (B, 6, -1))
-        t = self.add_t(t, self.scale_shift_table)
+        t = self.add_1(t, self.scale_shift_table)
 
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.split(t)
         x_m = self.t2i_modulate(self.norm1(x), shift_msa, scale_msa)
@@ -285,7 +284,7 @@ class SeqParallelSTDiTBlock(nn.Cell):
         # temporal branch
         x_t = self._rearrange_in_T(x, T=self.d_t)
         if tpe is not None:
-            x_t = self.add_tpe(x_t, tpe)
+            x_t = self.add_1(x_t, tpe)
         x_t = self.attn_temp(x_t)
 
         x_t = self._rearrange_out_T(x_t, S=self.d_s)
@@ -310,8 +309,7 @@ class SeqParallelSTDiTBlock(nn.Cell):
         self.mult.shard(((self.dp, self.sp, 1), (self.dp, 1, 1)))
 
         self.transpose.shard(((self.dp, 1, 1, 1),))
-        self.add_tpe.shard(((self.dp, 1, 1), (1, 1, 1)))
-        self.add_t.shard(((self.dp, 1, 1), (1, 1, 1)))
+        self.add_1.shard(((self.dp, 1, 1), (1, 1, 1)))
         self.split.shard(((self.dp, 1, 1),))
 
         self.norm1.layer_norm.shard(((self.dp, self.sp, 1), (1,), (1,)))
@@ -408,6 +406,7 @@ class STDiT(nn.Cell):
             uncond_prob=class_dropout_prob,
             act_layer=approx_gelu,
             token_num=model_max_length,
+            requires_grad=enable_sequence_parallelism,  # FIXME: disable gradient for semi-parallel
         )
 
         drop_path = np.linspace(0, drop_path, depth)
@@ -456,10 +455,6 @@ class STDiT(nn.Cell):
                 self.freeze_not_temporal()
             elif freeze == "text":
                 self.freeze_text()
-
-        # sequence parallel related configs
-        self.enable_sequence_parallelism = enable_sequence_parallelism
-        self.sp_rank = None
 
         if use_recompute:
             for block in self.blocks:

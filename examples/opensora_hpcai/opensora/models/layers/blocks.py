@@ -882,7 +882,7 @@ class CaptionEmbedder(nn.Cell):
     """
 
     # FIXME: rm nn.GELU instantiate for parallel training
-    def __init__(self, in_channels, hidden_size, uncond_prob, act_layer=nn.GELU, token_num=120):
+    def __init__(self, in_channels, hidden_size, uncond_prob, act_layer=nn.GELU, token_num=120, requires_grad=False):
         super().__init__()
 
         self.y_proj = Mlp(
@@ -891,7 +891,7 @@ class CaptionEmbedder(nn.Cell):
 
         y_embedding = ops.randn(token_num, in_channels) / in_channels**0.5
         # just for token dropping replacement, not learnable
-        self.y_embedding = ms.Parameter(Tensor(y_embedding, dtype=ms.float32), requires_grad=False)
+        self.y_embedding = ms.Parameter(Tensor(y_embedding, dtype=ms.float32), requires_grad=requires_grad)
 
         self.uncond_prob = uncond_prob
 
