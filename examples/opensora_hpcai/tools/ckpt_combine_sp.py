@@ -15,6 +15,10 @@ def main():
     stretegy_file = os.path.join(os.path.dirname(args.src), "src_strategy.ckpt")
     ms.transform_checkpoints(args.src, args.dest, "full_", stretegy_file, None)
 
+    output_path = os.path.join(args.dest, "rank_0", "full_0.ckpt")
+    assert os.path.isfile(output_path)
+    print(f"Merged checkpoint is saved as `{output_path}`.")
+
 
 if __name__ == "__main__":
     main()

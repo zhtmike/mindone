@@ -11,6 +11,7 @@ import yaml
 
 import mindspore as ms
 from mindspore import nn
+from mindspore.communication.management import get_group_size, get_rank, init
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
@@ -33,11 +34,24 @@ from mindone.visualize.videos import save_videos
 logger = logging.getLogger(__name__)
 
 
-def init_env(mode, device_target, enable_dvm=False):
-    ms.set_context(
-        mode=mode,
-        device_target=device_target,
-    )
+def init_env(
+    mode: int,
+    device_target: str,
+    enable_dvm: bool = False,
+    use_parallel: bool = False,
+    enable_sequence_parallel: bool = False,
+):
+    ms.set_context(mode=mode, device_target=device_target)
+
+    if use_parallel and enable_sequence_parallel:
+        init()
+        device_num = get_group_size()
+        rank_id = get_rank()
+        logger.debug(f"rank_id: {rank_id}, device_num: {device_num}")
+        ms.set_auto_parallel_context(
+            parallel_mode=ms.ParallelMode.SEMI_AUTO_PARALLEL, enable_alltoall=True, device_num=device_num
+        )
+
     if enable_dvm:
         ms.set_context(enable_graph_kernel=True)
 
@@ -52,7 +66,13 @@ def main(args):
     set_logger(name="", output_dir=save_dir)
 
     # 1. init env
-    init_env(args.mode, args.device_target, args.enable_dvm)
+    init_env(
+        args.mode,
+        args.device_target,
+        enable_dvm=args.enable_dvm,
+        use_parallel=args.use_parallel,
+        enable_sequence_parallel=args.enable_sequence_parallelism,
+    )
     set_random_seed(args.seed)
 
     # get captions from cfg or prompt_path
@@ -147,15 +167,26 @@ def main(args):
         for fp in embed_paths:
             prompt_prefix.append(os.path.basename(fp)[:-4])
             dat = np.load(fp)
-            text_tokens.append(dat["tokens"])
+            try:
+                text_tokens.append(dat["tokens"])
+            except KeyError:
+                pass
             mask.append(dat["mask"])
             text_emb.append(dat["text_emb"])
-        text_tokens = np.concatenate(text_tokens)
-        mask = np.concatenate(mask)
-        text_emb = np.concatenate(text_emb)
+        if len(text_tokens) > 0:
+            text_tokens = np.concatenate(text_tokens)
+            text_tokens = ms.Tensor(text_tokens)
+        else:
+            text_tokens = None
+
+        if mask.shape[0] == 1 and text_emb.shape[0] == 1:
+            mask = np.concatenate(mask)
+            text_emb = np.concatenate(text_emb)
+        else:
+            mask = np.stack(mask)
+            text_emb = np.stack(text_emb)
 
         num_prompts = text_emb.shape[0]
-        text_tokens = ms.Tensor(text_tokens)
         mask = ms.Tensor(mask, dtype=ms.uint8)
         text_emb = ms.Tensor(text_emb, dtype=ms.float32)
         text_encoder = None
@@ -395,6 +426,7 @@ def parse_args():
         type=int,
         help="number of devices for model parallel (slicing along heads) when use sequence parallelism.",
     )
+    parser.add_argument("--use_parallel", default=False, type=str2bool, help="use parallel")
     parser.add_argument(
         "--sequence_parallel",
         default=1,

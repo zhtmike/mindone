@@ -21,7 +21,7 @@ seed: 42
 ddim_sampling: True
 
 # parallel
-data_parallel: 4
+data_parallel: 1
 model_parallel: 1
 sequence_parallel: 2
 

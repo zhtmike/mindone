@@ -41,7 +41,7 @@ ckpt_max_keep: 1
 
 parallel_mode: "semi"
 data_parallel: 4
-model_parallel: 2
-sequence_parallel: 1
+model_parallel: 1
+sequence_parallel: 2
 
 add_datetime: False
