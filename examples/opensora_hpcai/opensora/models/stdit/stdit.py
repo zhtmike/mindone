@@ -220,8 +220,7 @@ class SeqParallelSTDiTBlock(nn.Cell):
         self.parallel_config = parallel_config
         self.shard()
 
-    @staticmethod
-    def _rearrange_in_S(x, T):
+    def _rearrange_in_S(self, x, T):
         # x_s = rearrange(x_m, "B (T S) C -> (B T) S C", T=self.d_t, S=self.d_s)
         B, TS, C = x.shape
         S = TS // T
