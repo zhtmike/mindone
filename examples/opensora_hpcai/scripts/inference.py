@@ -49,11 +49,19 @@ def init_env(
         rank_id = get_rank()
         logger.debug(f"rank_id: {rank_id}, device_num: {device_num}")
         ms.set_auto_parallel_context(
-            parallel_mode=ms.ParallelMode.SEMI_AUTO_PARALLEL, enable_alltoall=True, device_num=device_num
+            parallel_mode=ms.ParallelMode.SEMI_AUTO_PARALLEL,
+            enable_alltoall=True,
+            device_num=device_num,
+            full_batch=True,
         )
+    else:
+        rank_id = 0
+        device_num = 1
 
     if enable_dvm:
         ms.set_context(enable_graph_kernel=True)
+
+    return rank_id, device_num
 
 
 def main(args):
@@ -66,7 +74,7 @@ def main(args):
     set_logger(name="", output_dir=save_dir)
 
     # 1. init env
-    init_env(
+    rank_id, _ = init_env(
         args.mode,
         args.device_target,
         enable_dvm=args.enable_dvm,
@@ -179,7 +187,7 @@ def main(args):
         else:
             text_tokens = None
 
-        if mask.shape[0] == 1 and text_emb.shape[0] == 1:
+        if mask[0].shape[0] == 1 and text_emb[0].shape[0] == 1:
             mask = np.concatenate(mask)
             text_emb = np.concatenate(text_emb)
         else:
@@ -259,6 +267,9 @@ def main(args):
         logger.info(
             f"Batch time cost: {batch_time:.3f}s, sampling speed: {args.sampling_steps*ns/batch_time:.2f} step/s"
         )
+
+        if rank_id > 0 and args.enable_sequence_parallelism:
+            return
 
         # save result
         if x_samples is not None:
