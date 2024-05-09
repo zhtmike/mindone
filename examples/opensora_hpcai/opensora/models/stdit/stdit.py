@@ -684,7 +684,7 @@ class STDiT(nn.Cell):
                         new_sd[k.replace(".qkv.", ".q_linear.")] = ms.Parameter(q_linear)
                         new_sd[k.replace(".qkv.", ".k_linear.")] = ms.Parameter(k_linear)
                         new_sd[k.replace(".qkv.", ".v_linear.")] = ms.Parameter(v_linear)
-                    elif ".scale_shift_table" in k and "final_layer." not in k:
+                    elif ".scale_shift_table" in k and "final_layer." not in k and len(v.shape) == 2:
                         new_sd[k] = ms.Parameter(v[None, ...])
                     else:
                         new_sd[k] = v
