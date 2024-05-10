@@ -4,7 +4,7 @@
 #     IDDPM: https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/gaussian_diffusion.py
 
 from .diffusion_utils import LossType, ModelMeanType, ModelVarType, get_named_beta_schedule
-from .respace import SpacedDiffusion, space_timesteps
+from .respace import SpacedDiffusion, SpacedDiffusionNP, space_timesteps
 
 
 def create_diffusion(
@@ -16,6 +16,7 @@ def create_diffusion(
     learn_sigma=True,
     rescale_learned_sigmas=False,
     diffusion_steps=1000,
+    use_numpy=False,
 ):
     betas = get_named_beta_schedule(noise_schedule, diffusion_steps)
     if use_kl:
@@ -26,7 +27,9 @@ def create_diffusion(
         loss_type = LossType.MSE
     if timestep_respacing is None or timestep_respacing == "":
         timestep_respacing = [diffusion_steps]
-    return SpacedDiffusion(
+
+    diffusion = SpacedDiffusion if not use_numpy else SpacedDiffusionNP
+    return diffusion(
         use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
         betas=betas,
         model_mean_type=(ModelMeanType.EPSILON if not predict_xstart else ModelMeanType.START_X),

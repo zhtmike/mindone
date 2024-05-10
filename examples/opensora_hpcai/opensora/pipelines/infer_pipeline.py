@@ -31,6 +31,7 @@ class InferPipeline(ABC):
         num_inference_steps=50,
         ddim_sampling=True,
         micro_batch_size=None,
+        use_numpy=False,
     ):
         super().__init__()
         self.model = model
@@ -46,7 +47,7 @@ class InferPipeline(ABC):
             self.use_cfg = False
 
         self.text_encoder = text_encoder
-        self.diffusion = create_diffusion(str(num_inference_steps))
+        self.diffusion = create_diffusion(str(num_inference_steps), use_numpy=use_numpy)
         if ddim_sampling:
             self.sampling_func = self.diffusion.ddim_sample_loop
         else:

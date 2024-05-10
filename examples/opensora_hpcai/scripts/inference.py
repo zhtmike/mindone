@@ -212,6 +212,7 @@ def main(args):
         ddim_sampling=args.ddim_sampling,
         condition="text",
         micro_batch_size=args.vae_micro_batch_size,
+        use_numpy=args.args.enable_sequence_parallelism,
     )
 
     # 4. print key info
