@@ -462,7 +462,7 @@ def main(args):
     ofm_cb = OverflowMonitor()
     callback.append(ofm_cb)
 
-    if rank_id == 0 and parallel_mode == "data":
+    if rank_id == 0 and not args.enable_sequence_parallelism:
         save_cb = EvalSaveCallback(
             network=latent_diffusion_with_loss.network,
             rank_id=rank_id,
@@ -482,7 +482,7 @@ def main(args):
         callback.append(save_cb)
         if args.profile:
             callback.append(ProfilerCallback())
-    elif parallel_mode == "semi":
+    else:
         save_cb = EvalSaveCallback(
             network=latent_diffusion_with_loss.network,
             rank_id=None,

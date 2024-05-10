@@ -269,7 +269,7 @@ def main(args):
         )
 
         if rank_id > 0 and args.enable_sequence_parallelism:
-            return
+            continue
 
         # save result
         if x_samples is not None:
