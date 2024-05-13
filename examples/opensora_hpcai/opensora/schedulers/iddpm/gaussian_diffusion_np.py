@@ -7,6 +7,7 @@ from typing import Tuple
 
 import numpy as np
 
+import mindspore as ms
 from mindspore import Tensor
 
 from .diffusion_utils import ModelMeanType, ModelVarType
@@ -127,14 +128,14 @@ class GaussianDiffusionNP:
         B, C, F = x.shape[:3]
 
         assert t.shape == (B,)
-        model_output = model(Tensor(x), Tensor(t), **model_kwargs).asnumpy()
+        model_output = model(Tensor(x, dtype=ms.float32), Tensor(t, dtype=ms.int64), **model_kwargs).asnumpy()
         if isinstance(model_output, tuple):
             model_output, extra = model_output
         else:
             extra = None
         if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
             assert model_output.shape == (B, C * 2, F, *x.shape[3:])
-            model_output, model_var_values = np.split(model_output, C, axis=1)
+            model_output, model_var_values = np.split(model_output, 2, axis=1)
 
             min_log = _extract_into_tensor(self.posterior_log_variance_clipped, t, x.shape)
             max_log = _extract_into_tensor(self.log_betas, t, x.shape)
@@ -256,7 +257,7 @@ class GaussianDiffusionNP:
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
         )
-        noise = np.random.randn(x.shape)
+        noise = np.random.randn(*x.shape)
         nonzero_mask = (t != 0).astype(np.float32).reshape(-1, *([1] * (len(x.shape) - 1)))  # no noise when t == 0
         if cond_fn is not None:
             out["mean"] = self.condition_mean(cond_fn, out, x, t, model_kwargs=model_kwargs)
@@ -324,7 +325,10 @@ class GaussianDiffusionNP:
         """
         assert isinstance(shape, (tuple, list))
         if noise is not None:
-            img = noise
+            if isinstance(noise, Tensor):
+                img = noise.asnumpy()
+            else:
+                img = noise
         else:
             img = np.random.randn(*shape)
         indices = list(range(self.num_timesteps))[::-1]
@@ -384,7 +388,7 @@ class GaussianDiffusionNP:
         alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t, x.shape)
         sigma = eta * np.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar)) * np.sqrt(1 - alpha_bar / alpha_bar_prev)
         # Equation 12.
-        noise = np.random.randn(x.shape)
+        noise = np.random.randn(*x.shape)
         mean_pred = out["pred_xstart"] * np.sqrt(alpha_bar_prev) + np.sqrt(1 - alpha_bar_prev - sigma**2) * eps
         nonzero_mask = (t != 0).astype(np.float32).reshape(-1, *([1] * (len(x.shape) - 1)))  # no noise when t == 0
         sample = mean_pred + nonzero_mask * sigma * noise
@@ -419,7 +423,7 @@ class GaussianDiffusionNP:
             eta=eta,
         ):
             final = sample
-        return final["sample"]
+        return Tensor(final["sample"])
 
     def ddim_sample_loop_progressive(
         self,

@@ -122,6 +122,8 @@ def main(args):
     )
     latte_model = STDiT_XL_2(**model_extra_args)
     latte_model = latte_model.set_train(False)
+    for param in latte_model.trainable_params():
+        param.requires_grad = False
 
     dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16}
     if args.dtype in ["fp16", "bf16"]:
@@ -212,7 +214,7 @@ def main(args):
         ddim_sampling=args.ddim_sampling,
         condition="text",
         micro_batch_size=args.vae_micro_batch_size,
-        use_numpy=args.args.enable_sequence_parallelism,
+        use_numpy=args.use_numpy_sampler,
     )
 
     # 4. print key info
@@ -445,6 +447,7 @@ def parse_args():
         type=int,
         help="number of devices for sequence parallel (slicing along sequence length) when use sequence parallelism.",
     )
+    parser.add_argument("--use_numpy_sampler", default=False, type=str2bool, help="use numpy sampler.")
     default_args = parser.parse_args()
 
     __dir__ = os.path.dirname(os.path.abspath(__file__))

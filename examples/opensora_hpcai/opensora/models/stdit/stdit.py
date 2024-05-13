@@ -258,7 +258,7 @@ class SeqParallelSTDiTBlock(nn.Cell):
         x = self.t2i_modulate_add_1(x, shift)
         return x
 
-    def construct(self, x, y, t, mask=None, tpe=None):
+    def construct(self, x: Tensor, y: Tensor, t: Tensor, mask: Tensor, tpe: Tensor):
         """
         x: (B N C_x)
         y: (1 B*N_tokens C_y)
@@ -282,8 +282,7 @@ class SeqParallelSTDiTBlock(nn.Cell):
 
         # temporal branch
         x_t = self._rearrange_in_T(x, T=self.d_t)
-        if tpe is not None:
-            x_t = self.add_1(x_t, tpe)
+        x_t = self.add_1(x_t, tpe)
         x_t = self.attn_temp(x_t)
 
         x_t = self._rearrange_out_T(x_t, S=self.d_s)
@@ -374,6 +373,7 @@ class STDiT(nn.Cell):
         self.enable_layernorm_kernel = enable_layernorm_kernel
         self.space_scale = space_scale
         self.time_scale = time_scale
+        self.enable_sequence_parallelism = enable_sequence_parallelism
 
         assert patchify_conv3d_replace in [None, "linear", "conv2d"]
 
@@ -502,10 +502,10 @@ class STDiT(nn.Cell):
         # x = rearrange(x, "B T S C -> B (T S) C")
         x = ops.reshape(x, (B, TS, C))
 
-        t = self.t_embedder(timestep, dtype=x.dtype)  # [B, C]
+        t = self.t_embedder(timestep)  # [B, C]
         # why project again on t ?
         t0 = self.t_block(t)  # [B, C]
-        y = self.y_embedder(y, self.training)  # [B, 1, N_token, C]
+        y = self.y_embedder(y)  # [B, 1, N_token, C]
 
         # (b 1 max_tokens d_t) -> (b max_tokens d_t)  -> (1 b*max_tokens d_t)
         y = y.squeeze(1).view(1, -1, x.shape[-1])
@@ -514,6 +514,8 @@ class STDiT(nn.Cell):
         for i, block in enumerate(self.blocks):
             if i == 0:
                 tpe = self.pos_embed_temporal
+            elif self.enable_sequence_parallelism:
+                tpe = ops.zeros_like(self.pos_embed_temporal)
             else:
                 tpe = None
 

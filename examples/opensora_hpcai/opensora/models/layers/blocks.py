@@ -1,4 +1,3 @@
-import math
 import numbers
 from typing import Any, Dict, Optional, Tuple, Type
 
@@ -74,14 +73,12 @@ class SeqParallelAttention(nn.Cell):
         num_heads: int,
         dim_head: int,
         attn_drop: float = 0.0,
-        has_mask: bool = False,
         parallel_config: Dict[str, Any] = {},
     ) -> None:
         super().__init__()
         self.scale = ms.Tensor(dim_head**-0.5, dtype=ms.float32)
         self.num_heads = num_heads
         self.dim_head = dim_head
-        self.has_mask = has_mask
 
         self.bmm = ops.BatchMatMul()
         self.mul = ops.Mul()
@@ -93,10 +90,9 @@ class SeqParallelAttention(nn.Cell):
 
         self.one = ms.Tensor(1, dtype=ms.float32)
 
-        if self.has_mask:
-            self.sub = ops.Sub()
-            self.mul_mask = ops.Mul()
-            self.add = ops.Add()
+        self.sub = ops.Sub()
+        self.mul_mask = ops.Mul()
+        self.add = ops.Add()
 
         self.minus_inf = Tensor(np.finfo(np.float32).min, dtype=ms.float32)
 
@@ -116,7 +112,6 @@ class SeqParallelAttention(nn.Cell):
         sim = sim.to(ms.float32)
 
         if mask is not None:
-            assert self.has_mask
             mask = self.sub(self.one, mask.to(ms.float32))
             mask = self.mul_mask(mask, self.minus_inf)
             sim = self.add(mask, sim)
@@ -183,19 +178,19 @@ class SeqParallelAttention(nn.Cell):
 
         self.transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
-        if self.has_mask:
-            self.sub.shard(((), (self.dp, 1, 1, self.sp_co, 1)))
+        # mask
+        self.sub.shard(((), (self.dp, 1, 1, self.sp_co, 1)))
 
-            self.mul_mask.shard(((self.dp, 1, 1, self.sp_co, 1), ()))
+        self.mul_mask.shard(((self.dp, 1, 1, self.sp_co, 1), ()))
 
-            self.add.shard(((self.dp, 1, 1, self.sp_co, 1), (self.dp, self.sp_ds, self.mp, self.sp_co, 1)))
-            self.add.add_prim_attr(
-                "layout",
-                {
-                    "dev_matrix": (self.dp, self.sp_co, self.sp_ds, self.mp, 1),
-                    "input_tensor_map": ((4, -1, -1, 3, 0), (4, 2, 1, 3, 0)),
-                },
-            )
+        self.add.shard(((self.dp, 1, 1, self.sp_co, 1), (self.dp, self.sp_ds, self.mp, self.sp_co, 1)))
+        self.add.add_prim_attr(
+            "layout",
+            {
+                "dev_matrix": (self.dp, self.sp_co, self.sp_ds, self.mp, 1),
+                "input_tensor_map": ((4, -1, -1, 3, 0), (4, 2, 1, 3, 0)),
+            },
+        )
 
 
 class MultiHeadCrossAttention(nn.Cell):
@@ -360,7 +355,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
             )
         else:
             self.attention = SeqParallelAttention(
-                self.num_heads, self.head_dim, attn_drop=attn_drop, has_mask=True, parallel_config=parallel_config
+                self.num_heads, self.head_dim, attn_drop=attn_drop, parallel_config=parallel_config
             )
 
     def _rearange_in(self, x, b, n, h, transpose=False):
@@ -616,7 +611,7 @@ class SeqParallelSelfAttention(nn.Cell):
             )
         else:
             self.attention = SeqParallelAttention(
-                self.num_heads, self.head_dim, attn_drop=attn_drop, has_mask=False, parallel_config=parallel_config
+                self.num_heads, self.head_dim, attn_drop=attn_drop, parallel_config=parallel_config
             )
 
     def _rearange_in(self, x, b, n, h, transpose=False):
@@ -841,18 +836,15 @@ class TimestepEmbedder(nn.Cell):
         """
         # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
         half = dim // 2
-        freqs = ops.exp(-math.log(max_period) * ops.arange(start=0, end=half, dtype=ms.float32) / half)
+        freqs = ops.exp(-ms.numpy.log(max_period) * ops.arange(start=0, end=half, dtype=ms.float32) / half)
         args = t[:, None].float() * freqs[None]
         embedding = ops.cat([ops.cos(args), ops.sin(args)], axis=-1)
         if dim % 2:
             embedding = ops.cat([embedding, ops.zeros_like(embedding[:, :1])], axis=-1)
         return embedding
 
-    def construct(self, t, dtype):
+    def construct(self, t):
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
-        # diff
-        if t_freq.dtype != dtype:
-            t_freq = t_freq.to(dtype)
         t_emb = self.mlp(t_freq)
         return t_emb
 
@@ -869,9 +861,10 @@ class T2IFinalLayer(nn.Cell):
         self.linear = nn.Dense(hidden_size, num_patch * out_channels, has_bias=True)
         self.scale_shift_table = ms.Parameter(ops.randn(2, hidden_size) / hidden_size**0.5)
         self.out_channels = out_channels
+        self.split = ops.Split(axis=1, output_num=2)
 
     def construct(self, x, t):
-        shift, scale = (self.scale_shift_table[None] + t[:, None]).chunk(2, axis=1)
+        shift, scale = self.split(self.scale_shift_table[None] + t[:, None])
         x = t2i_modulate(self.norm_final(x), shift, scale)
         x = self.linear(x)
         return x
@@ -895,6 +888,7 @@ class CaptionEmbedder(nn.Cell):
         self.y_embedding = ms.Parameter(Tensor(y_embedding, dtype=ms.float32), requires_grad=requires_grad)
 
         self.uncond_prob = uncond_prob
+        self.use_dropout = self.uncond_prob > 0
 
     def token_drop(self, caption, force_drop_ids=None):
         """
@@ -915,11 +909,11 @@ class CaptionEmbedder(nn.Cell):
 
         return caption
 
-    def construct(self, caption, train, force_drop_ids=None):
-        if train:
+    def construct(self, caption, force_drop_ids=None):
+        if self.training:
             assert caption.shape[2:] == self.y_embedding.shape
-        use_dropout = self.uncond_prob > 0
-        if (train and use_dropout) or (force_drop_ids is not None):
+
+        if (self.training and self.use_dropout) or (force_drop_ids is not None):
             caption = self.token_drop(caption, force_drop_ids)
         caption = self.y_proj(caption)
         return caption
@@ -1032,7 +1026,7 @@ class Mlp(nn.Cell):
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Dense(in_channels=in_features, out_channels=hidden_features, has_bias=True)
-        self.act = act_layer()
+        self.act = ops.GeLU()  # FIXME: hard coded
         self.fc2 = nn.Dense(in_channels=hidden_features, out_channels=out_features, has_bias=True)
         self.drop = nn.Dropout(p=drop)
 
