@@ -68,6 +68,8 @@ def main(args):
         Return:
             y: (b H W 3), batch of images, normalized to [0, 1]
         """
+        b, c, h, w = x.shape
+
         y = vae.decode(x / args.sd_scale_factor)
         y = ops.clip_by_value((y + 1.0) / 2.0, clip_value_min=0.0, clip_value_max=1.0)
 

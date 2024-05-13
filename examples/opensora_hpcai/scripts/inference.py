@@ -41,6 +41,10 @@ def init_env(
     enable_sequence_parallel: bool = False,
     debug: bool = False,
 ):
+    if debug and mode == ms.GRAPH_MODE:  # force PyNative mode when debugging
+        logger.warning("Debug mode is on, switching execution mode to PyNative.")
+        mode = ms.PYNATIVE_MODE
+
     ms.set_context(mode=mode, device_target=device_target)
 
     if use_parallel and enable_sequence_parallel:
@@ -181,6 +185,7 @@ def main(args):
                 pass
             mask.append(dat["mask"])
             text_emb.append(dat["text_emb"])
+
         if len(text_tokens) > 0:
             text_tokens = np.concatenate(text_tokens)
             text_tokens = ms.Tensor(text_tokens)

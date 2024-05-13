@@ -1167,7 +1167,7 @@ class TimestepEmbedder(nn.Cell):
             embedding = ops.cat([embedding, ops.zeros_like(embedding[:, :1])], axis=-1)
         return embedding
 
-    def construct(self, t):
+    def construct(self, t: Tensor):
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         t_emb = self.mlp(t_freq)
         return t_emb
