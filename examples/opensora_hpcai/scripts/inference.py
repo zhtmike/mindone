@@ -10,7 +10,7 @@ import numpy as np
 import yaml
 
 import mindspore as ms
-from mindspore import nn
+from mindspore import nn, ops
 from mindspore.communication.management import get_group_size, get_rank, init
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
@@ -137,6 +137,7 @@ def main(args):
                 SeqParallelAttention,
                 nn.SiLU,
                 nn.GELU,
+                ops.GeLU,
             ],  # NOTE: keep it the same as training setting
         )
 
@@ -214,7 +215,6 @@ def main(args):
         ddim_sampling=args.ddim_sampling,
         condition="text",
         micro_batch_size=args.vae_micro_batch_size,
-        use_numpy=args.use_numpy_sampler,
     )
 
     # 4. print key info
@@ -421,7 +421,6 @@ def parse_args():
         help="if False, skip vae decode to save memory (you can use infer_vae_decode.py to decode the saved denoised latent later.",
     )
     parser.add_argument("--ddim_sampling", type=str2bool, default=True, help="Whether to use DDIM for sampling")
-    parser.add_argument("--decode_mem_save", default=True, type=str2bool, help="Usa memory save way to do decoding")
     parser.add_argument(
         "--enable_sequence_parallelism",
         default=False,
@@ -447,7 +446,6 @@ def parse_args():
         type=int,
         help="number of devices for sequence parallel (slicing along sequence length) when use sequence parallelism.",
     )
-    parser.add_argument("--use_numpy_sampler", default=False, type=str2bool, help="use numpy sampler.")
     default_args = parser.parse_args()
 
     __dir__ = os.path.dirname(os.path.abspath(__file__))

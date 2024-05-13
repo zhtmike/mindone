@@ -11,7 +11,7 @@ from typing import Tuple
 import yaml
 
 import mindspore as ms
-from mindspore import Model, nn
+from mindspore import Model, nn, ops
 from mindspore.communication.management import get_group_size, get_rank, init
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
 from mindspore.train.callback import TimeMonitor
@@ -242,7 +242,7 @@ def main(args):
             latte_model,
             amp_level=args.amp_level,
             dtype=dtype_map[args.dtype],
-            custom_fp32_cells=[LayerNorm, Attention, SeqParallelAttention, nn.SiLU, nn.GELU],
+            custom_fp32_cells=[LayerNorm, Attention, SeqParallelAttention, nn.SiLU, nn.GELU, ops.GeLU],
         )
     # load checkpoint
     if len(args.pretrained_model_path) > 0:
