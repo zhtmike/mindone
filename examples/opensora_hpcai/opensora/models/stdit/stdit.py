@@ -540,7 +540,7 @@ class STDiT(nn.Cell):
         half = x[: len(x) // 2]
         combined = ops.cat([half, half], axis=0)
 
-        model_out = self.construct(combined, t, y=y, mask=mask)
+        model_out = self(combined, t, y=y, mask=mask)
         # torch only takes the first 3 dimension for eps. but for z=4, out z=8, the first 4 dims are for eps, the rest 4 dim are for variance.
         eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels :]
         cond_eps, uncond_eps = ops.split(eps, len(eps) // 2, axis=0)

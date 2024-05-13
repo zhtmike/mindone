@@ -31,7 +31,6 @@ class InferPipeline(ABC):
         num_inference_steps=50,
         ddim_sampling=True,
         micro_batch_size=None,
-        use_numpy=False,
     ):
         super().__init__()
         self.model = model
@@ -47,7 +46,7 @@ class InferPipeline(ABC):
             self.use_cfg = False
 
         self.text_encoder = text_encoder
-        self.diffusion = create_diffusion(str(num_inference_steps), use_numpy=use_numpy)
+        self.diffusion = create_diffusion(str(num_inference_steps))
         if ddim_sampling:
             self.sampling_func = self.diffusion.ddim_sample_loop
         else:
@@ -161,7 +160,7 @@ class InferPipeline(ABC):
             latents, _ = latents.chunk(2, axis=0)
         else:
             latents = self.sampling_func(
-                self.model.construct, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True
+                self.model, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True
             )
 
         if self.vae is not None:

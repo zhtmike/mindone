@@ -421,12 +421,12 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
                 mask = self.tile(mask, (1, 1, 1, n, 1))
             out = self.attention(q, k, v, mask)
         else:
-            q = self._rearange_in_fa(q, b, n, h).to(ms.float16)
-            k = self._rearange_in_fa(k, b, n_c, h).to(ms.float16)
-            v = self._rearange_in_fa(v, b, n_c, h).to(ms.float16)
+            q = self._rearange_in_fa(q, b, n, h)
+            k = self._rearange_in_fa(k, b, n_c, h)
+            v = self._rearange_in_fa(v, b, n_c, h)
             if mask is not None:
                 mask = ops.reshape(mask, (b, 1, 1, n_c))
-                mask = self.tile_fa(mask, (1, 1, n, 1)).to(ms.uint8)
+                mask = self.tile_fa(mask, (1, 1, n, 1))
                 mask = ops.stop_gradient(mask)
             out = self.attention(q, k, v, mask)
             out = self._rearange_out_fa(out, b, n, h).to(x.dtype)
