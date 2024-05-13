@@ -10,7 +10,6 @@ import numpy as np
 import yaml
 
 import mindspore as ms
-from mindspore import nn, ops
 from mindspore.communication.management import get_group_size, get_rank, init
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
@@ -18,16 +17,16 @@ mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
-from opensora.models.layers.blocks import Attention, LayerNorm, SeqParallelAttention
-from opensora.models.stdit.stdit import STDiT_XL_2
+from opensora.models.stdit import STDiT_XL_2
 from opensora.models.text_encoder.t5 import get_text_encoder_and_tokenizer
 from opensora.models.vae.autoencoder import SD_CONFIG, AutoencoderKL
 from opensora.pipelines import InferPipeline
 from opensora.utils.cond_data import read_captions_from_csv, read_captions_from_txt
-from opensora.utils.model_utils import _check_cfgs_in_parser, str2bool
+from opensora.utils.model_utils import WHITELIST_OPS, _check_cfgs_in_parser, str2bool
 
 from mindone.utils.amp import auto_mixed_precision
 from mindone.utils.logger import set_logger
+from mindone.utils.misc import to_abspath
 from mindone.utils.seed import set_random_seed
 from mindone.visualize.videos import save_videos
 
@@ -40,6 +39,7 @@ def init_env(
     enable_dvm: bool = False,
     use_parallel: bool = False,
     enable_sequence_parallel: bool = False,
+    debug: bool = False,
 ):
     ms.set_context(mode=mode, device_target=device_target)
 
@@ -80,6 +80,7 @@ def main(args):
         enable_dvm=args.enable_dvm,
         use_parallel=args.use_parallel,
         enable_sequence_parallel=args.enable_sequence_parallelism,
+        debug=args.debug,
     )
     set_random_seed(args.seed)
 
@@ -99,6 +100,12 @@ def main(args):
     VAE_T_COMPRESS = 1
     VAE_S_COMPRESS = 8
     VAE_Z_CH = SD_CONFIG["z_channels"]
+
+    if isinstance(args.image_size, list):
+        if len(args.image_size) > 2 or args.image_size[0] != args.image_size[1]:
+            raise ValueError(f"OpenSora-v1 support square images only, but got {args.image_size}")
+        args.image_size = args.image_size[0]
+
     input_size = (
         args.num_frames // VAE_T_COMPRESS,
         args.image_size // VAE_S_COMPRESS,
@@ -128,17 +135,7 @@ def main(args):
     dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16}
     if args.dtype in ["fp16", "bf16"]:
         latte_model = auto_mixed_precision(
-            latte_model,
-            amp_level=args.amp_level,
-            dtype=dtype_map[args.dtype],
-            custom_fp32_cells=[
-                LayerNorm,
-                Attention,
-                SeqParallelAttention,
-                nn.SiLU,
-                nn.GELU,
-                ops.GeLU,
-            ],  # NOTE: keep it the same as training setting
+            latte_model, amp_level=args.amp_level, dtype=dtype_map[args.dtype], custom_fp32_cells=WHITELIST_OPS
         )
 
     if len(args.ckpt_path) > 0:
@@ -312,6 +309,7 @@ def parse_args():
         "--image_size",
         type=int,
         default=256,
+        nargs="+",
         help="image size in [256, 512]",
     )
     parser.add_argument(
@@ -352,9 +350,33 @@ def parse_args():
     parser.add_argument("--enable_dvm", default=False, type=str2bool, help="enable dvm mode")
     parser.add_argument("--sampling_steps", type=int, default=50, help="Diffusion Sampling Steps")
     parser.add_argument("--guidance_scale", type=float, default=8.5, help="the scale for classifier-free guidance")
+    parser.add_argument(
+        "--guidance_channels",
+        type=int,
+        help="How many channels to use for classifier-free diffusion. If None, use half of the latent channels",
+    )
+    parser.add_argument(
+        "--frame_interval",
+        type=int,
+        help="Frames sampling frequency. Final video FPS will be equal to FPS / frame_interval.",
+    )
+    parser.add_argument("--loop", type=int, default=1, help="Number of times to loop video generation task.")
+    parser.add_argument("--model_max_length", type=int, default=120, help="T5's embedded sequence length.")
+    parser.add_argument(
+        "--condition_frame_length",
+        type=int,
+        help="Number of frames generated in a previous loop to use as a conditioning for the next loop.",
+    )
+    parser.add_argument(
+        "--mask_strategy", type=str, nargs="+", help="Masking strategy for Image/Video-to-Video generation task."
+    )
+    parser.add_argument(
+        "--reference_path", type=str, nargs="+", help="References for Image/Video-to-Video generation task."
+    )
     # MS new args
     parser.add_argument("--device_target", type=str, default="Ascend", help="Ascend or GPU")
     parser.add_argument("--mode", type=int, default=0, help="Running in GRAPH_MODE(0) or PYNATIVE_MODE(1) (default=0)")
+    parser.add_argument("--debug", type=str2bool, default=False, help="Execute inference in debug mode.")
     parser.add_argument("--seed", type=int, default=4, help="Inference seed")
     parser.add_argument(
         "--enable_flash_attention",
@@ -452,13 +474,18 @@ def parse_args():
     abs_path = os.path.abspath(os.path.join(__dir__, ".."))
     if default_args.config:
         logger.info(f"Overwrite default arguments with configuration file {default_args.config}")
-        default_args.config = os.path.join(abs_path, default_args.config)
+        default_args.config = to_abspath(abs_path, default_args.config)
         with open(default_args.config, "r") as f:
             cfg = yaml.safe_load(f)
             _check_cfgs_in_parser(cfg, parser)
             parser.set_defaults(**cfg)
     args = parser.parse_args()
-
+    # convert to absolute path, necessary for modelarts
+    args.ckpt_path = to_abspath(abs_path, args.ckpt_path)
+    args.vae_checkpoint = to_abspath(abs_path, args.vae_checkpoint)
+    args.prompt_path = to_abspath(abs_path, args.prompt_path)
+    args.output_path = to_abspath(abs_path, args.output_path)
+    args.text_embed_folder = to_abspath(abs_path, args.text_embed_folder)
     return args
 
 
