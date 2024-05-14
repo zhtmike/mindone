@@ -335,7 +335,7 @@ For parallel training, please use `msrun` and pass `--use_parallel=True`
 ```bash
 # 8 NPUs, 64x512x512
 msrun --master_port=8200 --worker_num=8 --local_worker_num=8 --log_dir=$output_dir  \
-    python scripts/train.py --config configs/opensora/train/stdit_512x512x64_ms.yaml \
+    scripts/train.py --config configs/opensora/train/stdit_512x512x64_ms.yaml \
     --csv_path /path/to/video_caption.csv \
     --video_folder /path/to/video_folder \
     --text_embed_folder /path/to/text_embed_folder \
@@ -359,6 +359,57 @@ We evaluated the training performance on MindSpore and Ascend NPUs. The results 
 
 Note that training on 300 frames at 512x512 resolution is achieved by optimization+data parallelism with t5 cached embeddings.
 
+### Open-Sora 1.0 Sequence Parallel Training/Inference (Experimental)
+
+#### Sequence Parallel Training
+We leverage the **Semi-automatic Parallel** framework in **MindSpore** to support training with very long videos. Specifically, with four cards, we can train up to 1000 frames at a resolution of 512x512. For instance, to train a video with 512 frames and 512x512 resolution using four cards, execute the following command:
+
+```bash
+msrun --worker_num=4 --local_worker_num=4 --log_dir=$output_dir  \
+    scripts/train.py --config configs/opensora/train/stdit_512x512x64_sp.yaml \
+    --csv_path /path/to/video_caption.csv \
+    --video_folder /path/to/video_folder \
+    --text_embed_folder /path/to/text_embed_folder \
+    --vae_latent_folder /path/to/video_embed_folder \
+    --output_path "./outputs" \
+    --sequence_parallel 4 \
+    --model_parallel 1 \
+    --data_parallel 1 \
+    --use_parallel True \
+    --num_frames 512
+```
+
+The saved checkpoint slices are stored at `./outputs` directory. To merge them into a single checkpoint, you may run
+
+```bash
+python tools/ckpt_combine_sp.py
+```
+
+The merged checkpoint is saved at `outputs/ckpt_full/rank_0/full_0.ckpt`.
+
+*Note:* Training with very long sequence videos usually results in model convergence problems. It is highly encouraged to use a pretrained checkpoint and gradually increase the number of frames during training.
+
+#### Sequence Parallel Inference
+
+To run the inference with very long videos, you also need to turn on the sequence parallel. For example, to inference a video with 512 frames and 512x512 resolution, you can run
+
+```bash
+msrun --worker_num=2 --local_worker_num=2 --log_dir=$output_dir  \
+    scripts/inference.py --config configs/opensora/inference/stdit_512x512x64_sp.yaml \
+    --csv_path /path/to/video_caption.csv \
+    --video_folder /path/to/video_folder \
+    --text_embed_folder /path/to/text_embed_folder \
+    --vae_latent_folder /path/to/video_embed_folder \
+    --output_path "./outputs" \
+    --sequence_parallel 2 \
+    --model_parallel 1 \
+    --data_parallel 1 \
+    --use_parallel True \
+    --num_frames 512 \
+    --vae_micro_batch_size 1
+```
+
+The generated vdieo is saved at `./outputs` directory.
 
 ## Evaluation
 
