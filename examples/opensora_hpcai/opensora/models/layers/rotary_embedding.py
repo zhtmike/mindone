@@ -2,7 +2,7 @@
 Source: https://github.com/lucidrains/rotary-embedding-torch/
 """
 from math import pi
-from typing import Optional
+from typing import Optional, Tuple
 
 try:
     from typing import Literal
@@ -11,6 +11,7 @@ except ImportError:
 
 import numpy as np
 
+import mindspore as ms
 from mindspore import Parameter, Tensor, dtype, nn, ops
 
 
@@ -147,3 +148,84 @@ class RotaryEmbedding(nn.Cell):
     def construct(self, t: Tensor, seq_len=None, offset=0) -> Tensor:
         freqs = t.astype(self.freqs.dtype)[..., None] * self.freqs
         return freqs.repeat(2, axis=-1)  # ... n -> ... (n r), r = 2
+
+
+class RotaryEmbeddingSP(nn.Cell):
+    def __init__(
+        self,
+        dim: int,
+        theta: float = 10000.0,
+        ratio: float = 1.0,
+        k: float = 1.0,
+        dp: int = 1,
+        mp: int = 1,
+        sp: int = 1,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.theta = theta
+        self.ratio = ratio
+        self.k = k
+
+        self.dp = dp
+        self.mp = mp
+        self.sp = sp
+
+        self.transpose = ops.Transpose()
+        self.stride_slice = ops.StridedSlice()
+        self.mul = ops.Mul()
+        self.split = ops.Split(axis=-1, output_num=2)
+        self.concat = ops.Concat(axis=-1)
+        self.neg = ops.Neg()
+        self.add = ops.Add()
+        self.transpose_2 = ops.Transpose()
+        self.shard()
+
+    def rotate_half(self, x: Tensor, shape: Tuple[int, ...]):
+        x = ops.reshape(x, (x.shape[0], x.shape[1], x.shape[2], -1, 2))
+        x0, x1 = self.split(x)
+        x = self.concat([self.neg(x1), x0])
+        x = ops.reshape(x, shape)
+        return x
+
+    def construct(self, x: Tensor):
+        dtype = x.dtype
+        x = x.to(ms.float32)
+        x = self.transpose(x, (0, 2, 1, 3))  # b h n d
+        shape = x.shape
+        _, _, n, d = shape
+        sin_matrix, cos_matrix = cal_matrix(n, d, self.theta, self.ratio, self.k)
+        sin_matrix = self.stride_slice(sin_matrix, (0, 0, 0, 0), (1, 1, n, d), (1, 1, 1, 1))
+        cos_matrix = self.stride_slice(cos_matrix, (0, 0, 0, 0), (1, 1, n, d), (1, 1, 1, 1))
+
+        cos_part = self.mul(x, cos_matrix)
+        sin_part = self.mul(self.rotate_half(x, shape), sin_matrix)
+        x = self.add(cos_part, sin_part)
+        x = self.transpose_2(x, (0, 2, 1, 3))  # b n h d
+        return x.to(dtype)
+
+    def shard(self):
+        self.transpose.shard(((self.dp, self.sp, self.mp, 1),))
+        self.stride_slice.shard(((1, 1, self.sp, 1),))
+        self.mul.shard(((self.dp, self.mp, self.sp, 1), (1, 1, self.sp, 1)))
+        self.split.shard(((self.dp, self.mp, self.sp, 1, 1),))
+        self.concat.shard(((self.dp, self.mp, self.sp, 1, 1), (self.dp, self.mp, self.sp, 1, 1)))
+        self.neg.shard(((self.dp, self.mp, self.sp, 1, 1),))
+        self.add.shard(((self.dp, self.mp, self.sp, 1), (self.dp, self.mp, self.sp, 1)))
+        self.transpose_2.shard(((self.dp, self.mp, self.sp, 1),))
+
+
+@ms.constexpr
+def cal_matrix(seq_len: int, dim: int, theta: float, ratio: float, k: float):
+    scaled_seq_len = int(seq_len * ratio)
+
+    positional_ids = np.arange(scaled_seq_len)[None] / ratio
+    indices = 1.0 / np.power(theta * k, 2 * np.arange(dim // 2) / dim)
+
+    embeddings = np.einsum("bn, d -> bnd", positional_ids, indices)
+    embeddings = np.repeat(embeddings, 2, axis=-1)
+    embeddings = np.reshape(embeddings, (1, 1, scaled_seq_len, dim))
+
+    sin_matrix = Tensor(np.sin(embeddings), dtype=ms.float32)
+    cos_matrix = Tensor(np.cos(embeddings), dtype=ms.float32)
+    return sin_matrix, cos_matrix

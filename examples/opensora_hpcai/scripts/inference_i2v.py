@@ -1,4 +1,5 @@
 import datetime
+import glob
 import logging
 import os
 import sys
@@ -24,24 +25,37 @@ from opensora.utils.util import apply_mask_strategy, process_mask_strategies, pr
 
 from mindone.utils.amp import auto_mixed_precision
 from mindone.utils.logger import set_logger
-from mindone.utils.seed import set_random_seed
 from mindone.visualize.videos import save_videos
 
 logger = logging.getLogger(__name__)
 
 
 def main(args):
-    time_str = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    save_dir = f"{args.output_path}/{time_str}"
-    os.makedirs(save_dir, exist_ok=True)
+    if args.add_datetime:
+        time_str = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+        args.output_path = os.path.join(args.output_path, time_str)
+    os.makedirs(args.output_path, exist_ok=True)
+
     if args.save_latent:
         latent_dir = os.path.join(args.output_path, "denoised_latents")
         os.makedirs(latent_dir, exist_ok=True)
-    set_logger(name="", output_dir=save_dir)
 
     # 1. init env
-    init_env(args.mode, args.device_target, args.enable_dvm, args.debug)
-    set_random_seed(args.seed)
+    rank_id, _ = init_env(
+        args.mode,
+        args.device_target,
+        enable_dvm=args.enable_dvm,
+        use_parallel=args.use_parallel,
+        enable_sequence_parallel=args.enable_sequence_parallelism,
+        seed=args.seed,
+        debug=args.debug,
+    )
+    set_logger(
+        log_fn="stdout.log",
+        output_dir=os.path.join(args.output_path, f"log/rank_{rank_id}"),
+        rank=rank_id,
+        log_level=eval(args.log_level),
+    )
 
     # get captions from cfg or prompt_path
     if args.prompt_path is not None:
@@ -76,6 +90,12 @@ def main(args):
         enable_flashattn=args.enable_flash_attention,
         input_sq_size=512,
         qk_norm=True,
+        enable_sequence_parallelism=args.enable_sequence_parallelism,
+        parallel_config=dict(
+            data_parallel=args.data_parallel,
+            model_parallel=args.model_parallel,
+            sequence_parallel=args.sequence_parallel,
+        ),
     )
     latte_model = STDiT2_XL_2(**model_extra_args)
     latte_model = latte_model.set_train(False)
@@ -88,7 +108,7 @@ def main(args):
 
     if len(args.ckpt_path) > 0:
         logger.info(f"Loading ckpt {args.ckpt_path} into STDiT")
-        latte_model.load_from_checkpoint(args.ckpt_path)
+        latte_model.load_from_checkpoint(args.ckpt_path, split_qkv=args.enable_sequence_parallelism)
     else:
         logger.warning("STDiT uses random initialization!")
 
@@ -119,10 +139,26 @@ def main(args):
         text_tokens, mask = Tensor(text_tokens, dtype=ms.int32), Tensor(mask, dtype=ms.uint8)
         if args.dtype in dtype_map.keys():
             text_encoder = auto_mixed_precision(text_encoder, amp_level="O2", dtype=dtype_map[args.dtype])
+        text_emb = None
     else:
-        raise NotImplementedError("Embedded tokens are not supported yet")
+        embed_paths = sorted(glob.glob(os.path.join(args.text_embed_folder, "*.npz")))
+        prompt_prefix = []
+        text_tokens, mask, text_emb = [], [], []
+        for fp in embed_paths:
+            prompt_prefix.append(os.path.basename(fp)[:-4])
+            dat = np.load(fp)
+            if "tokens" in dat:
+                text_tokens.append(dat["tokens"])
+            mask.append(dat["mask"])
+            text_emb.append(dat["text_emb"])
+
+        text_tokens = ms.Tensor(text_tokens) if text_tokens else None
+        mask = ms.Tensor(mask, dtype=ms.uint8)
+        text_emb = ms.Tensor(text_emb, dtype=ms.float32)
+        num_prompts = text_emb.shape[0]
+        text_encoder = None
     assert num_prompts > 0, "No captions provided"
-    logger.info(f"Num tokens: {mask.asnumpy().sum(2)}")
+    logger.info(f"Num tokens: {mask.asnumpy().sum(1)}")
 
     # 3. build inference pipeline
     pipeline = InferPipeline(
@@ -221,13 +257,20 @@ def main(args):
 
             inputs["noise"] = z
             inputs["scale"] = args.guidance_scale
-            inputs["text_tokens"] = text_tokens[i : i + ns, loop_i]
-            inputs["text_emb"] = None
-            inputs["mask"] = mask[i : i + ns, loop_i]
+            if text_emb is None:
+                inputs["text_tokens"] = text_tokens[i : i + ns, loop_i]
+                inputs["text_emb"] = None
+            else:
+                inputs["text_tokens"] = None
+                inputs["text_emb"] = text_emb[i : i + ns]
+            inputs["mask"] = mask[i : i + ns]
 
             logger.info("Sampling for captions: ")
             for j in range(ns):
-                logger.info(captions[i + j][loop_i])
+                if text_emb is None:
+                    logger.info(captions[i + j][loop_i])
+                else:
+                    logger.info(prompt_prefix[i + j])
 
             # infer
             samples, latents = pipeline(inputs, frames_mask=frames_mask, additional_kwargs=model_args)
@@ -236,11 +279,19 @@ def main(args):
 
         videos = np.concatenate(videos, axis=1)
 
+        if rank_id > 0 and args.enable_sequence_parallelism:
+            continue
+
         # save result
         for j in range(ns):
             global_idx = i + j
-            prompt = "-".join((batch_prompts[j][0].replace("/", "").split(" ")[:10]))
-            save_fp = f"{save_dir}/{global_idx:03d}-{prompt}.{args.save_format}"
+            if args.text_embed_folder is None:
+                prompt = "-".join((batch_prompts[j][0].replace("/", "").split(" ")[:10]))
+                save_fp = f"{args.output_path}/{global_idx:03d}-{prompt}.{args.save_format}"
+            else:
+                fn = prompt_prefix[global_idx]
+                save_fp = f"{args.output_path}/{fn}.{args.save_format}"
+
             save_videos(videos[j], save_fp, fps=args.fps / args.frame_interval)
             logger.info(f"save to {save_fp}")
 
