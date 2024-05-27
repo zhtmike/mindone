@@ -58,7 +58,9 @@ def test_self_attention(enable_flash_attention):
     from opensora.models.layers.rotary_embedding import RotaryEmbedding, RotaryEmbeddingSP
 
     rope = RotaryEmbedding(dim=1152 // 16).rotate_queries_or_keys
-    net1 = SelfAttention(1152, 16, qkv_bias=True, qk_norm=True, enable_flash_attention=enable_flash_attention)
+    net1 = SelfAttention(
+        1152, 16, qkv_bias=True, qk_norm=True, enable_flash_attention=enable_flash_attention, rope=rope
+    )
 
     rope = lambda: RotaryEmbeddingSP(dim=1152 // 16)
     net2 = SeqParallelSelfAttention(
@@ -85,8 +87,7 @@ def test_self_attention(enable_flash_attention):
     if enable_flash_attention:
         np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-1)
     else:
-        # TODO: align RoPE accuracy and set atol=1e-5
-        np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-1)
+        np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-5)
 
 
 def test_t2i_final_layer():

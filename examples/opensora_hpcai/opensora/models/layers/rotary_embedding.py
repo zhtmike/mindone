@@ -172,7 +172,6 @@ class RotaryEmbeddingSP(nn.Cell):
         self.sp = sp
 
         self.transpose = ops.Transpose()
-        self.stride_slice = ops.StridedSlice()
         self.mul = ops.Mul()
         self.split = ops.Split(axis=-1, output_num=2)
         self.concat = ops.Concat(axis=-1)
@@ -194,10 +193,7 @@ class RotaryEmbeddingSP(nn.Cell):
         x = self.transpose(x, (0, 2, 1, 3))  # b h n d
         shape = x.shape
         _, _, n, d = shape
-        sin_matrix, cos_matrix = cal_matrix(n, d, self.theta, self.ratio, self.k)
-        sin_matrix = self.stride_slice(sin_matrix, (0, 0, 0, 0), (1, 1, n, d), (1, 1, 1, 1))
-        cos_matrix = self.stride_slice(cos_matrix, (0, 0, 0, 0), (1, 1, n, d), (1, 1, 1, 1))
-
+        sin_matrix, cos_matrix = ops.stop_gradient(self.cal_matrix(n, d))
         cos_part = self.mul(x, cos_matrix)
         sin_part = self.mul(self.rotate_half(x, shape), sin_matrix)
         x = self.add(cos_part, sin_part)
@@ -206,7 +202,6 @@ class RotaryEmbeddingSP(nn.Cell):
 
     def shard(self):
         self.transpose.shard(((self.dp, self.sp, self.mp, 1),))
-        self.stride_slice.shard(((1, 1, self.sp, 1),))
         self.mul.shard(((self.dp, self.mp, self.sp, 1), (1, 1, self.sp, 1)))
         self.split.shard(((self.dp, self.mp, self.sp, 1, 1),))
         self.concat.shard(((self.dp, self.mp, self.sp, 1, 1), (self.dp, self.mp, self.sp, 1, 1)))
@@ -214,18 +209,16 @@ class RotaryEmbeddingSP(nn.Cell):
         self.add.shard(((self.dp, self.mp, self.sp, 1), (self.dp, self.mp, self.sp, 1)))
         self.transpose_2.shard(((self.dp, self.mp, self.sp, 1),))
 
+    def cal_matrix(self, seq_len: int, dim: int):
+        scaled_seq_len = int(seq_len * self.ratio)
 
-@ms.constexpr
-def cal_matrix(seq_len: int, dim: int, theta: float, ratio: float, k: float):
-    scaled_seq_len = int(seq_len * ratio)
+        positional_ids = ops.arange(scaled_seq_len, dtype=ms.float32)[None] / self.ratio
+        indices = 1.0 / ops.pow(self.theta * self.k, 2 * ops.arange(dim // 2, dtype=ms.float32) / dim)
 
-    positional_ids = np.arange(scaled_seq_len)[None] / ratio
-    indices = 1.0 / np.power(theta * k, 2 * np.arange(dim // 2) / dim)
+        embeddings = ops.outer(positional_ids, indices)
+        embeddings = ops.repeat_interleave(embeddings, 2, axis=-1)
+        embeddings = ops.reshape(embeddings, (1, 1, scaled_seq_len, dim))
 
-    embeddings = np.einsum("bn, d -> bnd", positional_ids, indices)
-    embeddings = np.repeat(embeddings, 2, axis=-1)
-    embeddings = np.reshape(embeddings, (1, 1, scaled_seq_len, dim))
-
-    sin_matrix = Tensor(np.sin(embeddings), dtype=ms.float32)
-    cos_matrix = Tensor(np.cos(embeddings), dtype=ms.float32)
-    return sin_matrix, cos_matrix
+        sin_matrix = ops.sin(embeddings)
+        cos_matrix = ops.cos(embeddings)
+        return sin_matrix, cos_matrix
