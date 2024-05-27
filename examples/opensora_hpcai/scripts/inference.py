@@ -131,7 +131,7 @@ def main(args):
 
     # 1. init env
     rank_id, device_num = init_env(
-        args.mode,
+        mode=args.mode,
         seed=args.seed,
         distributed=args.use_parallel,
         device_target=args.device_target,
@@ -521,7 +521,6 @@ def parse_args():
         type=int,
         help="number of devices for model parallel (slicing along heads) when use sequence parallelism.",
     )
-    parser.add_argument("--use_parallel", default=False, type=str2bool, help="use parallel")
     parser.add_argument(
         "--sequence_parallel",
         default=1,

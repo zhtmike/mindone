@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 from inference import init_env
 from opensora.models.stdit import STDiT2_XL_2
 from opensora.models.text_encoder.t5 import get_text_encoder_and_tokenizer
-from opensora.models.vae.autoencoder import SD_CONFIG, AutoencoderKL
+from opensora.models.vae.vae import SD_CONFIG, AutoencoderKL
 from opensora.pipelines import InferPipeline
 from opensora.utils.cond_data import get_references, read_captions_from_csv, read_captions_from_txt
 from opensora.utils.model_utils import WHITELIST_OPS
@@ -42,10 +42,10 @@ def main(args):
 
     # 1. init env
     rank_id, _ = init_env(
-        args.mode,
-        args.device_target,
+        mode=args.mode,
+        device_target=args.device_target,
         enable_dvm=args.enable_dvm,
-        use_parallel=args.use_parallel,
+        distributed=args.use_parallel,
         enable_sequence_parallel=args.enable_sequence_parallelism,
         seed=args.seed,
         debug=args.debug,
@@ -119,7 +119,6 @@ def main(args):
             SD_CONFIG,
             VAE_Z_CH,
             ckpt_path=args.vae_checkpoint,
-            use_fp16=False,
         )
         vae = vae.set_train(False)
         if args.vae_dtype in ["fp16", "bf16"]:
