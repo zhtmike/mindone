@@ -90,7 +90,6 @@ def init_env(
             init()
             device_num = get_group_size()
             rank_id = get_rank()
-            logger.debug(f"rank_id: {rank_id}, device_num: {device_num}")
 
             if use_sequence_parallel:
                 if model_version == "v1":
@@ -611,25 +610,6 @@ def main(args):
         callback.append(save_cb)
         if args.profile:
             callback.append(ProfilerCallbackEpoch(2, 3, "./profile_data"))
-    else:
-        save_cb = EvalSaveCallback(
-            network=latent_diffusion_with_loss.network,
-            rank_id=None,
-            ckpt_save_dir=os.path.join(args.output_path, "ckpt", f"rank_{rank_id}"),
-            output_dir=os.path.join(args.output_path, "log", f"rank_{rank_id}"),
-            ema=ema,
-            ckpt_save_policy="latest_k",
-            ckpt_max_keep=1,  # make sure only one ckpt is in each folder, for later ckpt merge
-            step_mode=args.step_mode,
-            ckpt_save_interval=args.ckpt_save_interval,
-            log_interval=args.log_interval,
-            start_epoch=start_epoch,
-            model_name="STDiT",
-            record_lr=False,
-            integrated_save=False,
-            save_training_resume=False,  # TODO: support training resume
-        )
-        callback.append(save_cb)
 
     # 5. log and save config
     if rank_id == 0:

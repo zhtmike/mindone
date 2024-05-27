@@ -936,7 +936,6 @@ class T2IFinalLayer(nn.Cell):
         self.out_channels = out_channels
         self.d_t = d_t
         self.d_s = d_s
-        self.split = ops.Split(axis=1, output_num=2)
 
     @staticmethod
     def t_mask_select(x_mask: Tensor, x: Tensor, masked_x: Tensor, T: int, S: int) -> Tensor:
@@ -956,7 +955,7 @@ class T2IFinalLayer(nn.Cell):
     ) -> Tensor:
         T = T or self.d_t
         S = S or self.d_s
-        shift, scale = self.split(self.scale_shift_table[None] + t[:, None])
+        shift, scale = (self.scale_shift_table[None] + t[:, None]).chunk(2, axis=1)
         x = t2i_modulate(self.norm_final(x), shift, scale)
 
         if frames_mask is not None:

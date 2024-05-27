@@ -213,12 +213,10 @@ def discretized_gaussian_log_likelihood(x, *, means, log_scales):
     log_cdf_plus = ops.log(cdf_plus.clamp(min=1e-12))
     log_one_minus_cdf_min = ops.log((1.0 - cdf_min).clamp(min=1e-12))
     cdf_delta = cdf_plus - cdf_min
-
     log_probs = ops.where(
         x < -0.999,
         log_cdf_plus,
         ops.where(x > 0.999, log_one_minus_cdf_min, ops.log(cdf_delta.clamp(min=1e-12))),
     )
-
     assert log_probs.shape == x.shape
     return log_probs
