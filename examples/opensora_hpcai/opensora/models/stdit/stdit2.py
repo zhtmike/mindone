@@ -285,7 +285,7 @@ class SeqParallelSTDiT2Block(nn.Cell):
         x = x.reshape(x.shape[0], T, S, x.shape[-1])  # B (T S) C -> B T S C
         masked_x = masked_x.reshape(masked_x.shape[0], T, S, masked_x.shape[-1])  # B (T S) C -> B T S C
         x_mask = self.expand_dim(x_mask, -1)  # x_mask: [B, T]
-        x_mask = self.expand_dim_1(x_mask, -1)
+        x_mask = self.expand_dim_1(x_mask, -1).to(x.dtype)
         x = self.mask_select(x_mask, x, masked_x)
         return x.reshape(x.shape[0], T * S, x.shape[-1])  # B T S C -> B (T S) C
 
