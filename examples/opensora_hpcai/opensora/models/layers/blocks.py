@@ -246,8 +246,7 @@ class SeqParallelAttention(nn.Cell):
             {"dev_matrix": (self.dp, self.sp_co, self.sp_ds, self.mp, 1), "input_tensor_map": ((4, 2, 1, 3, 0),)},
         )
 
-        # FIXME: add sp back (opensora 1.1 does not work)
-        self.transpose_a2a.shard(((self.dp, 1, 1, self.mp, 1),))
+        self.transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
         # mask
         self.sub.shard(((), (self.dp, 1, 1, self.sp_co, 1)))
@@ -828,8 +827,7 @@ class SeqParallelSelfAttention(nn.Cell):
             self.k_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
             self.v_linear.bias_add.shard(((self.dp * self.sp, self.mp), (self.mp,)))
 
-        # FIXME: add sp back (opensora 1.1 does not work)
-        self.transpose_a2a.shard(((self.dp, 1, self.mp, 1, 1),))
+        self.transpose_a2a.shard(((self.dp, self.sp, self.mp, 1, 1),))
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
