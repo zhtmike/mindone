@@ -21,11 +21,16 @@ def test_llama_rms_norm():
 
 
 @pytest.mark.parametrize("enable_flash_attention", [False, True])
-def test_multihead_cross_attention(enable_flash_attention):
+@pytest.mark.parametrize("flash_attention_dtype", [ms.bfloat16, ms.float16])
+def test_multihead_cross_attention(enable_flash_attention, flash_attention_dtype):
     from opensora.models.layers.blocks import MultiHeadCrossAttention, SeqParallelMultiHeadCrossAttention
 
-    net1 = MultiHeadCrossAttention(1152, 16, enable_flash_attention=enable_flash_attention)
-    net2 = SeqParallelMultiHeadCrossAttention(1152, 16, enable_flash_attention=enable_flash_attention)
+    net1 = MultiHeadCrossAttention(
+        1152, 16, enable_flash_attention=enable_flash_attention, flash_attention_dtype=flash_attention_dtype
+    )
+    net2 = SeqParallelMultiHeadCrossAttention(
+        1152, 16, enable_flash_attention=enable_flash_attention, flash_attention_dtype=flash_attention_dtype
+    )
 
     x1 = ms.Tensor(np.random.rand(2, 6480, 1152), dtype=ms.float32)
     x2 = ms.Tensor(np.random.rand(1, 400, 1152), dtype=ms.float32)
@@ -47,24 +52,40 @@ def test_multihead_cross_attention(enable_flash_attention):
 
     assert y1.dtype == y2.dtype
     if enable_flash_attention:
-        np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-1)
+        if flash_attention_dtype == ms.bfloat16:
+            np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-2)
+        else:
+            np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-3)
     else:
         np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-5)
 
 
 @pytest.mark.parametrize("enable_flash_attention", [False, True])
-def test_self_attention(enable_flash_attention):
+@pytest.mark.parametrize("flash_attention_dtype", [ms.bfloat16, ms.float16])
+def test_self_attention(enable_flash_attention, flash_attention_dtype):
     from opensora.models.layers.blocks import SelfAttention, SeqParallelSelfAttention
     from opensora.models.layers.rotary_embedding import RotaryEmbedding, RotaryEmbeddingSP
 
     rope = RotaryEmbedding(dim=1152 // 16).rotate_queries_or_keys
     net1 = SelfAttention(
-        1152, 16, qkv_bias=True, qk_norm=True, enable_flash_attention=enable_flash_attention, rope=rope
+        1152,
+        16,
+        qkv_bias=True,
+        qk_norm=True,
+        enable_flash_attention=enable_flash_attention,
+        flash_attention_dtype=flash_attention_dtype,
+        rope=rope,
     )
 
     rope = lambda: RotaryEmbeddingSP(dim=1152 // 16)
     net2 = SeqParallelSelfAttention(
-        1152, 16, qkv_bias=True, qk_norm=True, enable_flash_attention=enable_flash_attention, rope=rope
+        1152,
+        16,
+        qkv_bias=True,
+        qk_norm=True,
+        enable_flash_attention=enable_flash_attention,
+        flash_attention_dtype=flash_attention_dtype,
+        rope=rope,
     )
 
     q_weight, k_weight, v_weight = net1.qkv.weight.chunk(3)
@@ -85,7 +106,10 @@ def test_self_attention(enable_flash_attention):
 
     assert y1.dtype == y2.dtype
     if enable_flash_attention:
-        np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-1)
+        if flash_attention_dtype == ms.bfloat16:
+            np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-2)
+        else:
+            np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-3)
     else:
         np.testing.assert_allclose(y1.asnumpy(), y2.asnumpy(), atol=1e-5)
 

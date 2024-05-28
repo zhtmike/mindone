@@ -279,7 +279,16 @@ class MultiHeadCrossAttention(nn.Cell):
         ```
     """
 
-    def __init__(self, d_model, num_heads, attn_drop=0.0, proj_drop=0.0, has_bias=True, enable_flash_attention=False):
+    def __init__(
+        self,
+        d_model,
+        num_heads,
+        attn_drop=0.0,
+        proj_drop=0.0,
+        has_bias=True,
+        enable_flash_attention=False,
+        flash_attention_dtype=ms.bfloat16,
+    ):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
@@ -295,7 +304,7 @@ class MultiHeadCrossAttention(nn.Cell):
             enable_flash_attention and FLASH_IS_AVAILABLE and (ms.context.get_context("device_target") == "Ascend")
         )
         if self.enable_flash_attention:
-            attn_dtype = ms.bfloat16
+            attn_dtype = flash_attention_dtype
             assert attn_drop == 0.0, "attn drop is not supported in FA currently."
             self.flash_attention = MSFlashAttention(
                 head_dim=self.head_dim,
@@ -373,12 +382,13 @@ class MultiHeadCrossAttention(nn.Cell):
 class SeqParallelMultiHeadCrossAttention(nn.Cell):
     def __init__(
         self,
-        d_model,
-        num_heads,
-        attn_drop=0.0,
-        proj_drop=0.0,
-        has_bias=True,
-        enable_flash_attention=False,
+        d_model: int,
+        num_heads: int,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        has_bias: bool = True,
+        enable_flash_attention: bool = False,
+        flash_attention_dtype: ms.dtype = ms.bfloat16,
         parallel_config: Dict[str, Any] = {},
     ):
         super().__init__()
@@ -397,7 +407,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
 
         self.attn_drop = nn.Dropout(p=attn_drop)
 
-        self.attn_dtype = ms.bfloat16 if self.enable_flash_attention else ms.float32
+        self.attn_dtype = flash_attention_dtype if self.enable_flash_attention else ms.float32
         self.proj = nn.Dense(d_model, d_model, has_bias=has_bias).to_float(self.attn_dtype)
         self.proj_drop = nn.Dropout(p=proj_drop).to_float(self.attn_dtype)
 
@@ -407,6 +417,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.merge_head_transpose_a2a = ops.Transpose()
         self.tile = ops.Tile()
         self.tile_fa = ops.Tile()
+        self.logical_not = ops.LogicalNot()
         # self.pad = ops.PadV3()
         self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
         # FIXME: stride_slice does not support non-zero mask in semi-parallel mode? Remove it once FA supports dim=72.
@@ -500,9 +511,9 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
             k = self._rearange_in_fa(k, b, n_c, h).to(self.attn_dtype)
             v = self._rearange_in_fa(v, b, n_c, h).to(self.attn_dtype)
             if mask is not None:
-                mask = ops.reshape(mask, (b, 1, 1, n_c))
+                mask = ops.reshape(mask, (b, 1, 1, n_c)).to(ms.bool_)
+                mask = self.logical_not(mask)
                 mask = self.tile_fa(mask, (1, 1, n, 1))
-                mask = ops.stop_gradient(mask)
             out = self.attention(q, k, v, mask)
             out = self._rearange_out_fa(out, b, n, h)
 
@@ -535,6 +546,7 @@ class SeqParallelMultiHeadCrossAttention(nn.Cell):
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
+        self.logical_not.shard(((self.dp, 1, self.sp_co, 1),))
         self.tile.shard(((self.dp, 1, 1, self.sp_co, 1),))
         self.tile_fa.shard(((self.dp, 1, self.sp_co, 1),))
 
@@ -568,7 +580,8 @@ class SelfAttention(nn.Cell):
         attn_drop=0.0,
         proj_drop=0.0,
         norm_layer: Type[nn.Cell] = LlamaRMSNorm,
-        enable_flash_attention=False,
+        enable_flash_attention: bool = False,
+        flash_attention_dtype: ms.dtype = ms.bfloat16,
         rope=None,
     ):
         super().__init__()
@@ -588,7 +601,7 @@ class SelfAttention(nn.Cell):
         )
 
         if self.enable_flash_attention:
-            attn_dtype = ms.bfloat16
+            attn_dtype = flash_attention_dtype
             self.flash_attention = MSFlashAttention(
                 head_dim=head_dim,
                 head_num=num_heads,
@@ -658,6 +671,7 @@ class SeqParallelSelfAttention(nn.Cell):
         proj_drop: float = 0.0,
         norm_layer: Type[nn.Cell] = SeqParallelLlamaRMSNorm,
         enable_flash_attention: bool = False,
+        flash_attention_dtype: ms.dtype = ms.bfloat16,
         rope: Callable[..., nn.Cell] = None,
         parallel_config: Dict[str, Any] = {},
     ):
@@ -670,7 +684,7 @@ class SeqParallelSelfAttention(nn.Cell):
         self.enable_flash_attention = enable_flash_attention
         self.rotary_emb = rope() if rope is not None else None
 
-        self.attn_dtype = ms.bfloat16 if self.enable_flash_attention else ms.float32
+        self.attn_dtype = flash_attention_dtype if self.enable_flash_attention else ms.float32
 
         self.q_linear = nn.Dense(dim, dim, has_bias=qkv_bias, weight_init="XavierUniform", bias_init="Zero")
         self.k_linear = nn.Dense(dim, dim, has_bias=qkv_bias, weight_init="XavierUniform", bias_init="Zero")
@@ -689,6 +703,7 @@ class SeqParallelSelfAttention(nn.Cell):
         self.merge_head_transpose_a2a = ops.Transpose()
         self.tile = ops.Tile()
         self.tile_fa = ops.Tile()
+        self.logical_not = ops.LogicalNot()
         # self.pad = ops.PadV3()
         self.pad = ops.Pad(((0, 0), (0, 0), (0, 0), (0, 8)))
         self.stride_slice = ops.StridedSlice(15, 7, 0, 0, 0)  # for head_dim=72 only
@@ -782,9 +797,9 @@ class SeqParallelSelfAttention(nn.Cell):
             k = self._rearange_in_fa(k, b, n, h).to(self.attn_dtype)
             v = self._rearange_in_fa(v, b, n, h).to(self.attn_dtype)
             if mask is not None:
-                mask = ops.reshape(mask, (b, 1, 1, n))
+                mask = ops.reshape(mask, (b, 1, 1, n)).to(ms.bool_)
+                mask = self.logical_not(mask)
                 mask = self.tile_fa(mask, (1, 1, n, 1))
-                mask = ops.stop_gradient(mask)
             out = self.attention(q, k, v, mask)
             out = self._rearange_out_fa(out, b, n, h)
 
@@ -818,6 +833,7 @@ class SeqParallelSelfAttention(nn.Cell):
         self.transpose.shard(((self.dp, self.sp_co, self.sp_ds, self.mp, 1),))
         self.merge_head_transpose_a2a.shard(((self.dp, self.sp, 1, self.mp, 1),))
 
+        self.logical_not.shard(((self.dp, 1, self.sp_co, 1),))
         self.tile.shard(((self.dp, 1, 1, self.sp_co, 1),))
         self.tile_fa.shard(((self.dp, 1, self.sp_co, 1),))
 
