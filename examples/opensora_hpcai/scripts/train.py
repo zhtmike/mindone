@@ -121,7 +121,7 @@ def init_env(
                     device_num=device_num,
                     dataset_strategy=dataset_strategy,
                     strategy_ckpt_config={
-                        "save_file": os.path.join(outdir, "src_strategy.ckpt"),
+                        "save_file": os.path.join(outdir, "ckpt", "src_strategy.ckpt"),
                         "only_trainable_params": False,
                     },
                 )
