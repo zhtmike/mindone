@@ -178,9 +178,8 @@ class MistralAttention(nn.Cell):
         key_states = ops.transpose(key_states, (0, 1, 3, 2))
         attn_weights = ops.matmul(query_states, key_states) / ms.numpy.sqrt(self.head_dim)
 
-        if attention_mask is not None:  # no matter the length, we just slice it
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-1]]
-            attn_weights = attn_weights + causal_mask
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask
 
         # upcast attention to fp32
         attn_weights = ops.softmax(attn_weights.to(ms.float32), axis=-1).to(query_states.dtype)
