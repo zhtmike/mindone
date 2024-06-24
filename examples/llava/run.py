@@ -15,16 +15,14 @@ import mindspore.nn as nn
 from mindspore import Tensor
 
 
-def load_network(config: Dict[str, Any], ckpt_path: str, use_cache: bool = False) -> nn.Cell:
+def load_network(config: Dict[str, Any], ckpt_path: str) -> nn.Cell:
     config_ = copy.copy(config)
     config_["vision_config"]["hidden_size"] = 1024
     config_["text_config"]["hidden_size"] = 4096
 
     vision_config = config_.pop("vision_config")
     text_config = config_.pop("text_config")
-    network = LlavaNextForConditionalGeneration(
-        vision_config, text_config, past_key_value_cache=use_cache, dtype=ms.float16, **config_
-    )
+    network = LlavaNextForConditionalGeneration(vision_config, text_config, dtype=ms.float16, **config_)
     ms.load_checkpoint(ckpt_path, net=network, strict_load=True)
     return network
 
@@ -42,11 +40,12 @@ def main():
     inputs = processor(prompt, image, return_tensors="np")
     inputs = {k: Tensor(v) for k, v in inputs.items()}
 
+    network = load_network(config, "llava_1_6.ckpt")
+
     # autoregressively complete prompt
     print("=" * 60)
     print("KV Cache:")
-    network = load_network(config, "llava_1_6.ckpt", use_cache=True)
-    pipeline = TextGenerator(network, max_new_tokens=100)
+    pipeline = TextGenerator(network, max_new_tokens=100, use_kv_cache=True)
     start = time.time()
     output = pipeline.generate(**inputs)
     end = time.time()
@@ -55,8 +54,7 @@ def main():
     print("=" * 60)
 
     print("Non KV Cache:")
-    network = load_network(config, "llava_1_6.ckpt", use_cache=False)
-    pipeline = TextGenerator(network, max_new_tokens=100)
+    pipeline = TextGenerator(network, max_new_tokens=100, use_kv_cache=False)
     start = time.time()
     output = pipeline.generate(**inputs)
     end = time.time()

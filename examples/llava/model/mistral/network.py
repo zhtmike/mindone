@@ -1,11 +1,10 @@
-from typing import Optional, Union
+from typing import List, Optional, Tuple
 
 import mindspore as ms
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Tensor
 
-from ..cache import Cache, DynamicCache
 from ..common_layer import Embedding
 from .layer import MistralAttention, MistralMLP, MistralRMSNorm
 
@@ -23,7 +22,6 @@ class MistralDecoderLayer(nn.Cell):
         attention_dropout: float = 0.0,
         hidden_act: str = "silu",
         layer_idx: Optional[int] = None,
-        past_key_value_cache: Optional[Cache] = None,
         dtype: ms.dtype = ms.float32,
     ) -> None:
         super().__init__()
@@ -37,7 +35,6 @@ class MistralDecoderLayer(nn.Cell):
             rope_theta=rope_theta,
             attention_dropout=attention_dropout,
             layer_idx=layer_idx,
-            past_key_value_cache=past_key_value_cache,
             dtype=dtype,
         )
 
@@ -48,15 +45,26 @@ class MistralDecoderLayer(nn.Cell):
         self.post_attention_layernorm = MistralRMSNorm(hidden_size, eps=rms_norm_eps, dtype=dtype)
 
     def construct(
-        self, hidden_states: Tensor, attention_mask: Optional[Tensor] = None, position_ids: Optional[Tensor] = None
-    ) -> Tensor:
+        self,
+        hidden_states: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        past_key_cache: Optional[Tensor] = None,
+        past_value_cache: Optional[Tensor] = None,
+        return_key_value_cache: bool = False,
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states = self.self_attn(
-            hidden_states=hidden_states, attention_mask=attention_mask, position_ids=position_ids
+        hidden_states, key_cache, value_cache = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_cache=past_key_cache,
+            past_value_cache=past_value_cache,
+            return_key_value_cache=return_key_value_cache,
         )
         hidden_states = residual + hidden_states
 
@@ -66,7 +74,7 @@ class MistralDecoderLayer(nn.Cell):
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
-        return hidden_states
+        return hidden_states, key_cache, value_cache
 
 
 class MistralModel(nn.Cell):
@@ -84,13 +92,11 @@ class MistralModel(nn.Cell):
         attention_dropout: float = 0.0,
         hidden_act: str = "silu",
         pad_token_id: Optional[int] = None,
-        past_key_value_cache: Optional[Cache] = None,
         dtype: ms.dtype = ms.float32,
     ) -> None:
         super().__init__()
         self.padding_idx = pad_token_id
         self.vocab_size = vocab_size
-        self.past_key_value_cache = past_key_value_cache
 
         self.embed_tokens = Embedding(vocab_size, hidden_size, padding_idx=self.padding_idx, dtype=dtype)
         self.layers = nn.CellList(
@@ -106,7 +112,6 @@ class MistralModel(nn.Cell):
                     attention_dropout=attention_dropout,
                     hidden_act=hidden_act,
                     layer_idx=layer_idx,
-                    past_key_value_cache=self.past_key_value_cache,
                     dtype=dtype,
                 )
                 for layer_idx in range(num_hidden_layers)
@@ -126,24 +131,48 @@ class MistralModel(nn.Cell):
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
         inputs_embeds: Optional[Tensor] = None,
-    ) -> Tensor:
+        past_key_cache_list: Optional[List[Tensor]] = None,
+        past_value_cache_list: Optional[List[Tensor]] = None,
+        return_key_value_cache: bool = False,
+    ) -> Tuple[Tensor, Optional[List[Tensor]], Optional[List[Tensor]]]:
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        past_seen_tokens = self.past_key_value_cache.get_seq_length() if self.past_key_value_cache is not None else 0
-
+        past_seen_tokens = past_key_cache_list[0].shape[-2] if past_key_cache_list else 0
         cache_position = ops.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], dtype=ms.int32)
-
         if position_ids is None:
             position_ids = ops.unsqueeze(cache_position, 0)
 
         causal_mask = self._update_causal_mask(attention_mask, inputs_embeds, cache_position)
 
         hidden_states = inputs_embeds
-        for decoder_layer in self.layers:
-            hidden_states = decoder_layer(hidden_states, attention_mask=causal_mask, position_ids=position_ids)
+
+        if return_key_value_cache:
+            key_cache_list, value_cache_list = [], []
+        else:
+            key_cache_list, value_cache_list = None, None
+
+        for i, decoder_layer in enumerate(self.layers):
+            if past_key_cache_list and past_value_cache_list:
+                past_key_cache, past_value_cache = past_key_cache_list[i], past_value_cache_list[i]
+            else:
+                past_key_cache, past_value_cache = None, None
+
+            hidden_states, key_cache, value_cache = decoder_layer(
+                hidden_states,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                past_key_cache=past_key_cache,
+                past_value_cache=past_value_cache,
+                return_key_value_cache=return_key_value_cache,
+            )
+
+            if return_key_value_cache:
+                key_cache_list.append(key_cache)
+                value_cache_list.append(value_cache)
+
         hidden_states = self.norm(hidden_states)
-        return hidden_states
+        return hidden_states, key_cache_list, value_cache_list
 
     def _update_causal_mask(self, attention_mask: Tensor, input_tensor: Tensor, cache_position: Tensor) -> Tensor:
         dtype = input_tensor.dtype
@@ -186,18 +215,10 @@ class MistralForCausalLM(nn.Cell):
         attention_dropout: float = 0.0,
         hidden_act: str = "silu",
         pad_token_id: Optional[int] = None,
-        past_key_value_cache: Optional[Union[Cache, bool]] = None,
         dtype: ms.dtype = ms.float32,
         **kwargs,
     ) -> None:
         super().__init__()
-
-        if isinstance(past_key_value_cache, bool) and past_key_value_cache:
-            self.past_key_value_cache = DynamicCache()
-        elif isinstance(past_key_value_cache, Cache):
-            self.past_key_value_cache = past_key_value_cache
-        else:
-            self.past_key_value_cache = None
 
         self.model = MistralModel(
             hidden_size=hidden_size,
@@ -212,7 +233,6 @@ class MistralForCausalLM(nn.Cell):
             attention_dropout=attention_dropout,
             hidden_act=hidden_act,
             pad_token_id=pad_token_id,
-            past_key_value_cache=past_key_value_cache,
             dtype=dtype,
         )
         self.vocab_size = vocab_size
@@ -242,10 +262,19 @@ class MistralForCausalLM(nn.Cell):
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
         inputs_embeds: Optional[Tensor] = None,
-    ) -> Tensor:
+        past_key_cache_list: Optional[Tensor] = None,
+        past_value_cache_list: Optional[Tensor] = None,
+        return_key_value_cache: bool = False,
+    ) -> Tuple[Tensor, Optional[List[Tensor]], Optional[List[Tensor]]]:
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        hidden_states = self.model(
-            input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask, inputs_embeds=inputs_embeds
+        hidden_states, key_cache_list, value_cache_list = self.model(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            inputs_embeds=inputs_embeds,
+            past_key_cache_list=past_key_cache_list,
+            past_value_cache_list=past_value_cache_list,
+            return_key_value_cache=return_key_value_cache,
         )
-        logits = self.lm_head(hidden_states)
-        return logits.to(ms.float32)
+        logits = self.lm_head(hidden_states).to(ms.float32)
+        return logits, key_cache_list, value_cache_list

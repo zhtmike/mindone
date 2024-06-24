@@ -7,7 +7,6 @@ import mindspore.ops as ops
 from mindspore import Parameter, Tensor
 
 from ..activation import ACT2FN
-from ..cache import Cache
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +106,6 @@ class MistralAttention(nn.Cell):
         rope_theta: float = 1000000.0,
         attention_dropout: float = 0.0,
         layer_idx: Optional[int] = None,
-        past_key_value_cache: Optional[Cache] = None,
         dtype: ms.dtype = ms.float32,
     ) -> None:
         super().__init__()
@@ -121,8 +119,6 @@ class MistralAttention(nn.Cell):
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = max_position_embeddings
         self.rope_theta = rope_theta
-        self.is_causal = True
-        self.past_key_value_cache = past_key_value_cache
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -141,8 +137,14 @@ class MistralAttention(nn.Cell):
         )
 
     def construct(
-        self, hidden_states: Tensor, attention_mask: Optional[Tensor] = None, position_ids: Optional[Tensor] = None
-    ) -> Tensor:
+        self,
+        hidden_states: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        past_key_cache: Optional[Tensor] = None,
+        past_value_cache: Optional[Tensor] = None,
+        return_key_value_cache: bool = False,
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         bsz, q_len, _ = hidden_states.shape
 
         query_states = self.q_proj(hidden_states)
@@ -161,8 +163,14 @@ class MistralAttention(nn.Cell):
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if self.past_key_value_cache is not None and not self.training:
-            key_states, value_states = self.past_key_value_cache.update(key_states, value_states, self.layer_idx)
+        if return_key_value_cache:
+            key_cache, value_cache = key_states, value_states
+        else:
+            key_cache, value_cache = None, None
+
+        if past_key_cache is not None and past_value_cache is not None:
+            key_states = ops.concat([key_states, past_key_cache], axis=-2)
+            value_states = ops.concat([value_states, past_value_cache], axis=-2)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -183,7 +191,7 @@ class MistralAttention(nn.Cell):
         attn_output = ops.reshape(attn_output, (bsz, q_len, -1))
         attn_output = self.o_proj(attn_output)
 
-        return attn_output
+        return attn_output, key_cache, value_cache
 
 
 class MistralFlashAttention2(nn.Cell):

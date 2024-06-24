@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -20,6 +20,7 @@ class TextGenerator:
         pad_token_id: Optional[int] = None,
         max_new_tokens: Optional[int] = 100,
         min_new_tokens: Optional[int] = None,
+        use_kv_cache: bool = False,
     ) -> None:
         self.model = model.set_train(False)
         for param in self.model.trainable_params():
@@ -30,6 +31,7 @@ class TextGenerator:
         self._pad_token_id = pad_token_id
         self._max_new_tokens = max_new_tokens
         self._min_new_tokens = min_new_tokens
+        self._use_kv_cache = use_kv_cache
 
         self._max_length: Optional[int] = None
         self._min_length: Optional[int] = None
@@ -39,11 +41,9 @@ class TextGenerator:
                 "A model class needs to define a `prepare_inputs_for_generation` method in order to use `.generate()`."
             )
 
-        if getattr(self.model, "past_key_value_cache", None):
-            logger.info("KV Cache is enabled.")
-            self._use_cache = True
-        else:
-            self._use_cache = False
+        if self._use_kv_cache:
+            self._past_key_cache_list: List[Tensor] = []
+            self._past_value_cache_list: List[Tensor] = []
 
     def _prepare_model_inputs(
         self, bos_token_id: Optional[Tensor] = None, model_kwargs: Optional[Dict[str, Tensor]] = None
@@ -106,13 +106,35 @@ class TextGenerator:
         )
         return attention_mask
 
-    def _update_model_kwargs_for_generation(self, model_kwargs: Dict[str, Tensor]) -> Dict[str, Tensor]:
+    def _update_model_kwargs_for_generation(
+        self,
+        model_kwargs: Dict[str, Tensor],
+        key_cache_list: Optional[List[Tensor]] = None,
+        value_cache_list: Optional[List[Tensor]] = None,
+    ) -> Dict[str, Tensor]:
         # update attention mask
         if "attention_mask" in model_kwargs:
             attention_mask = model_kwargs["attention_mask"]
             model_kwargs["attention_mask"] = ops.concat(
                 [attention_mask, ops.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype)], axis=-1
             )
+
+        # update kv cache
+        if key_cache_list and value_cache_list:
+            if len(self._past_key_cache_list) > 0 and len(self._past_value_cache_list) > 0:
+                for i in range(len(key_cache_list)):
+                    self._past_key_cache_list[i] = ops.concat(
+                        [self._past_key_cache_list[i], key_cache_list[i]], axis=-2
+                    )
+                    self._past_value_cache_list[i] = ops.concat(
+                        [self._past_value_cache_list[i], value_cache_list[i]], axis=-2
+                    )
+            else:
+                self._past_key_cache_list = key_cache_list
+                self._past_value_cache_list = value_cache_list
+
+            model_kwargs["past_key_cache_list"] = self._past_key_cache_list
+            model_kwargs["past_value_cache_list"] = self._past_value_cache_list
 
         return model_kwargs
 
@@ -209,8 +231,8 @@ class TextGenerator:
         self._prepare_generated_length(input_ids_length)
 
         # reset cache if neccesary
-        if self._use_cache:
-            self.model.past_key_value_cache.reset()
+        if self._use_kv_cache:
+            self._past_key_cache_list, self._past_value_cache_list = [], []
 
         # prepare stopping criteria
         prepared_stopping_criteria = self._get_stopping_criteria()
@@ -234,8 +256,11 @@ class TextGenerator:
             # prepare model inputs
             model_inputs = self.model.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
+            # inject kv cache state
+            model_inputs["return_key_value_cache"] = self._use_kv_cache
+
             # forward pass to get next token
-            logits = self.model(**model_inputs)
+            logits, key_cache_list, value_cache_list = self.model(**model_inputs)
             next_token_scores = logits[:, -1, :]
 
             # token selection
@@ -247,7 +272,7 @@ class TextGenerator:
 
             # update generated ids, model inputs, and length for next step
             input_ids = ops.concat([input_ids, next_tokens[:, None]], axis=-1)
-            model_kwargs = self._update_model_kwargs_for_generation(model_kwargs)
+            model_kwargs = self._update_model_kwargs_for_generation(model_kwargs, key_cache_list, value_cache_list)
 
             unfinished_sequences = ops.logical_and(unfinished_sequences, ~stopping_criteria(input_ids))
             this_peer_finished = unfinished_sequences.max() == 0

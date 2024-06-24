@@ -1,5 +1,5 @@
 import math
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -7,7 +7,6 @@ import mindspore.ops as ops
 from mindspore import Parameter, Tensor
 
 from ..activation import ACT2FN
-from ..cache import Cache, DynamicCache
 from ..clip import CLIPVisionModel
 from ..mistral import MistralForCausalLM
 from .utils import get_anyres_image_grid_shape, image_size_to_num_patches, unpad_image
@@ -45,19 +44,11 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         image_token_index: int = 32000,
         vision_feature_select_strategy: str = "default",
         vision_feature_layer: int = -2,
-        past_key_value_cache: Optional[Union[Cache, bool]] = None,
         dtype: ms.dtype = ms.float32,
         **kwargs: Any,
     ) -> None:
         super().__init__()
         self.dtype = dtype
-
-        if isinstance(past_key_value_cache, bool) and past_key_value_cache:
-            self.past_key_value_cache = DynamicCache()
-        elif isinstance(past_key_value_cache, Cache):
-            self.past_key_value_cache = past_key_value_cache
-        else:
-            self.past_key_value_cache = None
 
         self.vision_tower = CLIPVisionModel(**vision_config, dtype=dtype)
         self.multi_modal_projector = LlavaNextMultiModalProjector(
@@ -70,9 +61,7 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         self.image_newline = Parameter(Tensor(ops.randn(text_config["hidden_size"]) * embed_std, dtype=dtype))
 
         self.vocab_size = text_config["vocab_size"]
-        self.language_model = MistralForCausalLM(
-            **text_config, past_key_value_cache=self.past_key_value_cache, dtype=dtype
-        )
+        self.language_model = MistralForCausalLM(**text_config, dtype=dtype)
 
         self.text_config = text_config
         self.vision_config = vision_config
@@ -264,7 +253,10 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         image_sizes: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
-    ) -> Tensor:
+        past_key_cache_list: Optional[List[Tensor]] = None,
+        past_value_cache_list: Optional[List[Tensor]] = None,
+        return_key_value_cache: bool = False,
+    ) -> Tuple[Tensor, Optional[List[Tensor]], Optional[List[Tensor]]]:
         # 1. Extract the input embeddings
         # In case image_token_index is not in the embeddings (extra token but embedding don't have it)
         for_inputs_embeds_ids = input_ids.copy()
@@ -326,15 +318,10 @@ class LlavaNextForConditionalGeneration(nn.Cell):
             # there are no images
             pass
 
-        elif (
-            self.past_key_value_cache is not None
-            and self.past_key_value_cache.seen_tokens > 0
-            and pixel_values is not None
-            and input_ids.shape[1] == 1
-        ):
+        elif past_key_cache_list and past_value_cache_list and pixel_values is not None and input_ids.shape[1] == 1:
             # Retrieve the first layer to inspect the logits and mask out the hidden states
             # that are set to 0
-            first_layer_past_key_value = self.past_key_value_cache[0][0][:, :, :, 0]
+            first_layer_past_key_value = past_key_cache_list[0][:, :, :, 0]
 
             # Sum all dimensions of head_dim (-2) to avoid random errors such as:
             # https://github.com/huggingface/transformers/pull/28032#issuecomment-1863691941
@@ -366,13 +353,16 @@ class LlavaNextForConditionalGeneration(nn.Cell):
 
             position_ids = ops.sum(attention_mask, dim=1).unsqueeze(-1) - 1
 
-        logits = self.language_model(
+        logits, key_cache_list, value_cache_list = self.language_model(
             attention_mask=attention_mask,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
+            past_key_cache_list=past_key_cache_list,
+            past_value_cache_list=past_value_cache_list,
+            return_key_value_cache=return_key_value_cache,
         )
 
-        return logits
+        return logits, key_cache_list, value_cache_list
 
     def prepare_inputs_for_generation(
         self,
@@ -380,11 +370,13 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         pixel_values: Optional[Tensor] = None,
         image_sizes: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
+        past_key_cache_list: Optional[List[Tensor]] = None,
+        past_value_cache_list: Optional[List[Tensor]] = None,
+        return_key_value_cache: bool = False,
         **kwargs,
     ) -> Dict[str, Optional[Tensor]]:
-        if self.past_key_value_cache is not None:
-            cache_length = self.past_key_value_cache.get_seq_length()
-            past_length = self.past_key_value_cache.seen_tokens
+        if past_key_cache_list and past_value_cache_list:
+            past_length = past_value_cache_list[0].shape[-2]
 
             # Keep only the unprocessed tokens:
             # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
@@ -392,27 +384,22 @@ class LlavaNextForConditionalGeneration(nn.Cell):
             # input)
             if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
                 input_ids = input_ids[:, -(attention_mask.shape[1] - past_length) :]
-            # 2 - Not intialized
-            elif past_length == 0:
-                pass
+
             # 2 - If the past_length is smaller than input_ids', then input_ids holds all input tokens. We can discard
             # input_ids based on the past_length.
             elif past_length < input_ids.shape[1]:
                 input_ids = input_ids[:, past_length:]
+
             # 3 - Otherwise (past_length >= input_ids.shape[1]), let's assume input_ids only has unprocessed tokens.
             elif self.image_token_index in input_ids.asnumpy():
                 input_ids = input_ids[:, input_ids.shape[1] - 1 :]
-            # If the cache has seen more tokens than it can hold, then the cache has a size limit. Let's discard the
-            # older attention values, as their corresponding values are not part of the input.
-            if cache_length < past_length and attention_mask is not None:
-                attention_mask = attention_mask[:, -(cache_length + input_ids.shape[1]) :]
 
         position_ids = kwargs.get("position_ids", None)
         if attention_mask is not None and position_ids is None:
             # create position_ids on the fly for batch generation
             position_ids = ops.cumsum(attention_mask.to(ms.int32), -1) - 1
             position_ids = ops.masked_fill(position_ids, attention_mask == 0, Tensor(1, dtype=ms.int32))
-            if self.past_key_value_cache and past_length > 0:
+            if past_key_cache_list and past_value_cache_list:
                 position_ids = position_ids[:, -input_ids.shape[1] :]
 
         # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
@@ -423,6 +410,9 @@ class LlavaNextForConditionalGeneration(nn.Cell):
                 "attention_mask": attention_mask,
                 "pixel_values": pixel_values.to(self.dtype),
                 "image_sizes": image_sizes,
+                "past_key_cache_list": past_key_cache_list,
+                "past_value_cache_list": past_value_cache_list,
+                "return_key_value_cache": return_key_value_cache,
             }
         )
         return model_inputs
