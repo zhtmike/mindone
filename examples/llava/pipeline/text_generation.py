@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -42,8 +42,8 @@ class TextGenerator:
             )
 
         if self._use_kv_cache:
-            self._past_key_cache_list: List[Tensor] = []
-            self._past_value_cache_list: List[Tensor] = []
+            self._past_key_cache_list: Optional[Tensor] = None
+            self._past_value_cache_list: Optional[Tensor] = None
 
     def _prepare_model_inputs(
         self, bos_token_id: Optional[Tensor] = None, model_kwargs: Optional[Dict[str, Tensor]] = None
@@ -109,8 +109,8 @@ class TextGenerator:
     def _update_model_kwargs_for_generation(
         self,
         model_kwargs: Dict[str, Tensor],
-        key_cache_list: Optional[List[Tensor]] = None,
-        value_cache_list: Optional[List[Tensor]] = None,
+        key_cache_list: Optional[Tensor] = None,
+        value_cache_list: Optional[Tensor] = None,
     ) -> Dict[str, Tensor]:
         # update attention mask
         if "attention_mask" in model_kwargs:
@@ -120,15 +120,10 @@ class TextGenerator:
             )
 
         # update kv cache
-        if key_cache_list and value_cache_list:
-            if len(self._past_key_cache_list) > 0 and len(self._past_value_cache_list) > 0:
-                for i in range(len(key_cache_list)):
-                    self._past_key_cache_list[i] = ops.concat(
-                        [self._past_key_cache_list[i], key_cache_list[i]], axis=-2
-                    )
-                    self._past_value_cache_list[i] = ops.concat(
-                        [self._past_value_cache_list[i], value_cache_list[i]], axis=-2
-                    )
+        if key_cache_list is not None and value_cache_list is not None:
+            if self._past_key_cache_list is not None and self._past_value_cache_list is not None:
+                self._past_key_cache_list = ops.concat([self._past_key_cache_list, key_cache_list], axis=-2)
+                self._past_value_cache_list = ops.concat([self._past_value_cache_list, value_cache_list], axis=-2)
             else:
                 self._past_key_cache_list = key_cache_list
                 self._past_value_cache_list = value_cache_list
@@ -232,7 +227,7 @@ class TextGenerator:
 
         # reset cache if neccesary
         if self._use_kv_cache:
-            self._past_key_cache_list, self._past_value_cache_list = [], []
+            self._past_key_cache_list, self._past_value_cache_list = None, None
 
         # prepare stopping criteria
         prepared_stopping_criteria = self._get_stopping_criteria()

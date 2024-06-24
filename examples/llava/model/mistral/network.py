@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -131,14 +131,14 @@ class MistralModel(nn.Cell):
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
         inputs_embeds: Optional[Tensor] = None,
-        past_key_cache_list: Optional[List[Tensor]] = None,
-        past_value_cache_list: Optional[List[Tensor]] = None,
+        past_key_cache_list: Optional[Tensor] = None,
+        past_value_cache_list: Optional[Tensor] = None,
         return_key_value_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[List[Tensor]], Optional[List[Tensor]]]:
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        past_seen_tokens = past_key_cache_list[0].shape[-2] if past_key_cache_list else 0
+        past_seen_tokens = past_key_cache_list.shape[-2] if past_key_cache_list is not None else 0
         cache_position = ops.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], dtype=ms.int32)
         if position_ids is None:
             position_ids = ops.unsqueeze(cache_position, 0)
@@ -153,7 +153,7 @@ class MistralModel(nn.Cell):
             key_cache_list, value_cache_list = None, None
 
         for i, decoder_layer in enumerate(self.layers):
-            if past_key_cache_list and past_value_cache_list:
+            if past_key_cache_list is not None and past_value_cache_list is not None:
                 past_key_cache, past_value_cache = past_key_cache_list[i], past_value_cache_list[i]
             else:
                 past_key_cache, past_value_cache = None, None
@@ -172,6 +172,11 @@ class MistralModel(nn.Cell):
                 value_cache_list.append(value_cache)
 
         hidden_states = self.norm(hidden_states)
+
+        if return_key_value_cache:
+            key_cache_list = ops.stack(key_cache_list)
+            value_cache_list = ops.stack(value_cache_list)
+
         return hidden_states, key_cache_list, value_cache_list
 
     def _update_causal_mask(self, attention_mask: Tensor, input_tensor: Tensor, cache_position: Tensor) -> Tensor:
@@ -265,7 +270,7 @@ class MistralForCausalLM(nn.Cell):
         past_key_cache_list: Optional[Tensor] = None,
         past_value_cache_list: Optional[Tensor] = None,
         return_key_value_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[List[Tensor]], Optional[List[Tensor]]]:
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         hidden_states, key_cache_list, value_cache_list = self.model(
             input_ids=input_ids,

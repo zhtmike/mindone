@@ -253,10 +253,10 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         image_sizes: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
-        past_key_cache_list: Optional[List[Tensor]] = None,
-        past_value_cache_list: Optional[List[Tensor]] = None,
+        past_key_cache_list: Optional[Tensor] = None,
+        past_value_cache_list: Optional[Tensor] = None,
         return_key_value_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[List[Tensor]], Optional[List[Tensor]]]:
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         # 1. Extract the input embeddings
         # In case image_token_index is not in the embeddings (extra token but embedding don't have it)
         for_inputs_embeds_ids = input_ids.copy()
@@ -318,10 +318,15 @@ class LlavaNextForConditionalGeneration(nn.Cell):
             # there are no images
             pass
 
-        elif past_key_cache_list and past_value_cache_list and pixel_values is not None and input_ids.shape[1] == 1:
+        elif (
+            past_key_cache_list is not None
+            and past_value_cache_list is not None
+            and pixel_values is not None
+            and input_ids.shape[1] == 1
+        ):
             # Retrieve the first layer to inspect the logits and mask out the hidden states
             # that are set to 0
-            first_layer_past_key_value = past_key_cache_list[0][:, :, :, 0]
+            first_layer_past_key_value = past_key_cache_list[0, :, :, :, 0]
 
             # Sum all dimensions of head_dim (-2) to avoid random errors such as:
             # https://github.com/huggingface/transformers/pull/28032#issuecomment-1863691941
@@ -370,13 +375,13 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         pixel_values: Optional[Tensor] = None,
         image_sizes: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
-        past_key_cache_list: Optional[List[Tensor]] = None,
-        past_value_cache_list: Optional[List[Tensor]] = None,
+        past_key_cache_list: Optional[Tensor] = None,
+        past_value_cache_list: Optional[Tensor] = None,
         return_key_value_cache: bool = False,
         **kwargs,
     ) -> Dict[str, Optional[Tensor]]:
-        if past_key_cache_list and past_value_cache_list:
-            past_length = past_value_cache_list[0].shape[-2]
+        if past_key_cache_list is not None and past_value_cache_list is not None:
+            past_length = past_value_cache_list.shape[-2]
 
             # Keep only the unprocessed tokens:
             # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
@@ -399,7 +404,7 @@ class LlavaNextForConditionalGeneration(nn.Cell):
             # create position_ids on the fly for batch generation
             position_ids = ops.cumsum(attention_mask.to(ms.int32), -1) - 1
             position_ids = ops.masked_fill(position_ids, attention_mask == 0, Tensor(1, dtype=ms.int32))
-            if past_key_cache_list and past_value_cache_list:
+            if past_key_cache_list is not None and past_value_cache_list is not None:
                 position_ids = position_ids[:, -input_ids.shape[1] :]
 
         # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
