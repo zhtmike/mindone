@@ -9,6 +9,7 @@ from mindspore import Parameter, Tensor
 from ..activation import ACT2FN
 from ..clip import CLIPVisionModel
 from ..mistral import MistralForCausalLM
+from ..padding import pad_along_axis
 from .utils import get_anyres_image_grid_shape, image_size_to_num_patches, unpad_image
 
 
@@ -294,11 +295,7 @@ class LlavaNextForConditionalGeneration(nn.Cell):
                 selected_image_feature = selected_image_feature
 
             image_features = self.multi_modal_projector(selected_image_feature)
-
             image_features = ops.split(image_features, image_num_patches, axis=0)
-
-            # NOTE we only support multimodal_patch_merge_type == "spatial_unpad"
-
             image_features, feature_lens = self.pack_image_features(
                 image_features,
                 image_sizes,
@@ -357,6 +354,11 @@ class LlavaNextForConditionalGeneration(nn.Cell):
             attention_mask = ops.concat((extended_attention_mask, attention_mask[:, -target_length:]), axis=1)
 
             position_ids = ops.sum(attention_mask, dim=1).unsqueeze(-1) - 1
+
+            # FIXME: this is for static shape inference, drop it once it supports dynamic
+            attention_mask = pad_along_axis(attention_mask, axis=-1)
+            past_key_cache_list = pad_along_axis(past_key_cache_list, axis=-2, shift=-1)
+            past_value_cache_list = pad_along_axis(past_value_cache_list, axis=-2, shift=-1)
 
         logits, key_cache_list, value_cache_list = self.language_model(
             attention_mask=attention_mask,

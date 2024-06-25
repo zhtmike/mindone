@@ -261,6 +261,7 @@ class MistralForCausalLM(nn.Cell):
     def get_decoder(self) -> nn.Cell:
         return self.model
 
+    @ms.jit
     def construct(
         self,
         input_ids: Optional[Tensor] = None,
