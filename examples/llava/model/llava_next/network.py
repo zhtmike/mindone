@@ -46,6 +46,7 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         vision_feature_select_strategy: str = "default",
         vision_feature_layer: int = -2,
         attn_implementation: Literal["eager", "flash_attention"] = "eager",
+        language_model_input_method: Literal["padding", "dynamic"] = "padding",
         dtype: ms.dtype = ms.float32,
         **kwargs: Any,
     ) -> None:
@@ -74,6 +75,10 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         self.vision_feature_layer = vision_feature_layer
         self.pad_token_id = -1
         self._padding_side = "left"
+
+        self.language_model_input_method = language_model_input_method
+        if self.language_model_input_method == "dynamic":
+            self._is_language_model_compiled = False
 
     def get_input_embeddings(self) -> nn.Cell:
         return self.language_model.get_input_embeddings()
@@ -356,10 +361,10 @@ class LlavaNextForConditionalGeneration(nn.Cell):
 
             position_ids = ops.sum(attention_mask, dim=1).unsqueeze(-1) - 1
 
-            # FIXME: this is for static shape inference, drop it once it supports dynamic
-            attention_mask = pad_along_axis(attention_mask, axis=-1)
-            past_key_cache_list = pad_along_axis(past_key_cache_list, axis=-2, shift=-1)
-            past_value_cache_list = pad_along_axis(past_value_cache_list, axis=-2, shift=-1)
+            if self.language_model_input_method == "padding":
+                attention_mask = pad_along_axis(attention_mask, axis=-1)
+                past_key_cache_list = pad_along_axis(past_key_cache_list, axis=-2, shift=-1)
+                past_value_cache_list = pad_along_axis(past_value_cache_list, axis=-2, shift=-1)
 
         logits, key_cache_list, value_cache_list = self.language_model(
             attention_mask=attention_mask,
