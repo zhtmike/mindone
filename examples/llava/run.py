@@ -43,23 +43,16 @@ def main():
     network = load_network(config, "llava_1_6.ckpt")
 
     # autoregressively complete prompt
-    print("=" * 60)
-    print("KV Cache:")
-    pipeline = TextGenerator(network, max_new_tokens=100, use_kv_cache=True)
-    start = time.time()
-    output = pipeline.generate(**inputs)
-    end = time.time()
-    print(processor.decode(output[0], skip_special_tokens=True))
-    print(f"Time Taken: {end-start:.3f}")
-    print("=" * 60)
-
-    print("Non KV Cache:")
-    pipeline = TextGenerator(network, max_new_tokens=100, use_kv_cache=False)
-    start = time.time()
-    output = pipeline.generate(**inputs)
-    end = time.time()
-    print(processor.decode(output[0], skip_special_tokens=True))
-    print(f"Time Taken: {end-start:.3f}")
+    for trial in range(2):
+        print("=" * 60)
+        print(f"KV Cache (trial={trial}):")
+        pipeline = TextGenerator(network, max_new_tokens=100, use_kv_cache=True)
+        start = time.time()
+        output = pipeline.generate(**inputs)
+        end = time.time()
+        print(processor.decode(output[0], skip_special_tokens=True))
+        print(f"Time Taken: {end-start:.3f}")
+        print("=" * 60)
 
 
 if __name__ == "__main__":
