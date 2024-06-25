@@ -30,6 +30,8 @@ def load_network(config: Dict[str, Any], ckpt_path: str) -> nn.Cell:
 
 
 def main():
+    ms.set_context(jit_config=dict(jit_level="O1"))
+
     MODEL_PATH = "/mnt/disk4/mikecheung/data/model/llava-v1.6-mistral-7b-hf-slim"
     with open(os.path.join(MODEL_PATH, "config.json"), "r") as f:
         config = json.load(f)
