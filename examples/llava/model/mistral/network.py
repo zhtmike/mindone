@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -6,7 +6,12 @@ import mindspore.ops as ops
 from mindspore import Tensor
 
 from ..common_layer import Embedding
-from .layer import MistralAttention, MistralMLP, MistralRMSNorm
+from .layer import MistralAttention, MistralFlashAttention, MistralMLP, MistralRMSNorm
+
+MISTRAL_ATTENTION_CLASSES = {
+    "eager": MistralAttention,
+    "flash_attention": MistralFlashAttention,
+}
 
 
 class MistralDecoderLayer(nn.Cell):
@@ -21,20 +26,19 @@ class MistralDecoderLayer(nn.Cell):
         rope_theta: float = 1000000.0,
         attention_dropout: float = 0.0,
         hidden_act: str = "silu",
-        layer_idx: Optional[int] = None,
+        attn_implementation: Literal["eager", "flash_attention"] = "eager",
         dtype: ms.dtype = ms.float32,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
 
-        self.self_attn = MistralAttention(
+        self.self_attn = MISTRAL_ATTENTION_CLASSES[attn_implementation](
             hidden_size=hidden_size,
             num_attention_heads=num_attention_heads,
             num_key_value_heads=num_key_value_heads,
             max_position_embeddings=max_position_embeddings,
             rope_theta=rope_theta,
             attention_dropout=attention_dropout,
-            layer_idx=layer_idx,
             dtype=dtype,
         )
 
@@ -92,11 +96,13 @@ class MistralModel(nn.Cell):
         attention_dropout: float = 0.0,
         hidden_act: str = "silu",
         pad_token_id: Optional[int] = None,
+        attn_implementation: Literal["eager", "flash_attention"] = "eager",
         dtype: ms.dtype = ms.float32,
     ) -> None:
         super().__init__()
         self.padding_idx = pad_token_id
         self.vocab_size = vocab_size
+        self.attn_implementation = attn_implementation
 
         self.embed_tokens = Embedding(vocab_size, hidden_size, padding_idx=self.padding_idx, dtype=dtype)
         self.layers = nn.CellList(
@@ -111,10 +117,10 @@ class MistralModel(nn.Cell):
                     rope_theta=rope_theta,
                     attention_dropout=attention_dropout,
                     hidden_act=hidden_act,
-                    layer_idx=layer_idx,
+                    attn_implementation=attn_implementation,
                     dtype=dtype,
                 )
-                for layer_idx in range(num_hidden_layers)
+                for _ in range(num_hidden_layers)
             ]
         )
         self.norm = MistralRMSNorm(hidden_size, eps=rms_norm_eps, dtype=dtype)
@@ -190,7 +196,8 @@ class MistralModel(nn.Cell):
                 raise ValueError("Custom 4D attention mask should be passed in inverted form with max==0`")
             causal_mask = attention_mask
         else:
-            causal_mask = ops.full((sequence_length, target_length), fill_value=-ms.numpy.inf, dtype=dtype)
+            fill_value = -ms.numpy.inf if self.attn_implementation == "eager" else 1.0
+            causal_mask = ops.full((sequence_length, target_length), fill_value=fill_value, dtype=dtype)
             exclude_mask = ops.arange(target_length) > cache_position.reshape(-1, 1)
             causal_mask = ops.masked_fill(causal_mask, ~exclude_mask, Tensor(0, dtype=dtype))
             causal_mask = ops.broadcast_to(causal_mask[None, None, :, :], (input_tensor.shape[0], 1, -1, -1))
@@ -199,7 +206,7 @@ class MistralModel(nn.Cell):
                 padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
                 padding_mask = padding_mask == 0
                 causal_mask[:, :, :, :mask_length] = ops.masked_fill(
-                    causal_mask[:, :, :, :mask_length], padding_mask, Tensor(-ms.numpy.inf, dtype=dtype)
+                    causal_mask[:, :, :, :mask_length], padding_mask, Tensor(fill_value, dtype=dtype)
                 )
 
         return causal_mask
@@ -220,6 +227,7 @@ class MistralForCausalLM(nn.Cell):
         attention_dropout: float = 0.0,
         hidden_act: str = "silu",
         pad_token_id: Optional[int] = None,
+        attn_implementation: Literal["eager", "flash_attention"] = "eager",
         dtype: ms.dtype = ms.float32,
         **kwargs,
     ) -> None:
@@ -238,6 +246,7 @@ class MistralForCausalLM(nn.Cell):
             attention_dropout=attention_dropout,
             hidden_act=hidden_act,
             pad_token_id=pad_token_id,
+            attn_implementation=attn_implementation,
             dtype=dtype,
         )
         self.vocab_size = vocab_size

@@ -1,5 +1,5 @@
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -45,6 +45,7 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         image_token_index: int = 32000,
         vision_feature_select_strategy: str = "default",
         vision_feature_layer: int = -2,
+        attn_implementation: Literal["eager", "flash_attention"] = "eager",
         dtype: ms.dtype = ms.float32,
         **kwargs: Any,
     ) -> None:
@@ -62,7 +63,7 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         self.image_newline = Parameter(Tensor(ops.randn(text_config["hidden_size"]) * embed_std, dtype=dtype))
 
         self.vocab_size = text_config["vocab_size"]
-        self.language_model = MistralForCausalLM(**text_config, dtype=dtype)
+        self.language_model = MistralForCausalLM(**text_config, attn_implementation=attn_implementation, dtype=dtype)
 
         self.text_config = text_config
         self.vision_config = vision_config
