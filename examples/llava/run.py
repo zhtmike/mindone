@@ -22,7 +22,9 @@ def load_network(config: Dict[str, Any], ckpt_path: str) -> nn.Cell:
 
     vision_config = config_.pop("vision_config")
     text_config = config_.pop("text_config")
-    network = LlavaNextForConditionalGeneration(vision_config, text_config, dtype=ms.float16, **config_)
+    network = LlavaNextForConditionalGeneration(
+        vision_config, text_config, dtype=ms.float16, attn_implementation="flash_attention", **config_
+    )
     ms.load_checkpoint(ckpt_path, net=network, strict_load=True)
     return network
 
