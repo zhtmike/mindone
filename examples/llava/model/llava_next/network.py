@@ -366,23 +366,23 @@ class LlavaNextForConditionalGeneration(nn.Cell):
                 past_key_cache_list = pad_along_axis(past_key_cache_list, axis=-2, shift=-1)
                 past_value_cache_list = pad_along_axis(past_value_cache_list, axis=-2, shift=-1)
 
-            else:
-                if not self._is_language_model_compiled:
-                    attention_mask_shape = list(attention_mask.shape)
-                    past_key_cache_list_shape = list(past_key_cache_list.shape)
-                    past_value_cache_list_shape = list(past_value_cache_list.shape)
-                    attention_mask_shape[-1] = None
-                    past_key_cache_list_shape[-2] = None
-                    past_value_cache_list_shape[-2] = None
-                    self.language_model.set_inputs(
-                        attention_mask=Tensor(shape=attention_mask_shape),
-                        dtype=attention_mask.dtype,
-                        past_key_cache_list=Tensor(shape=past_key_cache_list_shape, dtype=past_key_cache_list.dtype),
-                        past_value_cache_list=Tensor(
-                            shape=past_value_cache_list_shape, dtype=past_value_cache_list.dtype
-                        ),
-                    )
-                    self._is_language_model_compiled = True
+        if self.language_model_input_method == "dynamic" and not self._is_language_model_compiled:
+            if past_key_cache_list is not None or past_value_cache_list is not None:
+                raise ValueError("Dynamic shape compling is not supported with KV caching yet.")
+            attention_mask_shape = list(attention_mask.shape)
+            position_ids_shape = list(position_ids.shape)
+            inputs_embeds_shape = list(inputs_embeds.shape)
+
+            attention_mask_shape[-1] = None
+            position_ids_shape[-1] = None
+            inputs_embeds_shape[-2] = None
+
+            self.language_model.set_inputs(
+                attention_mask=Tensor(shape=attention_mask_shape, dtype=attention_mask.dtype),
+                position_ids=Tensor(shape=position_ids_shape, dtype=position_ids.dtype),
+                inputs_embeds=Tensor(shape=inputs_embeds_shape, dtype=inputs_embeds.dtype),
+            )
+            self._is_language_model_compiled = True
 
         logits, key_cache_list, value_cache_list = self.language_model(
             attention_mask=attention_mask,

@@ -22,8 +22,8 @@ def load_network(config: Dict[str, Any], ckpt_path: str) -> nn.Cell:
     config_["text_config"]["hidden_size"] = 4096
 
     # for debuging
-    # config_["vision_config"]["num_hidden_layers"] = 1
-    # config_["text_config"]["num_hidden_layers"] = 1
+    config_["vision_config"]["num_hidden_layers"] = 1
+    config_["text_config"]["num_hidden_layers"] = 1
 
     vision_config = config_.pop("vision_config")
     text_config = config_.pop("text_config")
@@ -33,11 +33,11 @@ def load_network(config: Dict[str, Any], ckpt_path: str) -> nn.Cell:
         text_config,
         dtype=ms.float16,
         attn_implementation="flash_attention",
-        language_model_input_method="padding",  # dynamic
+        language_model_input_method="dynamic",  # dynamic
         **config_,
     )
-    logging.info("Loading the checkpoint...")
-    ms.load_checkpoint(ckpt_path, net=network, strict_load=True)
+    # logging.info("Loading the checkpoint...")
+    # ms.load_checkpoint(ckpt_path, net=network, strict_load=True)
     return network
 
 
@@ -62,7 +62,7 @@ def main():
     for trial in range(2):
         print("=" * 60)
         print(f"KV Cache (trial={trial}):")
-        pipeline = TextGenerator(network, max_new_tokens=100, use_kv_cache=True)
+        pipeline = TextGenerator(network, max_new_tokens=100, use_kv_cache=False)  # True
         start = time.time()
         output = pipeline.generate(**inputs)
         end = time.time()
