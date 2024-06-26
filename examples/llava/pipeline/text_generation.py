@@ -84,7 +84,7 @@ class TextGenerator:
         self, inputs: Tensor, pad_token_id: Optional[Tensor], eos_token_id: Optional[Tensor]
     ) -> Tensor:
         # No information for attention mask inference -> return default attention mask
-        default_attention_mask = ops.ones(inputs.shape[:2], dtype=ms.int32, device=inputs.device)
+        default_attention_mask = ops.ones(inputs.shape[:2], dtype=ms.int32)
         if pad_token_id is None:
             return default_attention_mask
 

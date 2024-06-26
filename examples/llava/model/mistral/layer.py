@@ -5,6 +5,7 @@ import mindspore as ms
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
+from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
 from ..activation import ACT2FN
 from ..cache import Cache
@@ -121,7 +122,6 @@ class MistralAttention(nn.Cell):
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = max_position_embeddings
         self.rope_theta = rope_theta
-        self.is_causal = True
         self.past_key_value_cache = past_key_value_cache
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
@@ -161,7 +161,7 @@ class MistralAttention(nn.Cell):
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if self.past_key_value_cache is not None and not self.training:
+        if self.past_key_value_cache is not None:
             key_states, value_states = self.past_key_value_cache.update(key_states, value_states, self.layer_idx)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -170,9 +170,8 @@ class MistralAttention(nn.Cell):
         key_states = ops.transpose(key_states, (0, 1, 3, 2))
         attn_weights = ops.matmul(query_states, key_states) / ms.numpy.sqrt(self.head_dim)
 
-        if attention_mask is not None:  # no matter the length, we just slice it
-            causal_mask = attention_mask[:, :, :, : key_states.shape[-1]]
-            attn_weights = attn_weights + causal_mask
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask
 
         # upcast attention to fp32
         attn_weights = ops.softmax(attn_weights.to(ms.float32), axis=-1).to(query_states.dtype)
@@ -186,6 +185,89 @@ class MistralAttention(nn.Cell):
         return attn_output
 
 
-class MistralFlashAttention2(nn.Cell):
-    def __init__(self):
-        raise NotImplementedError()
+class MistralFlashAttention(nn.Cell):
+    def __init__(
+        self,
+        hidden_size: int = 4096,
+        num_attention_heads: int = 32,
+        num_key_value_heads: int = 8,
+        max_position_embeddings: int = 32768,
+        rope_theta: float = 1000000.0,
+        attention_dropout: float = 0.0,
+        layer_idx: Optional[int] = None,
+        past_key_value_cache: Optional[Cache] = None,
+        dtype: ms.dtype = ms.float32,
+    ) -> None:
+        super().__init__()
+
+        self.layer_idx = layer_idx
+        self.attention_dropout = attention_dropout
+        self.hidden_size = hidden_size
+        self.num_heads = num_attention_heads
+        self.head_dim = self.hidden_size // self.num_heads
+        self.num_key_value_heads = num_key_value_heads
+        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.max_position_embeddings = max_position_embeddings
+        self.rope_theta = rope_theta
+        self.past_key_value_cache = past_key_value_cache
+
+        if (self.head_dim * self.num_heads) != self.hidden_size:
+            raise ValueError(
+                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
+                f" and `num_heads`: {self.num_heads})."
+            )
+        self.q_proj = nn.Dense(self.hidden_size, self.num_heads * self.head_dim, has_bias=False, dtype=dtype)
+        self.k_proj = nn.Dense(self.hidden_size, self.num_key_value_heads * self.head_dim, has_bias=False, dtype=dtype)
+        self.v_proj = nn.Dense(self.hidden_size, self.num_key_value_heads * self.head_dim, has_bias=False, dtype=dtype)
+        self.o_proj = nn.Dense(self.num_heads * self.head_dim, self.hidden_size, has_bias=False, dtype=dtype)
+
+        self.rotary_emb = MistralRotaryEmbedding(
+            self.head_dim,
+            max_position_embeddings=self.max_position_embeddings,
+            base=self.rope_theta,
+        )
+
+        self.flash_attention = FlashAttentionScore(
+            self.num_heads, keep_prob=1 - self.attention_dropout, scale_value=self.head_dim**-0.5, input_layout="BSND"
+        )
+
+    def construct(
+        self, hidden_states: Tensor, attention_mask: Optional[Tensor] = None, position_ids: Optional[Tensor] = None
+    ) -> Tensor:
+        bsz, q_len, _ = hidden_states.shape
+
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
+        value_states = self.v_proj(hidden_states)
+
+        query_states = ops.reshape(query_states, (bsz, q_len, self.num_heads, self.head_dim))
+        query_states = ops.transpose(query_states, (0, 2, 1, 3))
+
+        key_states = ops.reshape(key_states, (bsz, q_len, self.num_key_value_heads, self.head_dim))
+        key_states = ops.transpose(key_states, (0, 2, 1, 3))
+
+        value_states = ops.reshape(value_states, (bsz, q_len, self.num_key_value_heads, self.head_dim))
+        value_states = ops.transpose(value_states, (0, 2, 1, 3))
+
+        cos, sin = self.rotary_emb(value_states, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        if self.past_key_value_cache is not None:
+            key_states, value_states = self.past_key_value_cache.update(key_states, value_states, self.layer_idx)
+
+        key_states = repeat_kv(key_states, self.num_key_value_groups)
+        value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+        # Reshape to the expected shape and dtype for Flash Attention
+        query_states = ops.transpose(query_states, (0, 2, 1, 3))
+        key_states = ops.transpose(key_states, (0, 2, 1, 3))
+        value_states = ops.transpose(value_states, (0, 2, 1, 3))
+        attention_mask = attention_mask.to(ms.uint8)
+
+        _, _, _, attn_output = self.flash_attention(
+            query_states, key_states, value_states, None, None, None, attention_mask
+        )
+        attn_output = ops.reshape(attn_output, (bsz, q_len, -1))
+        attn_output = self.o_proj(attn_output)
+
+        return attn_output

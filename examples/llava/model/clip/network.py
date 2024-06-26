@@ -175,7 +175,6 @@ class CLIPVisionModel(nn.Cell):
     def get_input_embeddings(self) -> nn.Cell:
         return self.vision_model.embeddings.patch_embedding
 
-    @ms.jit
     def construct(self, pixel_values: Tensor) -> Tuple[Tensor, Tuple[Tensor, ...]]:
         pooled_output, hidden_states = self.vision_model(pixel_values)
 
@@ -220,7 +219,6 @@ class CLIPVisionModelWithProjection(nn.Cell):
     def get_input_embeddings(self) -> nn.Cell:
         return self.vision_model.embeddings.patch_embedding
 
-    @ms.jit
     def construct(self, pixel_values: Tensor) -> Tuple[Tensor, Tuple[Tensor, ...]]:
         pooled_output, hidden_states = self.vision_model(pixel_values)
         image_embeds = self.visual_projection(pooled_output)

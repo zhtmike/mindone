@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import copy
 import json
+import logging
 import os
 import time
 from typing import Any, Dict
@@ -20,11 +21,22 @@ def load_network(config: Dict[str, Any], ckpt_path: str, use_cache: bool = False
     config_["vision_config"]["hidden_size"] = 1024
     config_["text_config"]["hidden_size"] = 4096
 
+    # for debuging
+    # config_["vision_config"]["num_hidden_layers"] = 1
+    # config_["text_config"]["num_hidden_layers"] = 1
+
     vision_config = config_.pop("vision_config")
     text_config = config_.pop("text_config")
+    logging.info("Init Model...")
     network = LlavaNextForConditionalGeneration(
-        vision_config, text_config, past_key_value_cache=use_cache, dtype=ms.float16, **config_
+        vision_config,
+        text_config,
+        past_key_value_cache=use_cache,
+        attn_implementation="eager",
+        dtype=ms.float16,
+        **config_,
     )
+    logging.info("Loading the checkpoint...")
     ms.load_checkpoint(ckpt_path, net=network, strict_load=True)
     return network
 
@@ -65,4 +77,7 @@ def main():
 
 
 if __name__ == "__main__":
+    fmt = "%(asctime)s %(levelname)s: %(message)s"
+    datefmt = "[%Y-%m-%d %H:%M:%S]"
+    logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt)
     main()

@@ -1,5 +1,5 @@
 import math
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -46,6 +46,7 @@ class LlavaNextForConditionalGeneration(nn.Cell):
         vision_feature_select_strategy: str = "default",
         vision_feature_layer: int = -2,
         past_key_value_cache: Optional[Union[Cache, bool]] = None,
+        attn_implementation: Literal["eager", "flash_attention"] = "eager",
         dtype: ms.dtype = ms.float32,
         **kwargs: Any,
     ) -> None:
@@ -71,7 +72,10 @@ class LlavaNextForConditionalGeneration(nn.Cell):
 
         self.vocab_size = text_config["vocab_size"]
         self.language_model = MistralForCausalLM(
-            **text_config, past_key_value_cache=self.past_key_value_cache, dtype=dtype
+            **text_config,
+            past_key_value_cache=self.past_key_value_cache,
+            attn_implementation=attn_implementation,
+            dtype=dtype,
         )
 
         self.text_config = text_config
@@ -302,11 +306,7 @@ class LlavaNextForConditionalGeneration(nn.Cell):
                 selected_image_feature = selected_image_feature
 
             image_features = self.multi_modal_projector(selected_image_feature)
-
             image_features = ops.split(image_features, image_num_patches, axis=0)
-
-            # NOTE we only support multimodal_patch_merge_type == "spatial_unpad"
-
             image_features, feature_lens = self.pack_image_features(
                 image_features,
                 image_sizes,
