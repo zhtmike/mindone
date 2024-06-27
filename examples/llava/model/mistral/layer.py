@@ -168,8 +168,8 @@ class MistralAttention(nn.Cell):
             key_cache, value_cache = None, None
 
         if past_key_cache is not None and past_value_cache is not None:
-            key_states = ops.concat([key_states, past_key_cache], axis=-2)
-            value_states = ops.concat([value_states, past_value_cache], axis=-2)
+            key_states = ops.concat([past_key_cache, key_states], axis=-2)
+            value_states = ops.concat([past_value_cache, value_states], axis=-2)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
