@@ -8,14 +8,9 @@ import mindspore.ops as ops
 
 def main():
     ms.set_seed(42)
-    ms.set_context(mode=ms.GRAPH_MODE, jit_config=dict(jit_level="O0"))
+    ms.set_context(mode=ms.PYNATIVE_MODE)
 
     net = MistralForCausalLM(num_hidden_layers=1, dtype=ms.float16, attn_implementation="flash_attention")
-    net.set_inputs(
-        attention_mask=ms.Tensor(shape=(1, None), dtype=ms.int32),
-        position_ids=ms.Tensor(shape=(1, None), dtype=ms.int32),
-        inputs_embeds=ms.Tensor(shape=(1, None, 4096), dtype=ms.float16),
-    )
 
     START = 2652
     NUM = 10
