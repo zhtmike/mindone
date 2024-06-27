@@ -140,10 +140,7 @@ class MistralAttention(nn.Cell):
         hidden_states: Tensor,
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
-        past_key_cache: Optional[Tensor] = None,
-        past_value_cache: Optional[Tensor] = None,
-        return_key_value_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    ) -> Tensor:
         bsz, q_len, _ = hidden_states.shape
 
         query_states = self.q_proj(hidden_states)
@@ -161,15 +158,6 @@ class MistralAttention(nn.Cell):
 
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-
-        if return_key_value_cache:
-            key_cache, value_cache = key_states, value_states
-        else:
-            key_cache, value_cache = None, None
-
-        if past_key_cache is not None and past_value_cache is not None:
-            key_states = ops.concat([past_key_cache, key_states], axis=-2)
-            value_states = ops.concat([past_value_cache, value_states], axis=-2)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -189,7 +177,7 @@ class MistralAttention(nn.Cell):
         attn_output = ops.reshape(attn_output, (bsz, q_len, -1))
         attn_output = self.o_proj(attn_output)
 
-        return attn_output, key_cache, value_cache
+        return attn_output
 
 
 class MistralFlashAttention(nn.Cell):
@@ -239,10 +227,7 @@ class MistralFlashAttention(nn.Cell):
         hidden_states: Tensor,
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
-        past_key_cache: Optional[Tensor] = None,
-        past_value_cache: Optional[Tensor] = None,
-        return_key_value_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    ) -> Tensor:
         bsz, q_len, _ = hidden_states.shape
 
         query_states = self.q_proj(hidden_states)
@@ -261,15 +246,6 @@ class MistralFlashAttention(nn.Cell):
         cos, sin = self.rotary_emb(value_states, position_ids)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if return_key_value_cache:
-            key_cache, value_cache = key_states, value_states
-        else:
-            key_cache, value_cache = None, None
-
-        if past_key_cache is not None and past_value_cache is not None:
-            key_states = ops.concat([key_states, past_key_cache], axis=-2)
-            value_states = ops.concat([value_states, past_value_cache], axis=-2)
-
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
@@ -285,4 +261,4 @@ class MistralFlashAttention(nn.Cell):
         attn_output = ops.reshape(attn_output, (bsz, q_len, -1))
         attn_output = self.o_proj(attn_output)
 
-        return attn_output, key_cache, value_cache
+        return attn_output

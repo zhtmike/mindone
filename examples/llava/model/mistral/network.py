@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -53,22 +53,16 @@ class MistralDecoderLayer(nn.Cell):
         hidden_states: Tensor,
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
-        past_key_cache: Optional[Tensor] = None,
-        past_value_cache: Optional[Tensor] = None,
-        return_key_value_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    ) -> Tensor:
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states, key_cache, value_cache = self.self_attn(
+        hidden_states = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            past_key_cache=past_key_cache,
-            past_value_cache=past_value_cache,
-            return_key_value_cache=return_key_value_cache,
         )
         hidden_states = residual + hidden_states
 
@@ -78,7 +72,7 @@ class MistralDecoderLayer(nn.Cell):
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
 
-        return hidden_states, key_cache, value_cache
+        return hidden_states
 
 
 class MistralModel(nn.Cell):
@@ -137,14 +131,11 @@ class MistralModel(nn.Cell):
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
         inputs_embeds: Optional[Tensor] = None,
-        past_key_cache_list: Optional[Tensor] = None,
-        past_value_cache_list: Optional[Tensor] = None,
-        return_key_value_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    ) -> Tensor:
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        past_seen_tokens = past_key_cache_list.shape[-2] if past_key_cache_list is not None else 0
+        past_seen_tokens = 0
         cache_position = ops.arange(past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], dtype=ms.int32)
         if position_ids is None:
             position_ids = ops.unsqueeze(cache_position, 0)
@@ -153,37 +144,16 @@ class MistralModel(nn.Cell):
 
         hidden_states = inputs_embeds
 
-        if return_key_value_cache:
-            key_cache_list, value_cache_list = [], []
-        else:
-            key_cache_list, value_cache_list = None, None
-
         for i, decoder_layer in enumerate(self.layers):
-            if past_key_cache_list is not None and past_value_cache_list is not None:
-                past_key_cache, past_value_cache = past_key_cache_list[i], past_value_cache_list[i]
-            else:
-                past_key_cache, past_value_cache = None, None
-
-            hidden_states, key_cache, value_cache = decoder_layer(
+            hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
-                past_key_cache=past_key_cache,
-                past_value_cache=past_value_cache,
-                return_key_value_cache=return_key_value_cache,
             )
-
-            if return_key_value_cache:
-                key_cache_list.append(key_cache)
-                value_cache_list.append(value_cache)
 
         hidden_states = self.norm(hidden_states)
 
-        if return_key_value_cache:
-            key_cache_list = ops.stack(key_cache_list)
-            value_cache_list = ops.stack(value_cache_list)
-
-        return hidden_states, key_cache_list, value_cache_list
+        return hidden_states
 
     def _update_causal_mask(self, attention_mask: Tensor, input_tensor: Tensor, cache_position: Tensor) -> Tensor:
         dtype = input_tensor.dtype
@@ -270,26 +240,19 @@ class MistralForCausalLM(nn.Cell):
     def get_decoder(self) -> nn.Cell:
         return self.model
 
-    @ms.jit
     def construct(
         self,
         input_ids: Optional[Tensor] = None,
         attention_mask: Optional[Tensor] = None,
         position_ids: Optional[Tensor] = None,
         inputs_embeds: Optional[Tensor] = None,
-        past_key_cache_list: Optional[Tensor] = None,
-        past_value_cache_list: Optional[Tensor] = None,
-        return_key_value_cache: bool = False,
-    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    ) -> Tensor:
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        hidden_states, key_cache_list, value_cache_list = self.model(
+        hidden_states = self.model(
             input_ids=input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
             inputs_embeds=inputs_embeds,
-            past_key_cache_list=past_key_cache_list,
-            past_value_cache_list=past_value_cache_list,
-            return_key_value_cache=return_key_value_cache,
         )
         logits = self.lm_head(hidden_states).to(ms.float32)
-        return logits, key_cache_list, value_cache_list
+        return logits
