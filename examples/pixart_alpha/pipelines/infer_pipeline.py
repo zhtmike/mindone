@@ -1,11 +1,12 @@
 from typing import Any, Dict, List, Union
 
 from diffusion import create_diffusion
+from modules.pixart import PixArt
 
 import mindspore as ms
 from mindspore import Tensor, nn, ops
 
-from mindone.models.pixart import PixArt, get_2d_sincos_pos_embed
+from mindone.models.modules.pos_embed import get_2d_sincos_pos_embed
 
 
 class PixArtInferPipeline:
@@ -98,7 +99,7 @@ class PixArtInferPipeline:
                 hidden_size,
                 nh=height // patch_size // 8,
                 nw=width // patch_size // 8,
-                lewei_scale=lewei_scale,
+                scale=lewei_scale,
                 base_size=base_size,
             )[None, ...]
         )
