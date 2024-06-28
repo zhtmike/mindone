@@ -71,12 +71,14 @@ if __name__ == "__main__":
         "--source",
         "-s",
         type=str,
+        required=True,
         help="path to vae torch checkpoint",
     )
     parser.add_argument(
         "--target",
         "-t",
         type=str,
+        required=True,
         help="Filename to save. Specify folder, e.g., ./models, or file path which ends with .ckpt, e.g., ./models/vae.ckpt",
     )
 

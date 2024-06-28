@@ -68,15 +68,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--src",
+        "--source",
         "-s",
         nargs="+",
-        default=[],
+        required=True,
         help="a list of paths to source torch checkpoints, which ends with .pt or .bin",
     )
     parser.add_argument(
         "--target",
         "-t",
+        required=True,
         type=str,
         help="Filename to save. Specify folder, e.g., ./models, or file path which ends with .ckpt, e.g., ./models/t5-v1_1-xxl.ckpt",
     )
