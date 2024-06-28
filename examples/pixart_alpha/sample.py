@@ -34,23 +34,13 @@ from mindone.utils.seed import set_random_seed
 logger = logging.getLogger(__name__)
 
 
-def init_env(args):
-    # no parallel mode currently
-    ms.set_context(mode=args.mode)  # needed for MS2.0
-    device_id = int(os.getenv("DEVICE_ID", 0))
-    ms.set_context(
-        mode=args.mode,
-        device_target=args.device_target,
-        device_id=device_id,
-    )
-    if args.precision_mode is not None:
-        ms.set_context(ascend_config={"precision_mode": args.precision_mode})
-
-    return device_id
+def init_env(args) -> None:
+    ms.set_context(mode=args.mode, device_target=args.device_target)
+    set_random_seed(args.seed)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Image generation")
     parser.add_argument(
         "--config",
         "-c",
@@ -101,9 +91,9 @@ def parse_args():
     parser.add_argument("--sampling_steps", type=int, default=50, help="Diffusion Sampling Steps")
     parser.add_argument("--guidance_scale", type=float, default=8.5, help="the scale for classifier-free guidance")
     # MS new args
-    parser.add_argument("--device_target", type=str, default="Ascend", help="Ascend or GPU")
+    parser.add_argument("--device_target", default="Ascend", choices=["CPU", "GPU", "Ascend"], help="Device target")
     parser.add_argument("--mode", type=int, default=0, help="Running in GRAPH_MODE(0) or PYNATIVE_MODE(1) (default=0)")
-    parser.add_argument("--seed", type=int, default=4, help="Inference seed")
+    parser.add_argument("--seed", type=int, default=42, help="Inference seed")
 
     parser.add_argument(
         "--enable_flash_attention",
@@ -117,12 +107,6 @@ def parse_args():
         type=str,
         choices=["bf16", "fp16", "fp32"],
         help="what data type to use for latte. Default is `fp16`, which corresponds to ms.float16",
-    )
-    parser.add_argument(
-        "--precision_mode",
-        default=None,
-        type=str,
-        help="If specified, set the precision mode for Ascend configurations.",
     )
     parser.add_argument("--ddim_sampling", type=str2bool, default=True, help="Whether to use DDIM for sampling")
     parser.add_argument("--imagegrid", default=False, type=str2bool, help="Save the image in image-grids format.")
@@ -150,7 +134,6 @@ if __name__ == "__main__":
     # 1. init env
     args = parse_args()
     init_env(args)
-    set_random_seed(args.seed)
 
     # 1.1. bin the size if need
     if args.use_resolution_binning:
