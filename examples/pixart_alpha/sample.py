@@ -22,10 +22,10 @@ __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../"))
 sys.path.insert(0, mindone_lib_path)
 
-from modules.autoencoder import SD_CONFIG, AutoencoderKL
-from modules.text_encoder.t5 import T5Embedder
+from modules.pixart import PixArt_XL_2, PixArtMS_XL_2
+from modules.text_encoder import T5Embedder
+from modules.vae import SD_CONFIG, AutoencoderKL
 from pipelines.infer_pipeline import PixArtInferPipeline
-from pixart.pixart import PixArt_XL_2, PixArtMS_XL_2
 
 from mindone.utils.amp import auto_mixed_precision
 from mindone.utils.logger import set_logger
