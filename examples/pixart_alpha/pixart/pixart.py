@@ -8,230 +8,22 @@ import mindspore.ops as ops
 from mindspore import Parameter, Tensor
 from mindspore.common.initializer import XavierUniform, initializer
 
-from mindone.models.modules.pos_embed import _get_2d_sincos_pos_embed_from_grid
+from mindone.models.modules.pos_embed import get_2d_sincos_pos_embed
+from mindone.models.utils import constant_, normal_, xavier_uniform_
 
-from .dit import GELU, LayerNorm, Mlp, PatchEmbed, TimestepEmbedder
-from .utils import constant_, exists, normal_, xavier_uniform_
-
-
-def t2i_modulate(x: Tensor, shift: Tensor, scale: Tensor) -> Tensor:
-    return x * (1 + scale) + shift
-
-
-def get_2d_sincos_pos_embed(
-    embed_dim: int, nh: int, nw: Optional[int] = None, lewei_scale: float = 1.0, base_size: int = 16
-) -> np.ndarray:
-    nw = nh if nw is None else nw
-    grid_h = np.arange(nh, dtype=np.float32) / (nh / base_size) / lewei_scale
-    grid_w = np.arange(nw, dtype=np.float32) / (nw / base_size) / lewei_scale
-    grid = np.meshgrid(grid_w, grid_h)  # here w goes first
-    grid = np.stack(grid, axis=0)
-
-    grid = grid.reshape([2, nh, nw])
-    pos_embed = _get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
-    return pos_embed
-
-
-class DropPath(nn.Cell):
-    def __init__(self, drop_prob: float = 0.0, scale_by_keep: bool = True) -> None:
-        super().__init__()
-        self.keep_prob = 1.0 - drop_prob
-        self.scale_by_keep = scale_by_keep
-        self.dropout = nn.Dropout(p=drop_prob)
-
-    def construct(self, x: Tensor) -> Tensor:
-        if self.keep_prob == 1.0 or not self.training:
-            return x
-        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
-        random_tensor = self.dropout(ops.ones(shape))
-        if not self.scale_by_keep:
-            random_tensor = ops.mul(random_tensor, self.keep_prob)
-        return x * random_tensor
-
-
-class CaptionEmbedder(nn.Cell):
-    def __init__(
-        self,
-        in_channels: int,
-        hidden_size: int,
-        uncond_prob: float = 0.0,
-        act_layer=GELU(approximate="tanh"),
-        token_num: int = 120,
-    ) -> None:
-        super().__init__()
-        self.y_proj = Mlp(
-            in_features=in_channels,
-            hidden_features=hidden_size,
-            out_features=hidden_size,
-            act_layer=act_layer,
-            drop=0.0,
-        )
-        self.y_embedding = Parameter(ops.randn((token_num, in_channels)) / in_channels**0.5)
-        self.uncond_prob = uncond_prob
-
-    def token_drop(self, caption: Tensor, force_drop_ids: Optional[Tensor] = None) -> Tensor:
-        """
-        Drops token embedding to enable classifier-free guidance.
-        """
-        if force_drop_ids is None:
-            drop_ids = ops.rand(caption.shape[0]) < self.uncond_prob
-        else:
-            drop_ids = force_drop_ids == 1
-        caption = ops.where(drop_ids[:, None, None], self.y_embedding[None, ...], caption)
-        return caption
-
-    def construct(self, caption: Tensor, train: bool, force_drop_ids: Optional[Tensor] = None) -> Tensor:
-        if (train and self.uncond_prob > 0) or (force_drop_ids is not None):
-            caption = self.token_drop(caption, force_drop_ids)
-        caption = self.y_proj(caption)
-        return caption
-
-
-class SizeEmbedder(TimestepEmbedder):
-    def __init__(self, hidden_size: int, frequency_embedding_size: int = 256) -> None:
-        super().__init__(hidden_size=hidden_size, frequency_embedding_size=frequency_embedding_size)
-        self.mlp = nn.SequentialCell(
-            nn.Dense(frequency_embedding_size, hidden_size, has_bias=True),
-            nn.SiLU(),
-            nn.Dense(hidden_size, hidden_size, has_bias=True),
-        )
-        self.frequency_embedding_size = frequency_embedding_size
-
-    def construct(self, s: Tensor, bs: int) -> Tensor:
-        assert s.shape[0] == bs
-        s = ops.reshape(s, (-1,))
-        s_freq = self.timestep_embedding(s, self.frequency_embedding_size)
-        s_emb = self.mlp(s_freq)
-        s_emb = ops.reshape(s_emb, (bs, -1))
-        return s_emb
-
-
-class Attention(nn.Cell):
-    def __init__(self, dim_head: int, attn_drop: float = 0.0) -> None:
-        super().__init__()
-        self.scale = dim_head**-0.5
-        self.attn_drop = nn.Dropout(p=attn_drop)
-
-    def construct(self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None) -> Tensor:
-        sim = ops.BatchMatMul(transpose_b=True)(q, k) * self.scale
-
-        # use fp32 for exponential inside
-        sim = sim.to(ms.float32)
-        if exists(mask):
-            mask = mask[:, None, None, :]
-            sim = ops.masked_fill(sim, ~mask, -ms.numpy.inf)
-        attn = ops.softmax(sim, axis=-1).astype(v.dtype)
-        attn = self.attn_drop(attn)
-        out = ops.matmul(attn, v)
-        return out
-
-
-class SelfAttention(nn.Cell):
-    def __init__(
-        self,
-        dim: int,
-        num_heads: int = 8,
-        qkv_bias: bool = True,
-        attn_drop: float = 0.0,
-        proj_drop: float = 0.0,
-        enable_flash_attention: bool = False,
-    ) -> None:
-        super().__init__()
-        if enable_flash_attention:
-            raise NotImplementedError("Flash attention is not supported yet.")
-
-        assert dim % num_heads == 0, "dim should be divisible by num_heads"
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-
-        self.qkv = nn.Dense(dim, dim * 3, has_bias=qkv_bias)
-        self.proj = nn.Dense(dim, dim)
-        self.proj_drop = nn.Dropout(p=proj_drop)
-        self.attention = Attention(head_dim, attn_drop=attn_drop)
-
-    @staticmethod
-    def _rearange_out(x: Tensor) -> Tensor:
-        # (b, h, n, d) -> (b, n, h*d)
-        b, _, n, _ = x.shape
-        x = ops.transpose(x, (0, 2, 1, 3))
-        x = ops.reshape(x, (b, n, -1))
-        return x
-
-    def construct(self, x: Tensor, mask: Optional[Tensor] = None) -> Tensor:
-        h = self.num_heads
-        B, N, _ = x.shape
-
-        # (b, n, 3*h*d) -> (b, n, 3, h*d)  -> (3, b, n, h*d)
-        qkv = self.qkv(x).reshape(B, N, 3, h, -1).permute((2, 0, 3, 1, 4))
-        q, k, v = qkv.unbind(0)
-
-        out = self.attention(q, k, v, mask=mask)
-        # (b, h, n, d) -> (b, n, h*d)
-        out = self._rearange_out(out)
-
-        return self.proj_drop(self.proj(out))
-
-
-class CrossAttention(nn.Cell):
-    def __init__(
-        self,
-        dim: int,
-        num_heads: int = 8,
-        qkv_bias: bool = True,
-        attn_drop: float = 0.0,
-        proj_drop: float = 0.0,
-        enable_flash_attention: bool = False,
-    ):
-        super().__init__()
-        if enable_flash_attention:
-            raise NotImplementedError("Flash attention is not supported yet.")
-
-        assert dim % num_heads == 0, "dim should be divisible by num_heads"
-
-        self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-
-        self.q_linear = nn.Dense(dim, dim, has_bias=qkv_bias)
-        self.kv_linear = nn.Dense(dim, 2 * dim, has_bias=qkv_bias)
-        self.attn_drop = nn.Dropout(p=attn_drop)
-        self.proj = nn.Dense(dim, dim)
-        self.proj_drop = nn.Dropout(p=proj_drop)
-        self.attention = Attention(self.head_dim, attn_drop=attn_drop)
-
-    @staticmethod
-    def _rearange_out(x: Tensor) -> Tensor:
-        # (b, h, n, d) -> (b, n, h*d)
-        b, _, n, _ = x.shape
-        x = ops.transpose(x, (0, 2, 1, 3))
-        x = ops.reshape(x, (b, n, -1))
-        return x
-
-    def construct(self, x: Tensor, cond: Tensor, mask: Optional[Tensor] = None) -> Tensor:
-        h = self.num_heads
-        B, N, _ = x.shape
-
-        q = self.q_linear(x).reshape(B, N, h, self.head_dim).permute((0, 2, 1, 3))
-        kv = self.kv_linear(cond).reshape(B, -1, 2, h, self.head_dim).permute((2, 0, 3, 1, 4))
-        k, v = kv.unbind(0)
-
-        out = self.attention(q, k, v, mask=mask)
-        out = self._rearange_out(out)
-        return self.proj_drop(self.proj(out))
-
-
-class T2IFinalLayer(nn.Cell):
-    def __init__(self, hidden_size: int, patch_size: int, out_channels: int) -> None:
-        super().__init__()
-        self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.linear = nn.Dense(hidden_size, patch_size * patch_size * out_channels, has_bias=True)
-        self.scale_shift_table = Parameter(ops.randn((2, hidden_size)) / hidden_size**0.5)
-        self.out_channels = out_channels
-
-    def construct(self, x: Tensor, t: Tensor) -> Tensor:
-        shift, scale = (self.scale_shift_table[None] + t[:, None]).chunk(2, axis=1)
-        x = t2i_modulate(self.norm_final(x), shift, scale)
-        x = self.linear(x)
-        return x
+from ._layers import GELU, LayerNorm
+from .blocks import (
+    CaptionEmbedder,
+    CrossAttention,
+    DropPath,
+    Mlp,
+    PatchEmbed,
+    SelfAttention,
+    SizeEmbedder,
+    T2IFinalLayer,
+    TimestepEmbedder,
+    t2i_modulate,
+)
 
 
 class PixArtBlock(nn.Cell):
@@ -248,7 +40,6 @@ class PixArtBlock(nn.Cell):
         self.attn = SelfAttention(hidden_size, num_heads=num_heads, **block_kwargs)
         self.cross_attn = CrossAttention(hidden_size, num_heads, **block_kwargs)
         self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        # to be compatible with lower version pytorch
         approx_gelu = lambda: GELU(approximate="tanh")
         self.mlp = Mlp(
             in_features=hidden_size, hidden_features=int(hidden_size * mlp_ratio), act_layer=approx_gelu, drop=0
@@ -304,7 +95,7 @@ class PixArt(nn.Cell):
 
         base_size = input_size // self.patch_size
         pos_embed = get_2d_sincos_pos_embed(
-            hidden_size, int(self.x_embedder.num_patches**0.5), lewei_scale=self.lewei_scale, base_size=base_size
+            hidden_size, int(self.x_embedder.num_patches**0.5), scale=self.lewei_scale, base_size=base_size
         )
         self.pos_embed = Tensor(pos_embed[None, ...], dtype=ms.float32)
 
@@ -386,7 +177,7 @@ class PixArt(nn.Cell):
         x = self.x_embedder(x) + self.pos_embed.to(x.dtype)  # (N, T, D), where T = H * W / patch_size ** 2
         t = self.t_embedder(t)  # (N, D)
         t0 = self.t_block(t)
-        y = self.y_embedder(y, self.training)  # (N, L, D)
+        y = self.y_embedder(y)  # (N, L, D)
 
         for block in self.blocks:
             x = block(x, y, t0, mask_y=mask_y)
@@ -530,7 +321,7 @@ class PixArtMS(PixArt):
         ar = self.ar_embedder(ar, n)
         t = t + ops.concat([csize, ar], axis=1)
         t0 = self.t_block(t)
-        y = self.y_embedder(y, self.training)  # (N, L, D)
+        y = self.y_embedder(y)  # (N, L, D)
 
         for block in self.blocks:
             x = block(x, y, t0, mask_y=mask_y)
