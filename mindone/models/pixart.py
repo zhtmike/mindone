@@ -374,7 +374,6 @@ class PixArt(nn.Cell):
         imgs = x.reshape((x.shape[0], c, nh * self.patch_size, nw * self.patch_size))
         return imgs
 
-    @ms.jit
     def construct(self, x: Tensor, t: Tensor, y: Tensor, mask_y: Optional[Tensor] = None) -> Tensor:
         """
         Forward pass of PixArt.
@@ -399,10 +398,9 @@ class PixArt(nn.Cell):
     def construct_with_cfg(
         self, x: Tensor, t: Tensor, y: Tensor, cfg_scale: Union[Tensor, float], mask_y: Optional[Tensor] = None
     ) -> Tensor:
-        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
         half = x[: len(x) // 2]
         combined = ops.cat([half, half], axis=0)
-        model_out = self.construct(combined, t, y, mask_y=mask_y)
+        model_out = self(combined, t, y, mask_y=mask_y)
         eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels :]
         cond_eps, uncond_eps = ops.split(eps, len(eps) // 2, axis=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
@@ -504,7 +502,6 @@ class PixArtMS(PixArt):
         constant_(self.final_layer.linear.weight, 0)
         constant_(self.final_layer.linear.bias, 0)
 
-    @ms.jit
     def construct(
         self,
         x: Tensor,
@@ -553,10 +550,9 @@ class PixArtMS(PixArt):
         cfg_scale: Union[Tensor, float],
         mask_y: Optional[Tensor] = None,
     ) -> Tensor:
-        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
         half = x[: len(x) // 2]
         combined = ops.cat([half, half], axis=0)
-        model_out = self.construct(combined, t, y, pos_embed, csize, ar, mask_y=mask_y)
+        model_out = self(combined, t, y, pos_embed, csize, ar, mask_y=mask_y)
         eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels :]
         cond_eps, uncond_eps = ops.split(eps, len(eps) // 2, axis=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
