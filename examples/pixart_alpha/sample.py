@@ -90,7 +90,7 @@ def parse_args():
     parser.add_argument(
         "--vae_checkpoint",
         type=str,
-        default="models/sd-vae-ft-mse.ckpt",
+        default="models/sd-vae-ft-ema.ckpt",
         help="VAE checkpoint file path which is used to load vae weight.",
     )
     parser.add_argument("--prompt", type=str, default="A small cactus with a happy face in the Sahara desert.")

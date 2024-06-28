@@ -3,13 +3,14 @@ import argparse
 import os
 
 import torch
+from tqdm import tqdm
 
 import mindspore as ms
 
 
 def _load_torch_ckpt(ckpt_file):
     source_data = torch.load(ckpt_file, map_location="cpu")
-    if ["state_dict"] in source_data:
+    if "state_dict" in source_data:
         source_data = source_data["state_dict"]
     return source_data
 
@@ -52,7 +53,7 @@ def torch_to_ms_weight(source_fp, target_fp):
     assert len(lines_pt_vae) == len(
         source_data
     ), f"Loaded pt VAE checkpoint has a wrong number of parameters! Expect to have {len(lines_pt_vae)} params, but got {len(source_data)}"
-    for i in range(len(lines_pt_vae)):
+    for i in tqdm(range(len(lines_pt_vae))):
         line_pt_vae, line_ms_vae = lines_pt_vae[i], lines_ms[i]
         _name_pt, _, _ = line_pt_vae.strip().split("#")
         _name_ms, shape, _ = line_ms_vae.strip().split("#")
