@@ -25,8 +25,8 @@ sys.path.insert(0, mindone_lib_path)
 from modules.autoencoder import SD_CONFIG, AutoencoderKL
 from modules.text_encoder.t5 import T5Embedder
 from pipelines.infer_pipeline import PixArtInferPipeline
+from pixart.pixart import PixArt_XL_2, PixArtMS_XL_2
 
-from mindone.models.pixart import PixArt_XL_2, PixArtMS_XL_2
 from mindone.utils.amp import auto_mixed_precision
 from mindone.utils.logger import set_logger
 from mindone.utils.seed import set_random_seed
