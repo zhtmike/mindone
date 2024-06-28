@@ -36,10 +36,10 @@ class PixArtBlock(nn.Cell):
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
-        self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm1 = LayerNorm(hidden_size, elementwise_affine=False, epsilon=1e-6)
         self.attn = SelfAttention(hidden_size, num_heads=num_heads, **block_kwargs)
         self.cross_attn = CrossAttention(hidden_size, num_heads, **block_kwargs)
-        self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm2 = LayerNorm(hidden_size, elementwise_affine=False, epsilon=1e-6)
         approx_gelu = lambda: GELU(approximate="tanh")
         self.mlp = Mlp(
             in_features=hidden_size, hidden_features=int(hidden_size * mlp_ratio), act_layer=approx_gelu, drop=0

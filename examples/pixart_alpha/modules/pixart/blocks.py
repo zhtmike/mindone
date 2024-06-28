@@ -355,7 +355,7 @@ class SizeEmbedder(TimestepEmbedder):
 class T2IFinalLayer(nn.Cell):
     def __init__(self, hidden_size: int, patch_size: int, out_channels: int) -> None:
         super().__init__()
-        self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, epsilon=1e-6)
         self.linear = nn.Dense(hidden_size, patch_size * patch_size * out_channels, has_bias=True)
         self.scale_shift_table = Parameter(ops.randn((2, hidden_size)) / hidden_size**0.5)
         self.out_channels = out_channels
