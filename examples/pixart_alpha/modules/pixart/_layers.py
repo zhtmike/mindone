@@ -11,7 +11,7 @@ from mindspore.common.initializer import Initializer, initializer
 class LayerNorm(nn.LayerNorm):
     def __init__(
         self,
-        normalized_shape: Union[Tuple[int], List[int]],
+        normalized_shape: Union[int, Tuple[int], List[int]],
         begin_norm_axis: int = -1,
         begin_params_axis: int = -1,
         gamma_init: Union[Tensor, str, Initializer, numbers.Number] = "ones",
@@ -22,9 +22,9 @@ class LayerNorm(nn.LayerNorm):
     ):
         """Initialize LayerNorm."""
         super(nn.LayerNorm, self).__init__()
-        if not isinstance(normalized_shape, (tuple, list)):
+        if not isinstance(normalized_shape, (int, tuple, list)):
             raise TypeError(
-                f"For '{self.cls_name}', the type of 'normalized_shape' must be tuple[int] or list[int], "
+                f"For '{self.cls_name}', the type of 'normalized_shape' must be int, tuple[int] or list[int], "
                 f"but got {normalized_shape} and the type is {type(normalized_shape)}."
             )
         if not normalized_shape:
@@ -32,7 +32,7 @@ class LayerNorm(nn.LayerNorm):
                 f"Expected normalized_shape to be at least 1-dimensional, i.e., containing at "
                 f"least one element, but got normalized_shape = {normalized_shape}"
             )
-        self.normalized_shape = normalized_shape
+        self.normalized_shape = (normalized_shape,) if isinstance(normalized_shape, int) else normalized_shape
         self.begin_norm_axis = begin_norm_axis
         self.begin_params_axis = begin_params_axis
         self.epsilon = epsilon

@@ -191,7 +191,7 @@ class PixArt(nn.Cell):
     ) -> Tensor:
         half = x[: len(x) // 2]
         combined = ops.cat([half, half], axis=0)
-        model_out = self(combined, t, y, mask_y=mask_y)
+        model_out = self.construct(combined, t, y, mask_y=mask_y)
         eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels :]
         cond_eps, uncond_eps = ops.split(eps, len(eps) // 2, axis=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
@@ -343,7 +343,7 @@ class PixArtMS(PixArt):
     ) -> Tensor:
         half = x[: len(x) // 2]
         combined = ops.cat([half, half], axis=0)
-        model_out = self(combined, t, y, pos_embed, csize, ar, mask_y=mask_y)
+        model_out = self.construct(combined, t, y, pos_embed, csize, ar, mask_y=mask_y)
         eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels :]
         cond_eps, uncond_eps = ops.split(eps, len(eps) // 2, axis=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)

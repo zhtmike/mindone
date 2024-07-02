@@ -42,10 +42,8 @@ def init_env(args) -> None:
 def parse_args():
     parser = argparse.ArgumentParser(description="Image generation")
     parser.add_argument(
-        "--config",
         "-c",
-        default="",
-        type=str,
+        "--config",
         help="path to load a config yaml file that describes the setting which will override the default arguments",
     )
     parser.add_argument(
@@ -75,16 +73,20 @@ def parse_args():
     )
     parser.add_argument("--clean_caption", type=str2bool, default=False, help="clean the prompt before encoding.")
     parser.add_argument(
-        "--checkpoint", type=str, default="models/PixArt-XL-2-512x512.ckpt", help="the path to the checkpoint."
+        "--checkpoint", default="models/PixArt-XL-2-512x512.ckpt", help="the path to the PixArt checkpoint."
     )
     parser.add_argument(
         "--vae_checkpoint",
-        type=str,
         default="models/sd-vae-ft-ema.ckpt",
         help="VAE checkpoint file path which is used to load vae weight.",
     )
-    parser.add_argument("--prompt", type=str, default="A small cactus with a happy face in the Sahara desert.")
-    parser.add_argument("--negative_prompt", type=str, default="")
+    parser.add_argument(
+        "--t5_root", default="models/t5-v1_1-xxl", help="Path storing the T5 checkpoint and tokenizer configure file."
+    )
+    parser.add_argument(
+        "--prompt", default="A small cactus with a happy face in the Sahara desert.", help="Prompt for sampling."
+    )
+    parser.add_argument("--negative_prompt", default="", help="Negative prompt for sampling.")
     parser.add_argument(
         "--sd_scale_factor", type=float, default=0.18215, help="VAE scale factor of Stable Diffusion network."
     )
@@ -104,9 +106,8 @@ def parse_args():
     parser.add_argument(
         "--dtype",
         default="fp16",
-        type=str,
         choices=["bf16", "fp16", "fp32"],
-        help="what data type to use for latte. Default is `fp16`, which corresponds to ms.float16",
+        help="what data type to use for PixArt. Default is `fp16`, which corresponds to ms.float16",
     )
     parser.add_argument("--ddim_sampling", type=str2bool, default=True, help="Whether to use DDIM for sampling")
     parser.add_argument("--imagegrid", default=False, type=str2bool, help="Save the image in image-grids format.")
@@ -183,19 +184,18 @@ if __name__ == "__main__":
 
     # 2.2 vae
     logger.info("vae init")
-    vae = AutoencoderKL(
-        SD_CONFIG,
-        4,
-        ckpt_path=args.vae_checkpoint,
-        use_fp16=False,  # disable amp for vae
-    )
+    vae = AutoencoderKL(SD_CONFIG, 4, ckpt_path=args.vae_checkpoint)
     vae = vae.set_train(False)
     for param in vae.get_parameters():  # freeze vae
         param.requires_grad = False
 
     # 2.3
     logger.info("text encoder init")
-    text_encoder = T5Embedder("models/", use_text_preprocessing=args.clean_caption, pretrained_ckpt="models/t5_ms.ckpt")
+    text_encoder = T5Embedder(
+        args.t5_root,
+        use_text_preprocessing=args.clean_caption,
+        pretrained_ckpt=os.path.join(args.t5_root, "model.ckpt"),
+    )
 
     # 3. build inference pipeline
     model_config = dict(

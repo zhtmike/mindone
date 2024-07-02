@@ -129,13 +129,9 @@ class TimestepEmbedder(nn.Cell):
         return embedding
 
     def construct(self, t: Tensor) -> Tensor:
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size).to(self.dtype)
+        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         t_emb = self.mlp(t_freq)
         return t_emb
-
-    @property
-    def dtype(self):
-        return next(self.get_parameters()).dtype
 
 
 # https://github.com/PixArt-alpha/PixArt-alpha/blob/master/diffusion/model/nets/PixArt_blocks.py#L74
@@ -225,6 +221,7 @@ class CrossAttention(nn.Cell):
     def construct(self, x: Tensor, cond: Tensor, mask: Optional[Tensor] = None) -> Tensor:
         h = self.num_heads
         B, N, _ = x.shape
+        NC = cond.shape[1]
 
         # (b, n, h*d) -> (b, n, h, d) -> (b, h, n, d)
         q = self.q_linear(x)
@@ -233,7 +230,7 @@ class CrossAttention(nn.Cell):
 
         # (b, n, 2*h*d) -> (b, n, 2, h, d) -> (2, b, h, n, d)
         kv = self.kv_linear(cond)
-        kv = ops.reshape(kv, (B, N, 2, h, self.head_dim))
+        kv = ops.reshape(kv, (B, NC, 2, h, self.head_dim))
         kv = ops.transpose(kv, (2, 0, 3, 1, 4))
         k, v = kv.unbind(0)
 
@@ -342,14 +339,10 @@ class SizeEmbedder(TimestepEmbedder):
 
         b = s.shape[0]
         s = ops.reshape(s, (-1,))
-        s_freq = self.timestep_embedding(s, self.frequency_embedding_size).to(self.dtype)
+        s_freq = self.timestep_embedding(s, self.frequency_embedding_size)
         s_emb = self.mlp(s_freq)
         s_emb = ops.reshape(s_emb, (b, -1))
         return s_emb
-
-    @property
-    def dtype(self):
-        return next(self.get_parameters()).dtype
 
 
 class T2IFinalLayer(nn.Cell):
