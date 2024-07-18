@@ -2,7 +2,7 @@ import logging
 from typing import Optional, Tuple
 
 import mindspore as ms
-from mindspore import Tensor, nn, ops, mint
+from mindspore import Tensor, mint, nn, ops
 
 from ..schedulers.iddpm import SpacedDiffusion
 from ..schedulers.iddpm.diffusion_utils import (
@@ -45,6 +45,7 @@ class DiffusionWithLoss(nn.Cell):
         cond_stage_trainable: bool = False,
         text_emb_cached: bool = True,
         video_emb_cached: bool = False,
+        enable_frames_mask: bool = False,
     ):
         super().__init__()
         # TODO: is set_grad() necessary?
@@ -68,6 +69,8 @@ class DiffusionWithLoss(nn.Cell):
         if self.cond_stage_trainable and self.text_encoder:
             self.text_encoder.set_train(True)
             self.text_encoder.set_grad(True)
+
+        self._fm_func = self._proccess_frames_mask if enable_frames_mask else lambda *x: x[0]
 
     def get_condition_embeddings(self, text_tokens, **kwargs):
         # text conditions inputs for cross-attention
@@ -170,6 +173,11 @@ class DiffusionWithLoss(nn.Cell):
 
         return vb
 
+    def _proccess_frames_mask(self, x_t: Tensor, x: Tensor, t: Tensor, noise: Tensor, frames_mask: Tensor) -> Tensor:
+        t0 = ops.zeros_like(t)
+        x_t0 = self.diffusion.q_sample(x, t0, noise=noise)
+        return ops.where(frames_mask[:, None, :, None, None], x_t, x_t0)
+
     def compute_loss(
         self,
         x: Tensor,
@@ -186,10 +194,8 @@ class DiffusionWithLoss(nn.Cell):
         noise = ops.randn_like(x)
         x_t = self.diffusion.q_sample(x.to(ms.float32), t, noise=noise)
 
-        if True:
-            t0 = ops.zeros_like(t)
-            x_t0 = self.diffusion.q_sample(x, t0, noise=noise)
-            x_t = ops.where(frames_mask[:, None, :, None, None], x_t, x_t0)
+        # frames mask branch
+        x_t = self._fm_func(x_t, x, t, noise, frames_mask)
 
         # latte forward input match
         # text embed: (b n_tokens  d) -> (b  1 n_tokens d)
@@ -319,10 +325,8 @@ class DiffusionWithLossFiTLike(DiffusionWithLoss):
         noise = ops.randn_like(x)
         x_t = self.diffusion.q_sample(x.to(ms.float32), t, noise=noise)
 
-        if True:
-            t0 = ops.zeros_like(t)
-            x_t0 = self.diffusion.q_sample(x.to(ms.float32), t0, noise=noise)
-            x_t = ops.where(frames_mask[:, None, :, None, None], x_t, x_t0)
+        # frames mask branch
+        x_t = self._fm_func(x_t, x.to(ms.float32), t, noise, frames_mask)
 
         # latte forward input match
         # text embed: (b n_tokens  d) -> (b  1 n_tokens d)

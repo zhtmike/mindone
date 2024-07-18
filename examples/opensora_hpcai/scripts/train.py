@@ -66,6 +66,7 @@ def init_env(
         A tuple containing the device ID, rank ID and number of devices.
     """
     set_random_seed(seed)
+    ms.set_context(graph_kernel_flags="--disable_packet_ops=Reshape")
 
     if debug and mode == ms.GRAPH_MODE:  # force PyNative mode when debugging
         logger.warning("Debug mode is on, switching execution mode to PyNative.")
@@ -302,6 +303,7 @@ def main(args):
         cond_stage_trainable=False,
         text_emb_cached=True,
         video_emb_cached=train_with_vae_latent,
+        enable_frames_mask=args.model_version != "v1",
     )
     if args.pre_patchify:
         additional_pipeline_kwargs = dict(
@@ -524,11 +526,13 @@ def main(args):
     caption = ms.Tensor(shape=[None, 200, 4096], dtype=ms.float32)
     mask = ms.Tensor(shape=[None, 200], dtype=ms.uint8)
     frames_mask = ms.Tensor(shape=[None, None], dtype=ms.bool_)
+    # fmt: off
     num_frames = ms.Tensor(shape=[None, ], dtype=ms.float32)
     height = ms.Tensor(shape=[None, ], dtype=ms.float32)
     width = ms.Tensor(shape=[None, ], dtype=ms.float32)
     fps = ms.Tensor(shape=[None, ], dtype=ms.float32)
     ar = ms.Tensor(shape=[None, ], dtype=ms.float32)
+    # fmt: on
     net_with_grads.set_inputs(video, caption, mask, frames_mask, num_frames, height, width, fps, ar)
 
     if args.global_bf16:
@@ -616,6 +620,5 @@ def main(args):
 
 if __name__ == "__main__":
     logger.debug("process id:", os.getpid())
-    ms.set_context(graph_kernel_flags='--disable_packet_ops=Reshape')
     args = parse_args()
     main(args)

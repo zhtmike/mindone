@@ -3,7 +3,7 @@ from typing import Tuple, Union
 from packaging import version
 
 import mindspore as ms
-from mindspore import nn, ops, mint
+from mindspore import mint, nn, ops
 
 
 def divisible_by(num, den):

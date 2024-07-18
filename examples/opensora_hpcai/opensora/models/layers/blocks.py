@@ -5,7 +5,7 @@ from typing import Optional, Tuple, Type, Union
 import numpy as np
 
 import mindspore as ms
-from mindspore import Parameter, Tensor, nn, ops, mint
+from mindspore import Parameter, Tensor, mint, nn, ops
 from mindspore.common.initializer import initializer
 from mindspore.ops.function.array_func import repeat_interleave_ext as repeat_interleave
 
@@ -391,7 +391,7 @@ class T2IFinalLayer(nn.Cell):
     The final layer of PixArt.
     """
 
-    def __init__(self, hidden_size, num_patch, out_channels, d_t=None, d_s=None):
+    def __init__(self, hidden_size, num_patch, out_channels, d_t=None, d_s=None, enable_frames_mask: bool = False):
         super().__init__()
         self.norm_final = LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         # (1152, 4*8)
@@ -400,6 +400,7 @@ class T2IFinalLayer(nn.Cell):
         self.out_channels = out_channels
         self.d_t = d_t
         self.d_s = d_s
+        self._fm_func = self._proccess_frames_mask if enable_frames_mask else lambda *x: x[0]
 
     @staticmethod
     def t_mask_select(x_mask: Tensor, x: Tensor, masked_x: Tensor, T: int, S: int) -> Tensor:
@@ -407,6 +408,11 @@ class T2IFinalLayer(nn.Cell):
         masked_x = masked_x.reshape(masked_x.shape[0], T, S, masked_x.shape[-1])  # B (T S) C -> B T S C
         x = ops.where(x_mask[:, :, None, None], x, masked_x)  # x_mask: [B, T]
         return x.reshape(x.shape[0], T * S, x.shape[-1])  # B T S C -> B (T S) C
+
+    def _proccess_frames_mask(self, x: Tensor, t0: Tensor, frames_mask: Tensor, T: int, S: int) -> Tensor:
+        shift_zero, scale_zero = mint.chunk(self.scale_shift_table[None] + t0[:, None], 2, 1)
+        x_zero = t2i_modulate(self.norm_final(x), shift_zero, scale_zero)
+        return self.t_mask_select(frames_mask, x, x_zero, T, S)
 
     def construct(
         self,
@@ -424,10 +430,8 @@ class T2IFinalLayer(nn.Cell):
         shift, scale = mint.chunk(self.scale_shift_table[None] + t[:, None], 2, 1)
         x = t2i_modulate(self.norm_final(x), shift, scale)
 
-        if True:
-            shift_zero, scale_zero = mint.chunk(self.scale_shift_table[None] + t0[:, None], 2, 1)
-            x_zero = t2i_modulate(self.norm_final(x), shift_zero, scale_zero)
-            x = self.t_mask_select(frames_mask, x, x_zero, T, S)
+        # frames mask branch
+        x = self._fm_func(x, t0, frames_mask, T, S)
 
         x = self.linear(x)
         return x
@@ -491,7 +495,7 @@ class PatchEmbed(nn.Cell):
         self.patch_size: Tuple = (patch_size, patch_size) if isinstance(patch_size, int) else patch_size
         self.embed_dim = embed_dim
         self.proj = nn.Conv2d(
-            in_chans, embed_dim, kernel_size=patch_size, stride=patch_size, pad_mode="valid", has_bias=bias
+            in_chans, embed_dim, kernel_size=patch_size, stride=patch_size, pad_mode="same", has_bias=bias
         )
 
     def construct(self, x: Tensor) -> Tensor:

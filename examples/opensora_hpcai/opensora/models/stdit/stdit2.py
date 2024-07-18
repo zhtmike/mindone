@@ -22,7 +22,7 @@ from opensora.models.layers.blocks import (
 )
 from opensora.models.layers.rotary_embedding import RotaryEmbedding
 
-from mindspore import Parameter, Tensor, dtype, load_checkpoint, load_param_into_net, nn, ops, mint
+from mindspore import Parameter, Tensor, dtype, load_checkpoint, load_param_into_net, mint, nn, ops
 from mindspore.common.initializer import XavierUniform, initializer
 from mindspore.ops.function.array_func import repeat_interleave_ext as repeat_interleave
 
@@ -115,23 +115,23 @@ class STDiT2Block(nn.Cell):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mint.chunk(
             self.scale_shift_table[None] + t.reshape(B, 6, -1), 6, 1
         )
-        shift_tmp, scale_tmp, gate_tmp = mint.chunk(self.scale_shift_table_temporal[None] + t_tmp.reshape(B, 3, -1), 3, 1)
+        shift_tmp, scale_tmp, gate_tmp = mint.chunk(
+            self.scale_shift_table_temporal[None] + t_tmp.reshape(B, 3, -1), 3, 1
+        )
 
-        shift_msa_zero, scale_msa_zero, gate_msa_zero, shift_mlp_zero, scale_mlp_zero, gate_mlp_zero = (None,) * 6
-        shift_tmp_zero, scale_tmp_zero, gate_tmp_zero = (None,) * 3
-        if True:
-            shift_msa_zero, scale_msa_zero, gate_msa_zero, shift_mlp_zero, scale_mlp_zero, gate_mlp_zero = mint.chunk(
-                self.scale_shift_table[None] + t0.reshape(B, 6, -1), 6, 1
-            )
-            shift_tmp_zero, scale_tmp_zero, gate_tmp_zero = mint.chunk(
-                self.scale_shift_table_temporal[None] + t0_tmp.reshape(B, 3, -1), 3, 1
-            )
+        # frames mask branch
+        shift_msa_zero, scale_msa_zero, gate_msa_zero, shift_mlp_zero, scale_mlp_zero, gate_mlp_zero = mint.chunk(
+            self.scale_shift_table[None] + t0.reshape(B, 6, -1), 6, 1
+        )
+        shift_tmp_zero, scale_tmp_zero, gate_tmp_zero = mint.chunk(
+            self.scale_shift_table_temporal[None] + t0_tmp.reshape(B, 3, -1), 3, 1
+        )
 
         # modulate
         x_m = t2i_modulate(self.norm1(x), shift_msa, scale_msa)
-        if True:
-            x_m_zero = t2i_modulate(self.norm1(x), shift_msa_zero, scale_msa_zero)
-            x_m = self.t_mask_select(frames_mask, x_m, x_m_zero, T, S)
+        # frames mask branch
+        x_m_zero = t2i_modulate(self.norm1(x), shift_msa_zero, scale_msa_zero)
+        x_m = self.t_mask_select(frames_mask, x_m, x_m_zero, T, S)
 
         # spatial branch
         x_s = x_m.reshape(B * T, S, C)  # B (T S) C -> (B T) S C
@@ -140,19 +140,18 @@ class STDiT2Block(nn.Cell):
         x_s = self.attn(x_s, mask=spatial_mask)
         x_s = x_s.reshape(B, T * S, C)  # (B T) S C -> B (T S) C
 
-        if True:
-            x_s_zero = gate_msa_zero * x_s
-            x_s = gate_msa * x_s
-            x_s = self.t_mask_select(frames_mask, x_s, x_s_zero, T, S)
-        else:
-            x_s = gate_msa * x_s
+        # frames mask branch
+        x_s_zero = gate_msa_zero * x_s
+        x_s = gate_msa * x_s
+        x_s = self.t_mask_select(frames_mask, x_s, x_s_zero, T, S)
+
         x = x + self.drop_path(x_s)
 
         # modulate
         x_m = t2i_modulate(self.norm_temp(x), shift_tmp, scale_tmp)
-        if True:
-            x_m_zero = t2i_modulate(self.norm_temp(x), shift_tmp_zero, scale_tmp_zero)
-            x_m = self.t_mask_select(frames_mask, x_m, x_m_zero, T, S)
+        # frames mask branch
+        x_m_zero = t2i_modulate(self.norm_temp(x), shift_tmp_zero, scale_tmp_zero)
+        x_m = self.t_mask_select(frames_mask, x_m, x_m_zero, T, S)
 
         # temporal branch
         x_t = x_m.reshape(B, T, S, C).swapaxes(1, 2).reshape(B * S, T, C)  # B (T S) C -> (B S) T C
@@ -161,12 +160,11 @@ class STDiT2Block(nn.Cell):
         x_t = self.attn_temp(x_t, mask=temporal_mask, freqs_cis=temporal_pos)
         x_t = x_t.reshape(B, S, T, C).swapaxes(1, 2).reshape(B, T * S, C)  # (B S) T C -> B (T S) C
 
-        if True:
-            x_t_zero = gate_tmp_zero * x_t
-            x_t = gate_tmp * x_t
-            x_t = self.t_mask_select(frames_mask, x_t, x_t_zero, T, S)
-        else:
-            x_t = gate_tmp * x_t
+        # frames mask branch
+        x_t_zero = gate_tmp_zero * x_t
+        x_t = gate_tmp * x_t
+        x_t = self.t_mask_select(frames_mask, x_t, x_t_zero, T, S)
+
         x = x + self.drop_path(x_t)
 
         # cross attn
@@ -174,18 +172,17 @@ class STDiT2Block(nn.Cell):
 
         # modulate
         x_m = t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)
-        if True:
-            x_m_zero = t2i_modulate(self.norm2(x), shift_mlp_zero, scale_mlp_zero)
-            x_m = self.t_mask_select(frames_mask, x_m, x_m_zero, T, S)
+        # frames mask branch
+        x_m_zero = t2i_modulate(self.norm2(x), shift_mlp_zero, scale_mlp_zero)
+        x_m = self.t_mask_select(frames_mask, x_m, x_m_zero, T, S)
 
         # mlp
         x_mlp = self.mlp(x_m)
-        if True:
-            x_mlp_zero = gate_mlp_zero * x_mlp
-            x_mlp = gate_mlp * x_mlp
-            x_mlp = self.t_mask_select(frames_mask, x_mlp, x_mlp_zero, T, S)
-        else:
-            x_mlp = gate_mlp * x_mlp
+        # frames mask branch
+        x_mlp_zero = gate_mlp_zero * x_mlp
+        x_mlp = gate_mlp * x_mlp
+        x_mlp = self.t_mask_select(frames_mask, x_mlp, x_mlp_zero, T, S)
+
         x = x + self.drop_path(x_mlp)
 
         return x
@@ -279,7 +276,9 @@ class STDiT2(nn.Cell):
                 for i in range(self.depth)
             ]
         )
-        self.final_layer = T2IFinalLayer(hidden_size, np.prod(self.patch_size).item(), self.out_channels)
+        self.final_layer = T2IFinalLayer(
+            hidden_size, np.prod(self.patch_size).item(), self.out_channels, enable_frames_mask=True
+        )
 
         # multi_res
         # assert self.hidden_size % 3 == 0, "hidden_size must be divisible by 3"
@@ -385,7 +384,7 @@ class STDiT2(nn.Cell):
         T, H, W = self.get_dynamic_size(x)
         S = H * W
         scale = rs / self.input_sq_size
-        base_size = int(round(S**Tensor(0.5)))
+        base_size = int(round(S ** Tensor(0.5)))
         # BUG MS2.3rc1: ops.meshgrid() bprop is not supported
 
         if spatial_pos is None:
@@ -415,14 +414,13 @@ class STDiT2(nn.Cell):
         t_spc_mlp = self.t_block(t_spc)  # [B, 6*C]
         t_tmp_mlp = self.t_block_temp(t_tmp)  # [B, 3*C]
 
-        t0_spc, t0_spc_mlp, t0_tmp_mlp = None, None, None
-        if True:
-            t0_timestep = ops.zeros_like(timestep)
-            t0 = self.t_embedder(t0_timestep)
-            t0_spc = t0 + data_info
-            t0_tmp = t0 + fl
-            t0_spc_mlp = self.t_block(t0_spc)
-            t0_tmp_mlp = self.t_block_temp(t0_tmp)
+        # frames mask branch
+        t0_timestep = ops.zeros_like(timestep)
+        t0 = self.t_embedder(t0_timestep)
+        t0_spc = t0 + data_info
+        t0_tmp = t0 + fl
+        t0_spc_mlp = self.t_block(t0_spc)
+        t0_tmp_mlp = self.t_block_temp(t0_tmp)
 
         # prepare y
         y = self.y_embedder(y, self.training)  # [B, 1, N_token, C]

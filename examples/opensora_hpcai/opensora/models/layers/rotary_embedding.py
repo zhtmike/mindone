@@ -12,7 +12,7 @@ except ImportError:
 import numpy as np
 
 import mindspore as ms
-from mindspore import Parameter, Tensor, dtype, nn, ops, mint
+from mindspore import Parameter, Tensor, dtype, mint, nn, ops
 from mindspore.ops.function.array_func import repeat_interleave_ext as repeat_interleave
 
 

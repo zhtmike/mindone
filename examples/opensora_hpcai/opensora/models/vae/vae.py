@@ -4,7 +4,7 @@ import os
 from transformers import PretrainedConfig
 
 import mindspore as ms
-from mindspore import nn, ops, mint
+from mindspore import mint, nn, ops
 
 from .autoencoder_kl import AutoencoderKL as AutoencoderKL_SD
 from .vae_temporal import VAE_Temporal_SD  # noqa: F401

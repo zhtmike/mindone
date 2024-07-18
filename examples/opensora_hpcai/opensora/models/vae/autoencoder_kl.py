@@ -1,5 +1,5 @@
 import mindspore as ms
-from mindspore import nn, ops, mint
+from mindspore import mint, nn, ops
 
 from .modules import Decoder, Encoder
 
