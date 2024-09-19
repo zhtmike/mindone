@@ -129,6 +129,7 @@ def parse_train_args(parser):
         "bool True: ModelArts auto resume training.",
     )
     parser.add_argument("--optim", default="adamw", type=str, help="optimizer")
+    parser.add_argument("--zero_stage", default=0, type=int, help="ZeRO stage")
     parser.add_argument(
         "--betas",
         type=float,

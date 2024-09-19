@@ -47,7 +47,7 @@ from mindone.trainers.checkpoint import CheckpointManager
 from mindone.trainers.lr_schedule import create_scheduler
 from mindone.trainers.optim import create_optimizer
 from mindone.trainers.recorder import PerfRecorder
-from mindone.trainers.train_step import TrainOneStepWrapper
+from mindone.trainers.zero import prepare_train_network
 from mindone.utils.logger import set_logger
 from mindone.utils.params import count_params
 from mindone.utils.seed import set_random_seed
@@ -704,7 +704,7 @@ def main(args):
     # trainer (standalone and distributed)
     ema = EMA(latent_diffusion_with_loss.network, ema_decay=args.ema_decay, offloading=True) if args.use_ema else None
 
-    net_with_grads = TrainOneStepWrapper(
+    net_with_grads = prepare_train_network(
         latent_diffusion_with_loss,
         optimizer=optimizer,
         scale_sense=loss_scaler,
@@ -713,6 +713,7 @@ def main(args):
         clip_grad=args.clip_grad,
         clip_norm=args.max_grad_norm,
         ema=ema,
+        zero_stage=args.zero_stage,
     )
 
     # resume train net states
