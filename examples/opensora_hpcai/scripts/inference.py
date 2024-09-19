@@ -11,15 +11,17 @@ import yaml
 
 import mindspore as ms
 from mindspore import Tensor, nn
-from mindspore.communication.management import get_group_size, get_rank, init
+from mindspore.communication.management import GlobalComm, get_group_size, get_rank, init
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
+from opensora.acceleration.communications import AlltoAll
+from opensora.acceleration.parallel_states import set_sequence_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIO_MAP, ASPECT_RATIOS, get_image_size, get_num_frames
-from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT_XL_2
+from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT3_XL_2_DSP, STDiT_XL_2
 from opensora.models.text_encoder.t5 import get_text_encoder_and_tokenizer
 from opensora.models.vae.vae import SD_CONFIG, OpenSoraVAE_V1_2, VideoAutoencoderKL
 from opensora.pipelines import InferPipeline, InferPipelineFiTLike
@@ -50,6 +52,7 @@ def init_env(
     max_device_memory: str = None,
     device_target: str = "Ascend",
     jit_level: str = "O0",
+    enable_sequence_parallelism: bool = False,
     debug: bool = False,
 ):
     """
@@ -86,6 +89,10 @@ def init_env(
             gradients_mean=True,
             device_num=device_num,
         )
+
+        if enable_sequence_parallelism:
+            set_sequence_parallel_group(GlobalComm.WORLD_COMM_GROUP)
+            ms.set_auto_parallel_context(enable_alltoall=True)
     else:
         device_num = 1
         rank_id = 0
@@ -94,6 +101,9 @@ def init_env(
             device_target=device_target,
             pynative_synchronize=debug,
         )
+
+        if enable_sequence_parallelism:
+            raise ValueError("`use_parallel` must be `True` when using sequence parallelism.")
 
     try:
         if jit_level in ["O0", "O1", "O2"]:
@@ -133,6 +143,7 @@ def main(args):
         max_device_memory=args.max_device_memory,
         jit_level=args.jit_level,
         debug=args.debug,
+        enable_sequence_parallelism=args.enable_sequence_parallelism,
     )
 
     # 1.1 get captions from cfg or prompt_path
@@ -153,13 +164,14 @@ def main(args):
         latent_condition_frame_length = round(latent_condition_frame_length / 17 * 5)
 
     captions = process_prompts(captions, args.loop)  # in v1.1 and above, each loop can have a different caption
+    if not args.enable_sequence_parallelism:
+        start_idx, end_idx = distribute_samples(len(captions), rank_id, device_num)
+        captions = captions[start_idx:end_idx]
+        base_data_idx = start_idx
+    else:
+        base_data_idx = 0
 
-    # split samples to NPUs as even as possible
-    start_idx, end_idx = distribute_samples(len(captions), rank_id, device_num)
-    captions = captions[start_idx:end_idx]
-    base_data_idx = start_idx
-
-    if args.use_parallel:
+    if args.use_parallel and not args.enable_sequence_parallelism:
         print(f"Num captions for rank {rank_id}: {len(captions)}")
 
     # 2. model initiate and weight loading
@@ -208,6 +220,7 @@ def main(args):
         model_max_length=args.model_max_length,
         patchify_conv3d_replace=patchify_conv3d_replace,  # for Ascend
         enable_flashattn=args.enable_flash_attention,
+        enable_sequence_parallelism=args.enable_sequence_parallelism,
     )
     if args.pre_patchify and args.model_version != "v1.1":
         raise ValueError("`pre_patchify=True` can only be used in model version 1.1.")
@@ -239,7 +252,10 @@ def main(args):
         model_name = "STDiT3"
         model_extra_args["qk_norm"] = True
         logger.info(f"{model_name} init")
-        latte_model = STDiT3_XL_2(**model_extra_args)
+        if args.dsp:
+            latte_model = STDiT3_XL_2_DSP(**model_extra_args)
+        else:
+            latte_model = STDiT3_XL_2(**model_extra_args)
     else:
         raise ValueError(f"Unknown model version: {args.model_version}")
 
@@ -255,6 +271,10 @@ def main(args):
             logger.warning(msg)
 
     if args.dtype in ["fp16", "bf16"]:
+        # FIXME: drop All2all Layer when it supports bf16 in pynative mode
+        if args.mode == 1:
+            WHITELIST_OPS.append(AlltoAll)
+
         latte_model = auto_mixed_precision(
             latte_model, amp_level=args.amp_level, dtype=dtype_map[args.dtype], custom_fp32_cells=WHITELIST_OPS
         )
@@ -470,6 +490,10 @@ def main(args):
         if videos:
             videos = np.concatenate(videos, axis=1)
 
+        if args.enable_sequence_parallelism and rank_id > 0:
+            # no need to save images for rank > 1
+            continue
+
         # save result
         for j in range(ns):
             global_idx = base_data_idx + i + j
@@ -614,6 +638,13 @@ def parse_args():
         type=str2bool,
         help="whether to enable flash attention. Default is False",
     )
+    parser.add_argument(
+        "--enable_sequence_parallelism",
+        default=False,
+        type=str2bool,
+        help="whether to enable sequence parallelism. Default is False",
+    )
+    parser.add_argument("--dsp", default=False, type=str2bool, help="Use DSP instead of SP in sequence parallel.")
     parser.add_argument(
         "--dtype",
         default="fp32",
