@@ -666,7 +666,8 @@ We support training with the OpenSora v1.2 model using SP (Sequence Parallel) an
 | STDiT2-XL/2 | D910\*-C19(0904)-MS_master(0904) |  SP    | O1        |    BF16   |  1 |  4   | 408x720x1280  | 44.5              | [script](scripts/run/run_train_os1.2_stage2_sp.sh)  |
 | STDiT2-XL/2 | D910\*-C19(0904)-MS_master(0904) |  DSP   | O1        |    BF16   |  1 |  4   | 408x720x1280  | 43.4              | [script](scripts/run/run_train_os1.2_stage2_dsp.sh) |
 
-> To prevent the system from running out of memory, ensure you launch the training job on a server with sufficient memory. For 4P training, at least 800GB of memory is required.
+> To prevent the system from running out of memory, ensure you launch the training job on a server with sufficient memory. For 4P training, at least 800GB of memory is required.\
+> For the maximum sequence length that the STDiT model can handle using DSP: with 2 NPU* cards, the maximum length is 340K; with 4 NPU* cards, it increases to 660K; and with 8 NPU* cards, the maximum sequence length is approximately 1.3M.
 
 And we can run inference on up to 408 frames using two NPU* cards. The inference performance is reported below.
 
