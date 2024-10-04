@@ -344,7 +344,12 @@ class VideoDatasetRefactored(BaseDataset):
             data["width"] = np.array(clip.shape[-1], dtype=np.float32)
             # NOTE: here ar = h / w, aligned to torch, while the common practice is w / h
             data["ar"] = np.array(clip.shape[-2] / clip.shape[-1], dtype=np.float32)
-            data["video"] = clip
+            t, _, h, w = clip.shape
+            t = (t // 17) * 5
+            h = h // 8
+            w = w // 8
+            latent = np.zeros((t, 4, h, w), dtype=clip.dtype)
+            data["video"] = latent
 
         final_outputs = tuple(data.pop(c) for c in self.output_columns)
         del data

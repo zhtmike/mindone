@@ -148,8 +148,8 @@ class DiffusionWithLoss(nn.Cell):
             # (b f c h w) -> (b c f h w)
             x = ops.transpose(x, (0, 2, 1, 3, 4))
 
-            if not self.video_emb_cached:
-                x = self.get_latents(x)
+            # if not self.video_emb_cached:
+            #     x = self.get_latents(x)
 
             # 2. get conditions
             if not self.text_emb_cached:
