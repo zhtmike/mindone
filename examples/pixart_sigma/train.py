@@ -315,10 +315,11 @@ def main(args):
     )
 
     if args.multi_scale:
+        bs_symbol = ms.Symbol(unique=True)
         net_with_grads.set_inputs(
-            Tensor(dtype=ms.float32, shape=(None, 3, None, None)),
-            Tensor(dtype=ms.int64, shape=(None, args.t5_max_length)),
-            Tensor(dtype=ms.bool_, shape=(None, args.t5_max_length)),
+            Tensor(dtype=ms.float32, shape=(bs_symbol, 3, None, None)),
+            Tensor(dtype=ms.int64, shape=(bs_symbol, args.t5_max_length)),
+            Tensor(dtype=ms.bool_, shape=(bs_symbol, args.t5_max_length)),
         )
 
     model = Model(net_with_grads)
