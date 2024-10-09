@@ -152,10 +152,8 @@ class PixArt(nn.Cell):
 
         self.initialize_weights()
 
-        # TODO: somehow self.blocks.recompute() doesn't work
         if recompute:
-            for blk in self.blocks:
-                blk.recompute()
+            self.blocks.recompute()
 
     def initialize_weights(self):
         # Initialize transformer layers:
