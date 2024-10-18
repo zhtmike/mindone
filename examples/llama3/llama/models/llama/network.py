@@ -258,7 +258,7 @@ class LlamaModel(nn.Cell):
         w_inds = mint.arange(w // self.patch_size[2], dtype=ms.int64)
 
         position_ids = ops.meshgrid(t_inds, h_inds, w_inds, indexing="ij")
-        position_ids = mint.stack(position_ids, dim=-1)
+        position_ids = ops.stack(position_ids, axis=-1)
         position_ids = ops.reshape(position_ids, (-1, 3))
 
         t_inds, h_inds, w_inds = ops.unbind(position_ids, dim=-1)
