@@ -159,7 +159,7 @@ class LlamaModel(nn.Cell):
         hidden_act: str = "silu",
         initializer_range: float = 0.02,
         patch_size: Tuple[int, int, int] = (1, 2, 2),
-        max_length: Tuple[int, int, int] = (32, 16, 16),
+        max_length: Tuple[int, int, int] = (128, 64, 64),
         caption_channels: int = 4096,
         attn_implementation: Literal["eager", "flash_attention"] = "eager",
         gradient_checkpointing: bool = False,
@@ -173,6 +173,7 @@ class LlamaModel(nn.Cell):
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
+        self.max_length = max_length
 
         self.layers = nn.CellList(
             [
@@ -253,9 +254,16 @@ class LlamaModel(nn.Cell):
     def learnable_position_embedding(self, latent_embedding: Tensor) -> Tensor:
         # 3.1.3
         _, t, _, h, w = latent_embedding.shape
-        t_inds = mint.arange(t // self.patch_size[0], dtype=ms.int64)
-        h_inds = mint.arange(h // self.patch_size[1], dtype=ms.int64)
-        w_inds = mint.arange(w // self.patch_size[2], dtype=ms.int64)
+        p0, p1, p2 = self.patch_size[0], self.patch_size[1], self.patch_size[2]
+        nt, nh, nw = t // p0, h // p1, w // p2
+
+        assert nt < self.max_length[0]
+        assert nh < self.max_length[1]
+        assert nw < self.max_length[2]
+
+        t_inds = mint.arange(nt, dtype=ms.int64)
+        h_inds = mint.arange(nh, dtype=ms.int64)
+        w_inds = mint.arange(nw, dtype=ms.int64)
 
         position_ids = ops.meshgrid(t_inds, h_inds, w_inds, indexing="ij")
         position_ids = ops.stack(position_ids, axis=-1)
