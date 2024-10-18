@@ -136,7 +136,7 @@ class LlamaFinalLayer(nn.Cell):
 
     def construct(self, hidden_states: Tensor, timestep_embedding: Tensor):
         shift, scale = mint.chunk(
-            ops.unsqueeze(self.scale_shift_table) + ops.unsqueeze(timestep_embedding, 1), 2, dim=1
+            ops.unsqueeze(self.scale_shift_table, 0) + ops.unsqueeze(timestep_embedding, 1), 2, dim=1
         )
         hidden_states = t2i_modulate(self.input_layernorm(hidden_states), shift, scale)
         hidden_states = self.proj(hidden_states)
