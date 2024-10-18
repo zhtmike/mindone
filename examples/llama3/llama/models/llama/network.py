@@ -91,7 +91,7 @@ class LlamaDecoderLayer(nn.Cell):
 
         # 3.1.3 Adaptive Layer Norm
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mint.chunk(
-            self.scale_shift_table[None] + modulation_parameters.reshape(B, 6, -1), 6, dim=1
+            ops.unsqueeze(self.scale_shift_table, 0) + modulation_parameters.reshape(B, 6, -1), 6, dim=1
         )
 
         # Self Attention (Bi-Directional Attention)
@@ -135,7 +135,9 @@ class LlamaFinalLayer(nn.Cell):
         self.scale_shift_table = Parameter(Tensor(np.random.randn(2, hidden_size), dtype=dtype) / hidden_size**0.5)
 
     def construct(self, hidden_states: Tensor, timestep_embedding: Tensor):
-        shift, scale = mint.chunk(self.scale_shift_table[None] + timestep_embedding[:, None], 2, dim=1)
+        shift, scale = mint.chunk(
+            ops.unsqueeze(self.scale_shift_table) + ops.unsqueeze(timestep_embedding, 1), 2, dim=1
+        )
         hidden_states = t2i_modulate(self.input_layernorm(hidden_states), shift, scale)
         hidden_states = self.proj(hidden_states)
         return hidden_states
