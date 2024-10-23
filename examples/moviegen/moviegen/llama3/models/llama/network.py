@@ -15,6 +15,7 @@ from mindone.models.utils import normal_, zeros_
 
 from ..activation import ACT2FN
 from .block import (
+    CaptionEmbedder,
     ContextParallelLlamaAttention,
     ContextParallelLlamaFlashAttention,
     LinearPatchEmbed3D,
@@ -319,6 +320,9 @@ class LlamaModel(nn.Cell):
             ACT2FN[hidden_act], mint.nn.Linear(self.hidden_size, 6 * self.hidden_size, bias=False, dtype=dtype)
         )
 
+        # TODO: drop this
+        self.caption_embedder = CaptionEmbedder(caption_channels, self.hidden_size, eps=rms_norm_eps, dtype=dtype)
+
         if self.model_parallelism:
             mp_group = get_model_parallel_group()
             self.group_size = get_group_size(mp_group)
@@ -425,6 +429,9 @@ class LlamaModel(nn.Cell):
         # 6.1.2 shared timestep embedding & modulation. It does not mention the detail structure, we follow PixArt-Alpha here
         timestep_embedding = self.timestep_embedder(timestep)
         modulation_parameters = self.adaLN_modulation(timestep_embedding)
+
+        # 3.1.4 text embedding
+        text_embedding = self.caption_embedder(text_embedding)
 
         # main blocks
         hidden_states = latent_embedding
