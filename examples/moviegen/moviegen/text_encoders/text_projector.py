@@ -1,6 +1,6 @@
 from typing import Type
 
-from mindspore import Tensor, mint, nn, ops
+from mindspore import Tensor, mint, nn
 
 
 class TextProjector(nn.Cell):
@@ -28,4 +28,4 @@ class TextProjector(nn.Cell):
         metaclip_hidden_states = self.metaclip_projector(metaclip_text)
         byt5_hidden_states = self.byt5_projector(byt5_text)
 
-        return ops.concat((ul2_hidden_states, metaclip_hidden_states, byt5_hidden_states), axis=1)
+        return mint.cat((ul2_hidden_states, metaclip_hidden_states, byt5_hidden_states), dim=1)
