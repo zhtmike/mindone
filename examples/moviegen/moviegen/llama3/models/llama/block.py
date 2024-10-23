@@ -77,6 +77,11 @@ class TensorParallelLlamaMLP(nn.Cell):
     def construct(self, hidden_state: Tensor) -> Tensor:
         return self.down_proj(self.act_fn(self.gate_proj(hidden_state)) * self.up_proj(hidden_state))
 
+    def load_weight_from_non_parallel_cell(self, target: LlamaMLP):
+        self.gate_proj.load_weight_from_non_parallel_cell(target.gate_proj)
+        self.up_proj.load_weight_from_non_parallel_cell(target.up_proj)
+        self.down_proj.load_weight_from_non_parallel_cell(target.down_proj)
+
 
 def repeat_kv(hidden_states: Tensor, n_rep: int) -> Tensor:
     if n_rep == 1:
@@ -147,8 +152,8 @@ class LlamaAttention(nn.Cell):
 
         # upcast attention to fp32
         attn_weights = attn_weights.to(ms.float32)
-        attn_weights = mint.softmax(attn_weights, dim=-1).to(query_states.dtype)
-        attn_weights = mint.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+        attn_weights = ops.softmax(attn_weights, axis=-1).to(query_states.dtype)
+        attn_weights = ops.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = mint.matmul(attn_weights, value_states)
 
         attn_output = mint.permute(attn_output, (0, 2, 1, 3))
@@ -222,8 +227,8 @@ class ContextParallelLlamaAttention(nn.Cell):
 
         # upcast attention to fp32
         attn_weights = attn_weights.to(ms.float32)
-        attn_weights = mint.softmax(attn_weights, dim=-1).to(query_states.dtype)
-        attn_weights = mint.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+        attn_weights = ops.softmax(attn_weights, axis=-1).to(query_states.dtype)
+        attn_weights = ops.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = mint.matmul(attn_weights, value_states)
 
         attn_output = mint.permute(attn_output, (0, 2, 1, 3))

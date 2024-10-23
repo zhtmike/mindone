@@ -144,9 +144,10 @@ class ColumnParallelLinear(nn.Cell):
     ):
         super().__init__(auto_prefix=False)
 
-        self.group_size = get_group_size(group)
-        assert out_features % self.group_size == 0
-        self.out_features_per_partition = out_features // self.group_size
+        self.rank = get_rank(group)
+        self.world_size = get_group_size(group)
+        assert out_features % self.world_size == 0
+        self.out_features_per_partition = out_features // self.world_size
         self.gather_output = gather_output
 
         self.copy_to_tensor_parallel_region = _CopyToModelParallelRegion(group)
@@ -168,6 +169,14 @@ class ColumnParallelLinear(nn.Cell):
             x = self.gather_from_tensor_parallel_region(x)
         return x
 
+    def load_weight_from_non_parallel_cell(self, target: mint.nn.Linear):
+        weight = ops.chunk(target.weight, self.world_size, axis=0)[self.rank]
+        self.linear.weight.set_data(weight)
+
+        if target.bias is not None:
+            bias = ops.chunk(target.bias, self.world_size, axis=0)[self.rank]
+            self.linear.bias.set_data(bias)
+
 
 class RowParallelLinear(nn.Cell):
     def __init__(
@@ -185,9 +194,10 @@ class RowParallelLinear(nn.Cell):
         assert bias is False, "Not Implemented."
         super().__init__(auto_prefix=False)
 
-        self.group_size = get_group_size(group)
-        assert in_features % self.group_size == 0
-        self.in_features_per_partition = in_features // self.group_size
+        self.rank = get_rank(group)
+        self.world_size = get_group_size(group)
+        assert in_features % self.world_size == 0
+        self.in_features_per_partition = in_features // self.world_size
         self.input_is_parallel = input_is_parallel
 
         self.reduce_from_tensor_parallel_region = _ReduceFromModelParallelRegion(group)
@@ -208,3 +218,7 @@ class RowParallelLinear(nn.Cell):
         x = self.linear(x)
         x = self.reduce_from_tensor_parallel_region(x)
         return x
+
+    def load_weight_from_non_parallel_cell(self, target: mint.nn.Linear):
+        weight = ops.chunk(target.weight, self.world_size, axis=1)[self.rank]
+        self.linear.weight.set_data(weight)

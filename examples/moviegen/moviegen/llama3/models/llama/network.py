@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal, Optional, Tuple
 
 import numpy as np
@@ -8,7 +10,7 @@ import mindspore as ms
 import mindspore.mint as mint
 import mindspore.nn as nn
 import mindspore.ops as ops
-from mindspore import Parameter, Tensor, load_checkpoint
+from mindspore import Parameter, Tensor, load_checkpoint, load_param_into_net
 from mindspore.communication import GlobalComm, get_group_size
 
 from mindone.models.utils import normal_, zeros_
@@ -262,11 +264,12 @@ class LlamaModel(nn.Cell):
         initializer_range: float = 0.02,
         patch_size: Tuple[int, int, int] = (1, 2, 2),
         max_length: Tuple[int, int, int] = (128, 64, 64),
-        caption_channels: int = 6144,
+        caption_channels: int = 4096,
         attn_implementation: Literal["eager", "flash_attention"] = "eager",
         gradient_checkpointing: bool = False,
         use_linear_patch_embedder: bool = True,
         model_parallelism: bool = False,
+        post_init_weight: bool = True,
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
@@ -326,8 +329,9 @@ class LlamaModel(nn.Cell):
             self.gather_forward_split_backward = GatherForwardSplitBackward(dim=1, grad_scale="up", group=mp_group)
 
         # post-init
-        self.initializer_range = initializer_range
-        self.init_weights()
+        if post_init_weight:
+            self.initializer_range = initializer_range
+            self.init_weights()
 
         # recompute
         if gradient_checkpointing:
@@ -448,6 +452,18 @@ class LlamaModel(nn.Cell):
         # unpatchify
         output = self.unpatchify(hidden_states, t, h, w)
         return output
+
+    def load_weight_from_non_parallel_cell(self, target: LlamaModel):
+        param_dict = target.parameters_dict()
+
+        # filter tensor-parallel block
+        names = ["gate_proj", "up_proj", "down_proj"]
+        param_dict = {k: v for k, v in param_dict.items() if not any([name in k for name in names])}
+        load_param_into_net(self, param_dict)
+
+        # load tensor-parallel block
+        for layer, target_layer in zip(self.layers, target.layers):
+            layer.mlp.load_weight_from_non_parallel_cell(target_layer.mlp)
 
 
 def llama3_1B(from_pretrained=None, **kwargs):
