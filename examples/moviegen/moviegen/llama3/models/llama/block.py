@@ -1,6 +1,8 @@
 import logging
 from typing import Optional, Tuple
 
+from moviegen.parallel import ColumnParallelLinear, GatherForwardSplitBackward, RowParallelLinear
+
 import mindspore as ms
 import mindspore.mint as mint
 import mindspore.nn as nn
@@ -9,7 +11,6 @@ from mindspore import Parameter, Tensor
 from mindspore.communication import GlobalComm
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
-from ...parallel import ColumnParallelLinear, GatherForwardSplitBackward, RowParallelLinear
 from ..activation import ACT2FN
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,6 @@ class LlamaAttention(nn.Cell):
         bsz, q_len, _ = hidden_states.shape
 
         kv_hidden_states = hidden_states if encoder_hidden_states is None else encoder_hidden_states
-        _, kv_len, _ = kv_hidden_states.shape
 
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(kv_hidden_states)

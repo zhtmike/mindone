@@ -1,6 +1,8 @@
 from typing import Literal, Optional, Tuple
 
 import numpy as np
+from moviegen.parallel import GatherForwardSplitBackward, SplitForwardGatherBackward
+from moviegen.parallel.parallel_states import get_model_parallel_group
 
 import mindspore as ms
 import mindspore.mint as mint
@@ -11,8 +13,6 @@ from mindspore.communication import GlobalComm, get_group_size
 
 from mindone.models.utils import normal_, zeros_
 
-from ...parallel import GatherForwardSplitBackward, SplitForwardGatherBackward
-from ...parallel.parallel_states import get_model_parallel_group
 from ..activation import ACT2FN
 from .block import (
     ContextParallelLlamaAttention,

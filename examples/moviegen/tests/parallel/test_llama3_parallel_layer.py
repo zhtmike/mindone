@@ -2,8 +2,8 @@ import argparse
 from typing import Literal
 
 import numpy as np
-from llama.parallel import ColumnParallelLinear, RowParallelLinear
-from llama.parallel.parallel_states import create_parallel_group, get_model_parallel_group
+from moviegen.parallel import ColumnParallelLinear, RowParallelLinear
+from moviegen.parallel.parallel_states import create_parallel_group, get_model_parallel_group
 
 import mindspore as ms
 import mindspore.mint as mint

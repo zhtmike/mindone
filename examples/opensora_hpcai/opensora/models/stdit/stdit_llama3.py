@@ -1,9 +1,9 @@
 import os
 from typing import Literal, Optional
 
-from llama3.llama import llama3_1B, llama3_5B, llama3_30B
-from llama3.llama.models.llama.block import LlamaRMSNorm
-from moviegen.moviegen.text_encoders.text_projector import TextProjector
+from moviegen.llama3 import llama3_1B, llama3_5B, llama3_30B
+from moviegen.llama3.models.llama.block import LlamaRMSNorm
+from moviegen.text_encoders.text_projector import TextProjector
 
 import mindspore.nn as nn
 import mindspore.ops as ops
