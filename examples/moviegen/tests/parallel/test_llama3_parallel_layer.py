@@ -4,13 +4,14 @@ from typing import Literal
 import numpy as np
 from moviegen.parallel import ColumnParallelLinear, RowParallelLinear
 from moviegen.parallel.parallel_states import create_parallel_group, get_model_parallel_group
+from utils import gather_or_reduce_parallel_gradient
 
 import mindspore as ms
 import mindspore.mint as mint
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Tensor
-from mindspore.communication import get_group_size, get_rank, init
+from mindspore.communication import get_group_size, init
 
 from mindone.utils.seed import set_random_seed
 
@@ -25,8 +26,8 @@ class MeanNet(nn.Cell):
         return output.mean()
 
 
-def get_sample_data() -> Tensor:
-    x = ops.rand([4, 64, 256], dtype=ms.float32)  # (N, T, H)
+def get_sample_data(dtype: ms.Type = ms.float32) -> Tensor:
+    x = ops.rand([4, 64, 256], dtype=dtype)  # (N, T, H)
     return x
 
 
@@ -42,7 +43,7 @@ def run_layer(mode: int = 0, dtype: ms.Type = ms.float32):
 
     # prepare data
     set_random_seed(1024)
-    data = get_sample_data()
+    data = get_sample_data(dtype=dtype)
 
     # prepare group
     create_parallel_group(model_parallel_shards=get_group_size())
@@ -61,25 +62,14 @@ def run_parallel_linear(data: Tensor, type: Literal["column_parallel", "row_para
 
     # parallel layer
     group = get_model_parallel_group()
-    set_random_seed(1024)
     parallel_layer_cfg = get_layer_config()
     if type == "column_parallel":
         parallel_layer = ColumnParallelLinear(**parallel_layer_cfg, gather_output=True, group=group, dtype=dtype)
     else:
         parallel_layer = RowParallelLinear(**parallel_layer_cfg, input_is_parallel=False, group=group, dtype=dtype)
 
-    tp_size = get_group_size(group)
-    tp_rank = get_rank(group)
-    for (_, w0), (_, w1) in zip(non_parallel_layer.parameters_and_names(), parallel_layer.parameters_and_names()):
-        if type == "column_parallel":
-            w0_col = ops.chunk(w0, tp_size, axis=0)[tp_rank]
-            w1.set_data(w0_col)
-        else:
-            if len(w0.shape) > 1:
-                w0_row = ops.chunk(w0, tp_size, axis=1)[tp_rank]  # weight
-            else:
-                w0_row = w0  # bias no need to be chunked
-            w1.set_data(w0_row)
+    # load weight
+    parallel_layer.load_weight_from_non_parallel_cell(non_parallel_layer)
 
     # test forward
     non_parallel_out = non_parallel_layer(data)
@@ -100,15 +90,8 @@ def run_parallel_linear(data: Tensor, type: Literal["column_parallel", "row_para
     grad_fn = ops.grad(parallel_mean_net, grad_position=None, weights=parallel_mean_net.trainable_params())
     parallel_grads = grad_fn(data)
 
-    allgather = ops.AllGather(group=group)
-    syn_parallel_grads = list()
-    for x in parallel_grads:
-        if type == "column_parallel":
-            syn_parallel_grads.append(allgather(x))
-        else:
-            syn_parallel_grads.append(allgather(x.swapaxes(0, 1)).swapaxes(0, 1))
-
-    for grad_0, grad_1 in zip(non_parallel_grads, syn_parallel_grads):
+    for grad_0, grad_1 in zip(non_parallel_grads, parallel_grads):
+        grad_1 = gather_or_reduce_parallel_gradient(grad_1, grad_0.shape)
         np.testing.assert_allclose(grad_0.asnumpy(), grad_1.asnumpy(), atol=1e-5)
     print("Test 2 (Backward: Parameter Gradient): Passed.")
 

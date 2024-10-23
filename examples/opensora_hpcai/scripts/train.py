@@ -785,7 +785,10 @@ def main(args):
             logger.info(
                 "As steps per epoch are inaccurate with bucket config, TimeMonitor is disabled. See result.log for the actual step time"
             )
-        if rank_id == 0:
+        if rank_id == 0 or args.enable_model_parallelism:
+            if args.enable_model_parallelism:
+                ckpt_dir = os.path.join(ckpt_dir, f"rank_{rank_id}")
+
             save_cb = EvalSaveCallback(
                 network=latent_diffusion_with_loss.network,
                 rank_id=rank_id,
@@ -804,6 +807,8 @@ def main(args):
                 record_lr=False,
                 train_steps=args.train_steps,
             )
+
+        if rank_id == 0:
             rec_cb = PerfRecorderCallback(
                 save_dir=args.output_path,
                 file_name="result_val.log",
