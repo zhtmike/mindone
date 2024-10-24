@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, Tuple
 
-from moviegen.parallel import ColumnParallelLinear, GatherForwardSplitBackward, RowParallelLinear
+from moviegen.parallel import ColumnParallelLinear, GatherForwardReduceScatterBackward, RowParallelLinear
 
 import mindspore as ms
 import mindspore.mint as mint
@@ -196,7 +196,7 @@ class ContextParallelLlamaAttention(nn.Cell):
         )
         self.o_proj = mint.nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=attention_bias, dtype=dtype)
 
-        self.gather_forward_split_backward = GatherForwardSplitBackward(dim=1, grad_scale="up", group=group)
+        self.gather_forward_reduce_scatter_backward = GatherForwardReduceScatterBackward(dim=1, group=group)
 
     def construct(self, hidden_states: Tensor, encoder_hidden_states: Optional[Tensor] = None) -> Tensor:
         bsz, q_len, _ = hidden_states.shape
@@ -207,8 +207,8 @@ class ContextParallelLlamaAttention(nn.Cell):
         key_states = self.k_proj(kv_hidden_states)
         value_states = self.v_proj(kv_hidden_states)
 
-        key_states = self.gather_forward_split_backward(key_states)
-        value_states = self.gather_forward_split_backward(value_states)
+        key_states = self.gather_forward_reduce_scatter_backward(key_states)
+        value_states = self.gather_forward_reduce_scatter_backward(value_states)
 
         query_states = ops.reshape(query_states, (bsz, -1, self.num_heads, self.head_dim))
         query_states = mint.permute(query_states, (0, 2, 1, 3))
@@ -326,8 +326,8 @@ class ContextParallelLlamaFlashAttention(ContextParallelLlamaAttention):
         key_states = self.k_proj(kv_hidden_states)
         value_states = self.v_proj(kv_hidden_states)
 
-        key_states = self.gather_forward_split_backward(key_states)
-        value_states = self.gather_forward_split_backward(value_states)
+        key_states = self.gather_forward_reduce_scatter_backward(key_states)
+        value_states = self.gather_forward_reduce_scatter_backward(value_states)
 
         query_states = ops.reshape(query_states, (bsz, -1, self.num_heads, self.head_dim))
         query_states = mint.permute(query_states, (0, 2, 1, 3))
