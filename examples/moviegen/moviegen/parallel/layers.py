@@ -9,7 +9,13 @@ from mindspore import Tensor
 from mindspore.common.initializer import Initializer
 from mindspore.communication import GlobalComm, get_group_size, get_rank
 
-__all__ = ["SplitForwardGatherBackward", "GatherForwardSplitBackward", "ColumnParallelLinear", "RowParallelLinear"]
+__all__ = [
+    "SplitForwardGatherBackward",
+    "GatherForwardSplitBackward",
+    "GatherForwardReduceScatterBackward",
+    "ColumnParallelLinear",
+    "RowParallelLinear",
+]
 
 
 def _communicate_along_dim(x: Tensor, dim: int, func: Callable[[Tensor], Tensor]) -> Tensor:
@@ -127,6 +133,24 @@ class GatherForwardSplitBackward(nn.Cell):
     def bprop(self, x: Tensor, out: Tensor, dout: Tensor) -> Tuple[Tensor]:
         dout = dout * self.scale
         dout = _split(dout, self.dim, self.rank, self.world_size)
+        return (dout,)
+
+
+class GatherForwardReduceScatterBackward(nn.Cell):
+    def __init__(self, dim: int = 0, group: str = GlobalComm.WORLD_COMM_GROUP) -> None:
+        super().__init__()
+        self.dim = dim
+        self.rank = get_rank(group)
+        self.world_size = get_group_size(group)
+        self.gather = ops.AllGather(group=group)
+        self.reduce_scatter = ops.ReduceScatter(op=ops.ReduceOp.SUM, group=group)
+
+    def construct(self, x: Tensor) -> Tensor:
+        x = _communicate_along_dim(x, self.dim, self.gather)
+        return x
+
+    def bprop(self, x: Tensor, out: Tensor, dout: Tensor) -> Tuple[Tensor]:
+        dout = _communicate_along_dim(dout, self.dim, self.reduce_scatter)
         return (dout,)
 
 

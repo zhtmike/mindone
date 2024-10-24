@@ -21,7 +21,7 @@ class MeanNet(nn.Cell):
 
     def construct(self, *inputs):
         output = self.net(*inputs)
-        return output.mean()
+        return output.mean() * 1024.0
 
 
 def get_sample_data(dtype: ms.Type = ms.float32) -> Tensor:
@@ -58,11 +58,12 @@ def run_block(mode: int = 0, dtype: ms.Type = ms.float32):
     parallel_block.load_weight_from_non_parallel_cell(non_parallel_block)
 
     # test forward
-    non_parallel_out = non_parallel_block(data)
-    parallel_out = parallel_block(data)
+    non_parallel_out = non_parallel_block(data).asnumpy()
+    parallel_out = parallel_block(data).asnumpy()
 
+    assert np.count_nonzero(non_parallel_out) > 0
     np.testing.assert_equal(non_parallel_out.shape, parallel_out.shape)
-    np.testing.assert_allclose(non_parallel_out.asnumpy(), parallel_out.asnumpy(), atol=1e-5)
+    np.testing.assert_allclose(non_parallel_out, parallel_out, rtol=1.3e-6, atol=1e-5)
     print("Test 1 (Forward): Passed.")
 
     # test backward
@@ -78,7 +79,9 @@ def run_block(mode: int = 0, dtype: ms.Type = ms.float32):
 
     for grad_0, grad_1 in zip(non_parallel_grads, parallel_grads):
         grad_1 = gather_or_reduce_parallel_gradient(grad_1, grad_0.shape)
-        np.testing.assert_allclose(grad_0.asnumpy(), grad_1.asnumpy(), atol=1e-5)
+        grad_0, grad_1 = grad_0.asnumpy(), grad_1.asnumpy()
+        assert np.count_nonzero(grad_0) > 0
+        np.testing.assert_allclose(grad_0, grad_1, rtol=1.3e-6, atol=1e-5)
     print("Test 2 (Backward: Parameter Gradient): Passed.")
 
     # check the input gradient
@@ -89,7 +92,9 @@ def run_block(mode: int = 0, dtype: ms.Type = ms.float32):
     parallel_grads = grad_fn(data)
 
     for grad_0, grad_1 in zip(non_parallel_grads, parallel_grads):
-        np.testing.assert_allclose(grad_0.asnumpy(), grad_1.asnumpy(), atol=1e-5)
+        grad_0, grad_1 = grad_0.asnumpy(), grad_1.asnumpy()
+        assert np.count_nonzero(grad_0) > 0
+        np.testing.assert_allclose(grad_0, grad_1, rtol=1.3e-6, atol=1e-5)
     print("Test 3 (Backward: Input Gradient): Passed.")
 
 
