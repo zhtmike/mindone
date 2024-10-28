@@ -2,8 +2,7 @@ import argparse
 from typing import Literal
 
 import numpy as np
-from moviegen.parallel import ColumnParallelLinear, RowParallelLinear
-from moviegen.parallel.parallel_states import create_parallel_group, get_model_parallel_group
+from moviegen.parallel import ColumnParallelLinear, RowParallelLinear, create_parallel_group, get_model_parallel_group
 from utils import gather_or_reduce_parallel_gradient
 
 import mindspore as ms

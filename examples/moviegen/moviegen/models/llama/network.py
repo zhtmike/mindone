@@ -15,7 +15,7 @@ from mindspore.communication import GlobalComm, get_group_size
 
 from mindone.models.utils import normal_, zeros_
 
-from ..activation import ACT2FN
+from .activation import ACT2FN
 from .block import (
     ContextParallelLlamaAttention,
     ContextParallelLlamaFlashAttention,
@@ -296,8 +296,10 @@ class LlamaModel(nn.Cell):
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
+        self.rms_norm_eps = rms_norm_eps
         self.max_length = max_length
         self.model_parallelism = model_parallelism
+        self.dtype = dtype
         mp_group = get_model_parallel_group()
 
         if self.model_parallelism:
