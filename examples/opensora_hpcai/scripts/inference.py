@@ -17,6 +17,7 @@ __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "../../moviegen")))
 
 from opensora.acceleration.parallel_states import set_sequence_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIO_MAP, ASPECT_RATIOS, get_image_size, get_num_frames
@@ -164,10 +165,13 @@ def main(args):
 
     captions = process_prompts(captions, args.loop)  # in v1.1 and above, each loop can have a different caption
     start_idx, end_idx = 0, len(captions)
+    if args.text_embed_folder:
+        end_idx = len(glob.glob(os.path.join(args.text_embed_folder, "*.npz")))
+    elif args.ul2_text_embed_folder:
+        end_idx = len(glob.glob(os.path.join(args.ul2_text_embed_folder, "*.npz")))
     if not args.enable_sequence_parallelism:
         # split samples to NPUs as even as possible
-        start_idx, end_idx = distribute_samples(len(captions), rank_id, device_num)
-        captions = captions[start_idx:end_idx]
+        start_idx, end_idx = distribute_samples(end_idx, rank_id, device_num)
         if args.reference_path is not None:
             args.reference_path = args.reference_path[start_idx:end_idx]
         if args.mask_strategy is not None:
@@ -177,7 +181,7 @@ def main(args):
         base_data_idx = 0
 
     if args.use_parallel and not args.enable_sequence_parallelism:
-        print(f"Num captions for rank {rank_id}: {len(captions)}")
+        print(f"Num captions for rank {rank_id}: {end_idx - start_idx}")
 
     # 2. model initiate and weight loading
     # 2.1 vae
@@ -297,6 +301,7 @@ def main(args):
         text_encoder, tokenizer = get_text_encoder_and_tokenizer(
             "t5", args.t5_model_dir, model_max_length=args.model_max_length
         )
+        captions = captions[start_idx:end_idx]
         num_prompts = len(captions)
         text_tokens, mask = zip(
             *[text_encoder.get_text_tokens_and_mask(caption, return_tensor=False) for caption in captions]
@@ -323,17 +328,19 @@ def main(args):
                 "llama3_1b",
                 "llama3_5b",
             ], "UL2 and ByT5 text embedding folders are required for MovieGen."
-            main_embed_paths = sorted(glob.glob(os.path.join(args.text_embed_folder, "*.npz")))
+            main_embed_paths = sorted(glob.glob(os.path.join(args.text_embed_folder, "*.npz")))[start_idx:end_idx]
         elif args.ul2_text_embed_folder and args.byt5_text_embed_folder:
-            main_embed_paths = sorted(glob.glob(os.path.join(args.ul2_text_embed_folder, "*.npz")))
-            extra_embed_paths1 = sorted(glob.glob(os.path.join(args.byt5_text_embed_folder, "*.npz")))
+            main_embed_paths = sorted(glob.glob(os.path.join(args.ul2_text_embed_folder, "*.npz")))[start_idx:end_idx]
+            extra_embed_paths1 = sorted(glob.glob(os.path.join(args.byt5_text_embed_folder, "*.npz")))[
+                start_idx:end_idx
+            ]
         else:
             raise NotImplementedError("T5 or UL2 and ByT5 text embedding should be provided.")
 
         def read_embeddings(embed_paths):
             prefix = []
             _mask, _text_emb = [], []
-            for fp in embed_paths[start_idx:end_idx]:
+            for fp in embed_paths:
                 prefix.append(os.path.basename(fp)[:-4])
                 with np.load(fp) as dat:
                     _mask.append(dat["mask"])
@@ -519,13 +526,13 @@ def main(args):
 
         # save result
         for j in range(ns):
-            global_idx = base_data_idx + i + j
-            if args.text_embed_folder is None:
+            if not args.text_embed_folder and not (args.ul2_text_embed_folder and args.byt5_text_embed_folder):
+                global_idx = base_data_idx + i + j
                 prompt = "-".join((batch_prompts[j][0].replace("/", "").split(" ")[:10]))
                 save_fp = f"{save_dir}/{global_idx:03d}-{prompt}.{args.save_format}"
                 latent_save_fp = f"{latent_dir}/{global_idx:03d}-{prompt}.npy"
             else:
-                fn = prompt_prefix[global_idx]
+                fn = prompt_prefix[i + j]
                 save_fp = f"{save_dir}/{fn}.{args.save_format}"
                 latent_save_fp = f"{latent_dir}/{fn}.npy"
 

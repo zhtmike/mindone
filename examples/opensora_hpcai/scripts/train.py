@@ -22,6 +22,8 @@ __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "../../moviegen")))
+
 from args_train import parse_args
 from opensora.acceleration.parallel_states import create_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIOS, get_image_size
