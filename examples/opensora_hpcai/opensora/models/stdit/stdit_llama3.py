@@ -1,9 +1,9 @@
 import os
 from typing import Literal, Optional
 
-from moviegen.llama3 import llama3_1B, llama3_5B, llama3_30B
-from moviegen.llama3.models.llama.block import LlamaRMSNorm
-from moviegen.text_encoders.text_projector import TextProjector
+from moviegen import llama3_1B, llama3_5B, llama3_30B
+from moviegen.models import TextProjector
+from moviegen.models.llama.block import LlamaRMSNorm
 
 import mindspore.nn as nn
 import mindspore.ops as ops
@@ -33,7 +33,12 @@ class STDiTLlama3Wrapper(nn.Cell):
         else:
             self.llama = llama3_30B(**model_kwargs)
 
-        self.text_projector = TextProjector(out_features=self.llama.hidden_size, layer_norm=LlamaRMSNorm)
+        self.text_projector = TextProjector(
+            out_features=self.llama.hidden_size,
+            layer_norm=LlamaRMSNorm,
+            norm_eps=self.llama.rms_norm_eps,
+            dtype=self.llama.dtype,
+        )
 
         self.patch_size = self.llama.patch_size
         self.hidden_size = self.llama.hidden_size

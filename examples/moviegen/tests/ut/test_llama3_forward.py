@@ -1,5 +1,5 @@
 import numpy as np
-from moviegen.llama3 import llama3_1B
+from moviegen import llama3_1B
 
 import mindspore as ms
 

@@ -1,8 +1,8 @@
 import argparse
 
 import numpy as np
-from moviegen.llama3.models.llama.block import LlamaMLP, TensorParallelLlamaMLP
-from moviegen.parallel.parallel_states import create_parallel_group
+from moviegen.models.llama.block import LlamaMLP, TensorParallelLlamaMLP
+from moviegen.parallel import create_parallel_group
 from utils import gather_or_reduce_parallel_gradient
 
 import mindspore as ms

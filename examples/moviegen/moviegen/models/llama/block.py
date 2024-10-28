@@ -17,7 +17,7 @@ from mindspore import Parameter, Tensor
 from mindspore.communication import GlobalComm
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
-from ..activation import ACT2FN
+from .activation import ACT2FN
 
 logger = logging.getLogger(__name__)
 
