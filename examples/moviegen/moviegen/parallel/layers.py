@@ -97,11 +97,13 @@ class _GatherToModelParallelRegion(nn.Cell):
         self.reduce_scatter = ops.ReduceScatter(op=ops.ReduceOp.SUM, group=group)
         self.rank = get_rank(group)
         self.world_size = get_group_size(group)
+        self.scale = self.world_size
 
     def construct(self, x: Tensor) -> Tensor:
         return _communicate_along_dim(x, self.dim, self.gather)
 
     def bprop(self, x: Tensor, out: Tensor, dout: Tensor) -> Tuple[Tensor]:
+        dout = dout * self.scale
         dout = _communicate_along_dim(dout, self.dim, self.reduce_scatter)
         return (dout,)
 
@@ -114,11 +116,13 @@ class _ReduceScatterFromModelParallelRegion(nn.Cell):
         self.reduce_scatter = ops.ReduceScatter(op=ops.ReduceOp.SUM, group=group)
         self.rank = get_rank(group)
         self.world_size = get_group_size(group)
+        self.scale = 1 / self.world_size
 
     def construct(self, x: Tensor) -> Tensor:
         return _communicate_along_dim(x, self.dim, self.reduce_scatter)
 
     def bprop(self, x: Tensor, out: Tensor, dout: Tensor) -> Tuple[Tensor]:
+        dout = dout * self.scale
         dout = _communicate_along_dim(dout, self.dim, self.gather)
         return (dout,)
 
