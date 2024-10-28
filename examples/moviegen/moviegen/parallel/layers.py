@@ -234,11 +234,11 @@ class ColumnParallelLinear(nn.Cell):
         return x
 
     def load_weight_from_non_parallel_cell(self, target: mint.nn.Linear):
-        weight = ops.chunk(target.weight, self.world_size, axis=0)[self.rank]
+        weight = mint.chunk(target.weight, self.world_size, dim=0)[self.rank]
         self.linear.weight.set_data(weight)
 
         if target.bias is not None:
-            bias = ops.chunk(target.bias, self.world_size, axis=0)[self.rank]
+            bias = mint.chunk(target.bias, self.world_size, dim=0)[self.rank]
             self.linear.bias.set_data(bias)
 
 
@@ -287,11 +287,11 @@ class FusedColumnParallelLinear(nn.Cell):
         return x
 
     def load_weight_from_non_parallel_cell(self, target: mint.nn.Linear):
-        weight = ops.chunk(target.weight, self.world_size, axis=0)[self.rank]
+        weight = mint.chunk(target.weight, self.world_size, dim=0)[self.rank]
         self.linear.weight.set_data(weight)
 
         if target.bias is not None:
-            bias = ops.chunk(target.bias, self.world_size, axis=0)[self.rank]
+            bias = mint.chunk(target.bias, self.world_size, dim=0)[self.rank]
             self.linear.bias.set_data(bias)
 
 
@@ -307,8 +307,6 @@ class RowParallelLinear(nn.Cell):
         group: str = GlobalComm.WORLD_COMM_GROUP,
         dtype: Optional[ms.Type] = None,
     ):
-        # FIXME: add bias support
-        assert bias is False, "Not Implemented."
         super().__init__(auto_prefix=False)
 
         self.rank = get_rank(group)
@@ -332,13 +330,18 @@ class RowParallelLinear(nn.Cell):
     def construct(self, x: Tensor) -> Tensor:
         if not self.input_is_parallel:
             x = self.scatter_to_tensor_parallel_region(x)
-        x = self.linear(x)
+        x = self.linear.dense(x, self.linear.weight)
         x = self.reduce_from_tensor_parallel_region(x)
+        if self.linear.bias is not None:
+            x = x + self.linear.bias
         return x
 
     def load_weight_from_non_parallel_cell(self, target: mint.nn.Linear):
-        weight = ops.chunk(target.weight, self.world_size, axis=1)[self.rank]
+        weight = mint.chunk(target.weight, self.world_size, dim=1)[self.rank]
         self.linear.weight.set_data(weight)
+
+        if target.bias is not None:
+            self.linear.bias.set_data(target.bias)
 
 
 class FusedRowParallelLinear(nn.Cell):
@@ -358,8 +361,6 @@ class FusedRowParallelLinear(nn.Cell):
         group: str = GlobalComm.WORLD_COMM_GROUP,
         dtype: Optional[ms.Type] = None,
     ):
-        # FIXME: add bias support
-        assert bias is False, "Not Implemented."
         super().__init__(auto_prefix=False)
 
         self.rank = get_rank(group)
@@ -383,10 +384,15 @@ class FusedRowParallelLinear(nn.Cell):
     def construct(self, x: Tensor) -> Tensor:
         if not self.input_is_parallel:
             x = self.scatter_to_tensor_parallel_region(x)
-        x = self.linear(x)
+        x = self.linear.dense(x, self.linear.weight)
         x = self.reduce_from_tensor_parallel_region(x)
+        if self.linear.bias is not None:
+            x = x + self.linear.bias
         return x
 
     def load_weight_from_non_parallel_cell(self, target: mint.nn.Linear):
-        weight = ops.chunk(target.weight, self.world_size, axis=1)[self.rank]
+        weight = mint.chunk(target.weight, self.world_size, dim=1)[self.rank]
         self.linear.weight.set_data(weight)
+
+        if target.bias is not None:
+            self.linear.bias.set_data(target.bias)

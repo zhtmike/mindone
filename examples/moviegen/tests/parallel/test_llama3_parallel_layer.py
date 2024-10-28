@@ -31,9 +31,8 @@ def get_sample_data(dtype: ms.Type = ms.float32) -> Tensor:
     return x
 
 
-def get_layer_config():
-    # TODO: add bias when row parallel layer supports
-    config = dict(in_features=256, out_features=32, bias=False)
+def get_layer_config(bias: bool = False):
+    config = dict(in_features=256, out_features=32, bias=bias)
     return config
 
 
@@ -48,21 +47,27 @@ def run_layer(mode: int = 0, dtype: ms.Type = ms.float32):
     # prepare group
     create_parallel_group(model_parallel_shards=get_group_size())
 
-    print("Column Parallel Linear:")
-    run_parallel_linear(data, type="column_parallel", dtype=dtype)
-    print("Row Parallel Linear:")
-    run_parallel_linear(data, type="row_parallel", dtype=dtype)
+    print("Column Parallel Linear (Bias=True):")
+    run_parallel_linear(data, type="column_parallel", bias=True, dtype=dtype)
+    print("Column Parallel Linear (Bias=False):")
+    run_parallel_linear(data, type="column_parallel", bias=False, dtype=dtype)
+    print("Row Parallel Linear (Bias=True):")
+    run_parallel_linear(data, type="row_parallel", bias=True, dtype=dtype)
+    print("Row Parallel Linear (Bias=False):")
+    run_parallel_linear(data, type="row_parallel", bias=False, dtype=dtype)
 
 
-def run_parallel_linear(data: Tensor, type: Literal["column_parallel", "row_parallel"], dtype: ms.Type = ms.float32):
+def run_parallel_linear(
+    data: Tensor, type: Literal["column_parallel", "row_parallel"], bias: bool = False, dtype: ms.Type = ms.float32
+):
     # non parallel layer
     set_random_seed(1024)
-    non_parallel_layer_cfg = get_layer_config()
+    non_parallel_layer_cfg = get_layer_config(bias=bias)
     non_parallel_layer = mint.nn.Linear(**non_parallel_layer_cfg, dtype=dtype)
 
     # parallel layer
     group = get_model_parallel_group()
-    parallel_layer_cfg = get_layer_config()
+    parallel_layer_cfg = get_layer_config(bias=bias)
     if type == "column_parallel":
         parallel_layer = ColumnParallelLinear(**parallel_layer_cfg, gather_output=True, group=group, dtype=dtype)
     else:
