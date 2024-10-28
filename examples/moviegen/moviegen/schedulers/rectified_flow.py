@@ -1,10 +1,11 @@
 import logging
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Literal, Optional, Tuple
 
 import numpy as np
 from tqdm import tqdm
 
 import mindspore as ms
+import mindspore.mint.nn.functional as F
 from mindspore import Tensor, mint, nn, ops
 
 logger = logging.getLogger(__name__)
@@ -12,21 +13,26 @@ logger = logging.getLogger(__name__)
 __all__ = ["RFLOW", "RFlowScheduler"]
 
 
-def mean_flat(tensor: Tensor) -> Tensor:
-    return mint.mean(tensor, dim=list(range(1, len(tensor.shape))))
-
-
 class LogisticNormal(nn.Cell):
     def __init__(self, loc: float = 0.0, scale: float = 1.0) -> None:
+        super().__init__()
         self.mean = loc
         self.std = scale
         self._min = Tensor(np.finfo(np.float32).tiny, dtype=ms.float32)
         self._max = Tensor(1.0 - np.finfo(np.float32).eps, dtype=ms.float32)
 
     def construct(self, shape: Tuple[int, ...]) -> Tensor:
-        x = self.mean + self.std * mint.normal(size=shape)
-        z = mint.clamp(mint.sigmoid(x), min=self._min, max=self._max)
-        return mint.pad(z, [0, 1], value=1) * mint.pad(1 - z, [1, 0], value=1)
+        assert shape[-1] == 1
+        x = mint.normal(mean=self.mean, std=self.std, size=shape)
+        offset = x.shape[-1] + 1 - mint.cumsum(mint.ones(x.shape[-1]), dim=-1)
+        z = self._clipped_sigmoid(x - mint.log(offset))
+        z_cumprod = ops.cumprod((1 - z), dim=-1)
+        y = F.pad(z, [0, 1], value=1) * F.pad(z_cumprod, [1, 0], value=1)
+        return y[:, 0]
+
+    def _clipped_sigmoid(self, x: Tensor) -> Tensor:
+        x = mint.clamp(mint.sigmoid(x), min=self._min, max=self._max)
+        return x
 
 
 class RFLOW:
@@ -34,38 +40,47 @@ class RFLOW:
         self,
         num_sampling_steps: int = 10,
         num_timesteps: int = 1000,
+        sample_method: Literal["linear", "linear-quadratic"] = "linear",
         **kwargs: Any,
     ) -> None:
         self.num_sampling_steps = num_sampling_steps
         self.num_timesteps = num_timesteps
+        self.sample_method = sample_method
 
         self.scheduler = RFlowScheduler(
             num_timesteps=self.num_timesteps, num_sampling_steps=self.num_sampling_steps, **kwargs
         )
 
-    def __call__(self, model: nn.Cell, z: Tensor, model_kwargs: Dict[str, Tensor]) -> Tensor:
+    def __call__(self, model: nn.Cell, x: Tensor, text_embedding: Tensor) -> Tensor:
+        """
+        x: (N, T, C, H, W) tensor of inputs (latent representations of video)
+        text_embedding: (N, L, C') tensor of the text embedding
+        """
         # prepare timesteps
-        timesteps = [(1.0 - i / self.num_sampling_steps) * self.num_timesteps for i in range(self.num_sampling_steps)]
-        timesteps = [Tensor([t] * z.shape[0]) for t in timesteps]
+        if self.sample_method == "linear":
+            timesteps = (1.0 - np.arange(self.num_sampling_steps) / self.num_sampling_steps) * self.num_timesteps
+        else:
+            raise NotImplementedError("Not supported yet.")
 
-        for i, t in tqdm(enumerate(timesteps), total=self.num_sampling_steps):
-            pred = model(z, t, **model_kwargs)
-            # FIXME: a tmp solution for inference with cfg==1.0
-            pred = pred[:, :4]
+        timesteps = np.tile(timesteps[None, ...], (x.shape[0], 1))
+        timesteps = Tensor(timesteps, dtype=ms.int64)
+
+        for i, timestep in tqdm(enumerate(timesteps), total=self.num_sampling_steps):
+            pred = model(x, timestep, text_embedding)
 
             # update z
             dt = timesteps[i] - timesteps[i + 1] if i < len(timesteps) - 1 else timesteps[i]
             dt = dt / self.num_timesteps
-            z = z + pred * dt[:, None, None, None, None]
+            x = x + pred * dt[:, None, None, None, None]
 
-        return z
+        return x
 
 
 class RFlowScheduler:
     def __init__(
         self,
         num_timesteps: int = 1000,
-        sample_method: Literal["discrete-uniform", "uniform", "logit-normal"] = "uniform",
+        sample_method: Literal["discrete-uniform", "uniform", "logit-normal"] = "logit-normal",
         loc: float = 0.0,
         scale: float = 1.0,
         eps: float = 1e-5,
@@ -92,7 +107,7 @@ class RFlowScheduler:
         return mint.rand((size,), dtype=ms.float32) * self.num_timesteps
 
     def _logit_normal_sample(self, size: int) -> Tensor:
-        return self.distribution((size,)) * self.num_timesteps
+        return self.distribution((size, 1)) * self.num_timesteps
 
     def training_losses(
         self, model: nn.Cell, x: Tensor, text_embedding: Tensor, timestep: Optional[Tensor] = None
@@ -109,12 +124,11 @@ class RFlowScheduler:
         noise = mint.normal(size=x.shape).to(x.dtype)
         x_t = self.add_noise(x, noise, timestep)
 
-        # force to be fp32
-        model_output = model(x_t, timestep, text_embedding).to(ms.float32)
-        v_t = (x - (1 - self.eps) * noise).to(ms.float32)
+        model_output = model(x_t, timestep, text_embedding)
+        v_t = x - (1 - self.eps) * noise
 
         # 3.1.2 Eqa (2)
-        loss = self.criteria(model_output, v_t)
+        loss = self.criteria(model_output.to(ms.float32), v_t.to(ms.float32))
         return loss
 
     def add_noise(self, x: Tensor, noise: Tensor, timesteps: Tensor) -> Tensor:
@@ -123,9 +137,7 @@ class RFlowScheduler:
         noise: (N, T, C, H, W) tensor of white noise
         timesteps: (N,) tensor of timestamps with range [0, num_timesteps)
         """
-        timesteps = timesteps.float() / self.num_timesteps
-        timesteps = 1 - timesteps  # in range [1, 1/1000]
-
+        timesteps = 1 - timesteps.to(ms.float32) / self.num_timesteps
         timesteps = timesteps[:, None, None, None, None]
 
         # 3.1.2 First Eqa.

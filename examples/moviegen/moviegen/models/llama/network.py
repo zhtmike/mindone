@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple, Union
 
 import numpy as np
 from moviegen.parallel import GatherForwardSplitBackward, SplitForwardGatherBackward
@@ -499,6 +499,25 @@ class LlamaModel(nn.Cell):
         # unpatchify
         output = self.unpatchify(hidden_states, t, h, w)
         return output
+
+    def construct_with_cfg(
+        self,
+        latent_embedding: Tensor,
+        timestep: Tensor,
+        text_embedding: Tensor,
+        cfg_scale: Union[Tensor, float] = 7.5,
+    ) -> Tensor:
+        """
+        latent_embedding: (2N, T, C, H, W) tensor of inputs (latent representations of video)
+        timestep: (2N,) tensor to indicate denoising step
+        text_embedding: (2N, L, C') tensor of the text embedding
+        cfg_scale: CFG scale
+        """
+        model_out = self(latent_embedding, timestep, text_embedding)
+        cond_model_out, uncond_model_out = mint.chunk(model_out, 2, dim=0)
+        model_out = uncond_model_out + cfg_scale * (cond_model_out - uncond_model_out)
+        model_out = mint.tile(model_out, (2, 1, 1, 1, 1))
+        return model_out
 
     def load_weight_from_non_parallel_cell(self, target: LlamaModel):
         param_dict = target.parameters_dict()
