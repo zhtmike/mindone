@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 from tqdm import tqdm
@@ -41,15 +41,10 @@ class RFLOW:
         num_sampling_steps: int = 10,
         num_timesteps: int = 1000,
         sample_method: Literal["linear", "linear-quadratic"] = "linear",
-        **kwargs: Any,
     ) -> None:
         self.num_sampling_steps = num_sampling_steps
         self.num_timesteps = num_timesteps
         self.sample_method = sample_method
-
-        self.scheduler = RFlowScheduler(
-            num_timesteps=self.num_timesteps, num_sampling_steps=self.num_sampling_steps, **kwargs
-        )
 
     def __call__(self, model: nn.Cell, x: Tensor, text_embedding: Tensor) -> Tensor:
         """
@@ -109,7 +104,7 @@ class RFlowScheduler:
     def _logit_normal_sample(self, size: int) -> Tensor:
         return self.distribution((size, 1)) * self.num_timesteps
 
-    def training_losses(
+    def training_loss(
         self, model: nn.Cell, x: Tensor, text_embedding: Tensor, timestep: Optional[Tensor] = None
     ) -> Tensor:
         """
