@@ -163,10 +163,15 @@ def main(args):
         latent_condition_frame_length = round(latent_condition_frame_length / 17 * 5)
 
     captions = process_prompts(captions, args.loop)  # in v1.1 and above, each loop can have a different caption
+    start_idx, end_idx = 0, len(captions)
     if not args.enable_sequence_parallelism:
         # split samples to NPUs as even as possible
         start_idx, end_idx = distribute_samples(len(captions), rank_id, device_num)
         captions = captions[start_idx:end_idx]
+        if args.reference_path is not None:
+            args.reference_path = args.reference_path[start_idx:end_idx]
+        if args.mask_strategy is not None:
+            args.mask_strategy = args.mask_strategy[start_idx:end_idx]
         base_data_idx = start_idx
     else:
         base_data_idx = 0
@@ -307,19 +312,18 @@ def main(args):
             )
         logger.info(f"Num tokens: {mask.asnumpy().sum(2)}")
     else:
-        assert not args.use_parallel, "parallel inference is not supported for t5 cached sampling currently."
         if args.model_version != "v1":
             logger.warning("For embedded captions, only one prompt per video is supported at this moment.")
 
         embed_paths = sorted(glob.glob(os.path.join(args.text_embed_folder, "*.npz")))
         prompt_prefix = []
         text_tokens, mask, text_emb = [], [], []
-        for fp in embed_paths:
+        for fp in embed_paths[start_idx:end_idx]:
             prompt_prefix.append(os.path.basename(fp)[:-4])
-            dat = np.load(fp)
-            text_tokens.append(dat["tokens"])
-            mask.append(dat["mask"])
-            text_emb.append(dat["text_emb"])
+            with np.load(fp) as dat:
+                text_tokens.append(dat["tokens"])
+                mask.append(dat["mask"])
+                text_emb.append(dat["text_emb"])
         text_tokens = np.concatenate(text_tokens)
         mask = np.concatenate(mask)
         text_emb = np.concatenate(text_emb)
