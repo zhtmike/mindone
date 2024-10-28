@@ -15,7 +15,7 @@ from mindspore.communication import GlobalComm, get_group_size
 
 from mindone.models.utils import normal_, zeros_
 
-from ..activation import ACT2FN
+from .activation import ACT2FN
 from .block import (
     ContextParallelLlamaAttention,
     ContextParallelLlamaFlashAttention,
@@ -103,7 +103,7 @@ class LlamaDecoderLayer(nn.Cell):
 
         # 3.1.3 Adaptive Layer Norm
         modulation_parameters = self.scale_shift_table.to(hidden_states.dtype) + modulation_parameters.reshape(B, 6, -1)
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = ops.chunk(modulation_parameters, 6, axis=1)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mint.chunk(modulation_parameters, 6, dim=1)
 
         # Self Attention (Bi-Directional Attention)
         residual = hidden_states
@@ -146,7 +146,6 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
-        self.fused_tensor_parallel = fused_tensor_parallel
 
         # 3.1.6 Context Parallelism
         self.self_attn = CONTEXT_PARALLEL_Llama_ATTENTION_CLASSES[attn_implementation](
@@ -168,7 +167,7 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         )
 
         # 3.1.6 Tensor Parallelism
-        if self.fused_tensor_parallel:
+        if fused_tensor_parallel:
             self.mlp = FusedTensorParallelLlamaMLP(
                 intermediate_size=intermediate_size,
                 hidden_size=hidden_size,
@@ -190,7 +189,7 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         self.input_layernorm = LlamaRMSNorm(hidden_size, eps=rms_norm_eps, dtype=dtype)
         self.post_attention_layernorm = LlamaRMSNorm(hidden_size, eps=rms_norm_eps, dtype=dtype)
 
-        if not self.fused_tensor_parallel:
+        if not fused_tensor_parallel:
             self.split_forward_gather_backward = SplitForwardGatherBackward(dim=1, grad_scale="down", group=group)
             self.gather_forward_split_backward = GatherForwardSplitBackward(dim=1, grad_scale="up", group=group)
         else:
@@ -211,7 +210,7 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
 
         # 3.1.3 Adaptive Layer Norm
         modulation_parameters = self.scale_shift_table.to(hidden_states.dtype) + modulation_parameters.reshape(B, 6, -1)
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = ops.chunk(modulation_parameters, 6, axis=1)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mint.chunk(modulation_parameters, 6, dim=1)
 
         # Self Attention (Bi-Directional Attention)
         residual = hidden_states
@@ -230,12 +229,9 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = t2i_modulate(hidden_states, shift_mlp, scale_mlp)
-        if self.fused_tensor_parallel:
-            hidden_states = self.mlp(hidden_states)
-        else:
-            hidden_states = self.gather_forward_split_backward(hidden_states)
-            hidden_states = self.mlp(hidden_states)
-            hidden_states = self.split_forward_gather_backward(hidden_states)
+        hidden_states = self.gather_forward_split_backward(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = self.split_forward_gather_backward(hidden_states)
         hidden_states = gate_mlp * hidden_states
         hidden_states = residual + hidden_states
 
@@ -259,8 +255,8 @@ class LlamaFinalLayer(nn.Cell):
         self.scale_shift_table = Parameter(Tensor(np.random.randn(2, hidden_size), dtype=dtype) / hidden_size**0.5)
 
     def construct(self, hidden_states: Tensor, timestep_embedding: Tensor):
-        shift, scale = ops.chunk(
-            ops.unsqueeze(self.scale_shift_table, 0) + ops.unsqueeze(timestep_embedding, 1), 2, axis=1
+        shift, scale = mint.chunk(
+            ops.unsqueeze(self.scale_shift_table, 0) + ops.unsqueeze(timestep_embedding, 1), 2, dim=1
         )
         hidden_states = t2i_modulate(self.input_layernorm(hidden_states), shift, scale)
         hidden_states = self.proj(hidden_states)
@@ -300,8 +296,10 @@ class LlamaModel(nn.Cell):
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
+        self.rms_norm_eps = rms_norm_eps
         self.max_length = max_length
         self.model_parallelism = model_parallelism
+        self.dtype = dtype
         mp_group = get_model_parallel_group()
 
         if self.model_parallelism:

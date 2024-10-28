@@ -2,6 +2,9 @@ from typing import Optional
 
 from mindspore.communication import GlobalComm, create_group, get_group_size, get_rank
 
+__all__ = ["set_model_parallel_group", "get_model_parallel_group", "create_parallel_group"]
+
+
 _GLOBAL_PARALLEL_GROUPS = dict()
 
 
