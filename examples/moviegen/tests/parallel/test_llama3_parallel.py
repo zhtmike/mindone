@@ -56,11 +56,11 @@ def run_network(mode: int = 0, fused_tensor_parallel: bool = False, dtype: ms.Ty
 
     # non parallel network
     set_random_seed(1024)
-    non_parallel_network_cfg = get_network_config(model_parallelism=False)
+    non_parallel_network_cfg = get_network_config(model_parallelism=False, fused_tensor_parallel=fused_tensor_parallel)
     non_parallel_network = LlamaModel(**non_parallel_network_cfg, dtype=dtype)
 
     # parallel netowrk
-    parallel_network_cfg = get_network_config(model_parallelism=True)
+    parallel_network_cfg = get_network_config(model_parallelism=True, fused_tensor_parallel=fused_tensor_parallel)
     parallel_network = LlamaModel(**parallel_network_cfg, dtype=dtype)
 
     # load weight
@@ -73,7 +73,7 @@ def run_network(mode: int = 0, fused_tensor_parallel: bool = False, dtype: ms.Ty
     assert np.count_nonzero(non_parallel_out) > 0
     np.testing.assert_equal(non_parallel_out.shape, parallel_out.shape)
     np.testing.assert_allclose(non_parallel_out, parallel_out, rtol=1.3e-6, atol=1e-5)
-    print("Test 1 (Forward): Passed.")
+    print("Test 1 (Forward): Passed.", flush=True)
 
     # test backward
     non_parallel_mean_net = MeanNet(non_parallel_network)
@@ -91,7 +91,7 @@ def run_network(mode: int = 0, fused_tensor_parallel: bool = False, dtype: ms.Ty
         grad_0, grad_1 = grad_0.asnumpy(), grad_1.asnumpy()
         assert np.count_nonzero(grad_0) > 0
         np.testing.assert_allclose(grad_0, grad_1, rtol=1.3e-6, atol=2e-5)
-    print("Test 2 (Backward: Parameter Gradient): Passed.")
+    print("Test 2 (Backward: Parameter Gradient): Passed.", flush=True)
 
 
 if __name__ == "__main__":
@@ -100,8 +100,8 @@ if __name__ == "__main__":
         "--mode", default=0, type=int, choices=[0, 1], help="Mode to test. (0: Graph Mode; 1: Pynative mode)"
     )
     args = parser.parse_args()
-    print("Non-fused tensor parallel:")
+    print("Non-fused tensor parallel:", flush=True)
     run_network(mode=args.mode, fused_tensor_parallel=False)
 
-    print("Fused tensor parallel:")
+    print("Fused tensor parallel:", flush=True)
     run_network(mode=args.mode, fused_tensor_parallel=True)
