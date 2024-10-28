@@ -291,7 +291,9 @@ def main(args):
         logger.warning(f"{model_name} uses random initialization!")
 
     # 2.3 text encoder
-    if args.text_embed_folder is None:
+    if not args.text_embed_folder and not (args.ul2_text_embed_folder and args.byt5_text_embed_folder):
+        if args.model_version in ["llama3_1b", "llama3_5b"]:
+            raise ValueError("UL2 and ByT5 text embedding folders are required for MovieGen.")
         text_encoder, tokenizer = get_text_encoder_and_tokenizer(
             "t5", args.t5_model_dir, model_max_length=args.model_max_length
         )
@@ -315,24 +317,39 @@ def main(args):
         if args.model_version != "v1":
             logger.warning("For embedded captions, only one prompt per video is supported at this moment.")
 
-        embed_paths = sorted(glob.glob(os.path.join(args.text_embed_folder, "*.npz")))
-        prompt_prefix = []
-        text_tokens, mask, text_emb = [], [], []
-        for fp in embed_paths[start_idx:end_idx]:
-            prompt_prefix.append(os.path.basename(fp)[:-4])
-            with np.load(fp) as dat:
-                text_tokens.append(dat["tokens"])
-                mask.append(dat["mask"])
-                text_emb.append(dat["text_emb"])
-        text_tokens = np.concatenate(text_tokens)
-        mask = np.concatenate(mask)
-        text_emb = np.concatenate(text_emb)
-        logger.info(f"Num tokens: {mask.sum(1)}")
+        extra_embed_paths1 = None
+        if args.text_embed_folder:
+            assert args.model_version not in [
+                "llama3_1b",
+                "llama3_5b",
+            ], "UL2 and ByT5 text embedding folders are required for MovieGen."
+            main_embed_paths = sorted(glob.glob(os.path.join(args.text_embed_folder, "*.npz")))
+        elif args.ul2_text_embed_folder and args.byt5_text_embed_folder:
+            main_embed_paths = sorted(glob.glob(os.path.join(args.ul2_text_embed_folder, "*.npz")))
+            extra_embed_paths1 = sorted(glob.glob(os.path.join(args.byt5_text_embed_folder, "*.npz")))
+        else:
+            raise NotImplementedError("T5 or UL2 and ByT5 text embedding should be provided.")
 
+        def read_embeddings(embed_paths):
+            prefix = []
+            _mask, _text_emb = [], []
+            for fp in embed_paths[start_idx:end_idx]:
+                prefix.append(os.path.basename(fp)[:-4])
+                with np.load(fp) as dat:
+                    _mask.append(dat["mask"])
+                    _text_emb.append(dat["text_emb"])
+            return (
+                ms.Tensor(np.concatenate(_mask), dtype=ms.uint8),
+                ms.Tensor(np.concatenate(_text_emb), dtype=ms.float32),
+                prefix,
+            )
+
+        mask, text_emb, prompt_prefix = read_embeddings(main_embed_paths)
+        extra_mask1, extra_text_emb1, _ = (
+            read_embeddings(extra_embed_paths1) if extra_embed_paths1 else (None, None, None)
+        )
+        logger.info(f"Num tokens: {mask.sum(1)}")
         num_prompts = text_emb.shape[0]
-        text_tokens = ms.Tensor(text_tokens)
-        mask = ms.Tensor(mask, dtype=ms.uint8)
-        text_emb = ms.Tensor(text_emb, dtype=ms.float32)
         text_encoder = None
 
     if (args.model_version == "v1" or args.reference_path is None) and num_prompts < 1:
@@ -467,6 +484,9 @@ def main(args):
                 inputs["text_tokens"] = None
                 inputs["text_emb"] = text_emb[i : i + ns]
                 inputs["mask"] = mask[i : i + ns]
+                if extra_text_emb1 is not None:
+                    model_args["extra_text_embed1"] = extra_text_emb1[i : i + ns]
+                    model_args["extra_mask1"] = extra_mask1[i : i + ns]
 
             logger.info("Sampling captions:")
             for j in range(ns):
@@ -710,6 +730,8 @@ def parse_args():
     parser.add_argument("--fps", type=int, default=8, help="FPS in the saved video")
     parser.add_argument("--batch_size", default=4, type=int, help="infer batch size")
     parser.add_argument("--text_embed_folder", type=str, default=None, help="path to t5 embedding")
+    parser.add_argument("--ul2_text_embed_folder", type=str, help="path to ul2 embedding")
+    parser.add_argument("--byt5_text_embed_folder", type=str, help="path to byt5 embedding")
     parser.add_argument(
         "--save_latent",
         type=str2bool,
