@@ -32,17 +32,18 @@ def get_sample_data(dtype: ms.Type = ms.float32) -> Tuple[Tensor, Tensor, Tensor
     return latent_embedding, timestep, text_embedding
 
 
-def get_network_config(model_parallelism=False):
+def get_network_config(model_parallelism=False, fused_tensor_parallel=False):
     config = dict(
-        num_hidden_layers=1,
+        num_hidden_layers=2,
         attn_implementation="eager",
         model_parallelism=model_parallelism,
+        fused_tensor_parallel=fused_tensor_parallel,
         post_init_weight=False,
     )
     return config
 
 
-def run_network(mode: int = 0, dtype: ms.Type = ms.float32):
+def run_network(mode: int = 0, fused_tensor_parallel: bool = False, dtype: ms.Type = ms.float32):
     ms.set_context(mode=mode)
     init()
 
@@ -99,4 +100,8 @@ if __name__ == "__main__":
         "--mode", default=0, type=int, choices=[0, 1], help="Mode to test. (0: Graph Mode; 1: Pynative mode)"
     )
     args = parser.parse_args()
-    run_network(mode=args.mode)
+    print("Non-fused tensor parallel:")
+    run_network(mode=args.mode, fused_tensor_parallel=False)
+
+    print("Fused tensor parallel:")
+    run_network(mode=args.mode, fused_tensor_parallel=True)

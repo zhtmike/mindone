@@ -15,6 +15,8 @@ __all__ = [
     "GatherForwardReduceScatterBackward",
     "ColumnParallelLinear",
     "RowParallelLinear",
+    "FusedColumnParallelLinear",
+    "FusedRowParallelLinear",
 ]
 
 
@@ -84,6 +86,40 @@ class _GatherFromModelParallelRegion(nn.Cell):
 
     def bprop(self, x: Tensor, out: Tensor, dout: Tensor) -> Tuple[Tensor]:
         dout = _split(dout, -1, self.rank, self.world_size)
+        return (dout,)
+
+
+class _GatherToModelParallelRegion(nn.Cell):
+    def __init__(self, dim: int = 1, group: str = GlobalComm.WORLD_COMM_GROUP) -> None:
+        super().__init__(auto_prefix=False)
+        self.dim = dim
+        self.gather = ops.AllGather(group=group)
+        self.reduce_scatter = ops.ReduceScatter(op=ops.ReduceOp.SUM, group=group)
+        self.rank = get_rank(group)
+        self.world_size = get_group_size(group)
+
+    def construct(self, x: Tensor) -> Tensor:
+        return _communicate_along_dim(x, self.dim, self.gather)
+
+    def bprop(self, x: Tensor, out: Tensor, dout: Tensor) -> Tuple[Tensor]:
+        dout = _communicate_along_dim(dout, self.dim, self.reduce_scatter)
+        return (dout,)
+
+
+class _ReduceScatterFromModelParallelRegion(nn.Cell):
+    def __init__(self, dim: int = 1, group: str = GlobalComm.WORLD_COMM_GROUP) -> None:
+        super().__init__(auto_prefix=False)
+        self.dim = dim
+        self.gather = ops.AllGather(group=group)
+        self.reduce_scatter = ops.ReduceScatter(op=ops.ReduceOp.SUM, group=group)
+        self.rank = get_rank(group)
+        self.world_size = get_group_size(group)
+
+    def construct(self, x: Tensor) -> Tensor:
+        return _communicate_along_dim(x, self.dim, self.reduce_scatter)
+
+    def bprop(self, x: Tensor, out: Tensor, dout: Tensor) -> Tuple[Tensor]:
+        dout = _communicate_along_dim(dout, self.dim, self.gather)
         return (dout,)
 
 
@@ -174,7 +210,7 @@ class ColumnParallelLinear(nn.Cell):
         self.out_features_per_partition = out_features // self.world_size
         self.gather_output = gather_output
 
-        self.copy_to_tensor_parallel_region = _CopyToModelParallelRegion(group)
+        self.copy_to_tensor_parallel_region = _CopyToModelParallelRegion(group=group)
         self.linear = mint.nn.Linear(
             in_features,
             self.out_features_per_partition,
@@ -184,10 +220,63 @@ class ColumnParallelLinear(nn.Cell):
             dtype=dtype,
         )
         if self.gather_output:
-            self.gather_from_tensor_parallel_region = _GatherFromModelParallelRegion(group)
+            self.gather_from_tensor_parallel_region = _GatherFromModelParallelRegion(group=group)
 
     def construct(self, x: Tensor) -> Tensor:
         x = self.copy_to_tensor_parallel_region(x)
+        x = self.linear(x)
+        if self.gather_output:
+            x = self.gather_from_tensor_parallel_region(x)
+        return x
+
+    def load_weight_from_non_parallel_cell(self, target: mint.nn.Linear):
+        weight = ops.chunk(target.weight, self.world_size, axis=0)[self.rank]
+        self.linear.weight.set_data(weight)
+
+        if target.bias is not None:
+            bias = ops.chunk(target.bias, self.world_size, axis=0)[self.rank]
+            self.linear.bias.set_data(bias)
+
+
+class FusedColumnParallelLinear(nn.Cell):
+    """For tensor parallel using sequence parallel input
+    It is a fused operation of gather_forward_split_backward & allreduce backward
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        weight_init: Union[None, Tensor, str, Initializer, numbers.Number] = None,
+        bias_init: Union[None, Tensor, str, Initializer, numbers.Number] = None,
+        gather_output: bool = True,
+        dim: int = 1,
+        group: str = GlobalComm.WORLD_COMM_GROUP,
+        dtype: Optional[ms.Type] = None,
+    ):
+        super().__init__(auto_prefix=False)
+
+        self.rank = get_rank(group)
+        self.world_size = get_group_size(group)
+        assert out_features % self.world_size == 0
+        self.out_features_per_partition = out_features // self.world_size
+        self.gather_output = gather_output
+
+        self.gather_to_tensor_parallel_region = _GatherToModelParallelRegion(dim=dim, group=group)
+        self.linear = mint.nn.Linear(
+            in_features,
+            self.out_features_per_partition,
+            bias=bias,
+            weight_init=weight_init,
+            bias_init=bias_init,
+            dtype=dtype,
+        )
+        if self.gather_output:
+            self.gather_from_tensor_parallel_region = _GatherFromModelParallelRegion(group=group)
+
+    def construct(self, x: Tensor) -> Tensor:
+        x = self.gather_to_tensor_parallel_region(x)
         x = self.linear(x)
         if self.gather_output:
             x = self.gather_from_tensor_parallel_region(x)
@@ -224,7 +313,7 @@ class RowParallelLinear(nn.Cell):
         self.in_features_per_partition = in_features // self.world_size
         self.input_is_parallel = input_is_parallel
 
-        self.reduce_from_tensor_parallel_region = _ReduceFromModelParallelRegion(group)
+        self.reduce_from_tensor_parallel_region = _ReduceFromModelParallelRegion(group=group)
         self.linear = mint.nn.Linear(
             self.in_features_per_partition,
             out_features,
@@ -234,7 +323,58 @@ class RowParallelLinear(nn.Cell):
             dtype=dtype,
         )
         if not self.input_is_parallel:
-            self.scatter_to_tensor_parallel_region = _ScatterToModelParallelRegion(group)
+            self.scatter_to_tensor_parallel_region = _ScatterToModelParallelRegion(group=group)
+
+    def construct(self, x: Tensor) -> Tensor:
+        if not self.input_is_parallel:
+            x = self.scatter_to_tensor_parallel_region(x)
+        x = self.linear(x)
+        x = self.reduce_from_tensor_parallel_region(x)
+        return x
+
+    def load_weight_from_non_parallel_cell(self, target: mint.nn.Linear):
+        weight = ops.chunk(target.weight, self.world_size, axis=1)[self.rank]
+        self.linear.weight.set_data(weight)
+
+
+class FusedRowParallelLinear(nn.Cell):
+    """For tensor parallel to sequence parallel output
+    It is a fused operation of split_forward_gather_backward & allreduce forward
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = False,
+        weight_init: Union[None, Tensor, str, Initializer, numbers.Number] = None,
+        bias_init: Union[None, Tensor, str, Initializer, numbers.Number] = None,
+        input_is_parallel: bool = False,
+        dim: int = 1,
+        group: str = GlobalComm.WORLD_COMM_GROUP,
+        dtype: Optional[ms.Type] = None,
+    ):
+        # FIXME: add bias support
+        assert bias is False, "Not Implemented."
+        super().__init__(auto_prefix=False)
+
+        self.rank = get_rank(group)
+        self.world_size = get_group_size(group)
+        assert in_features % self.world_size == 0
+        self.in_features_per_partition = in_features // self.world_size
+        self.input_is_parallel = input_is_parallel
+
+        self.reduce_from_tensor_parallel_region = _ReduceScatterFromModelParallelRegion(dim=dim, group=group)
+        self.linear = mint.nn.Linear(
+            self.in_features_per_partition,
+            out_features,
+            bias=bias,
+            weight_init=weight_init,
+            bias_init=bias_init,
+            dtype=dtype,
+        )
+        if not self.input_is_parallel:
+            self.scatter_to_tensor_parallel_region = _ScatterToModelParallelRegion(group=group)
 
     def construct(self, x: Tensor) -> Tensor:
         if not self.input_is_parallel:
