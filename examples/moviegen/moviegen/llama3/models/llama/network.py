@@ -19,6 +19,7 @@ from ..activation import ACT2FN
 from .block import (
     ContextParallelLlamaAttention,
     ContextParallelLlamaFlashAttention,
+    FusedTensorParallelLlamaMLP,
     LinearPatchEmbed3D,
     LlamaAttention,
     LlamaFlashAttention,
@@ -140,10 +141,12 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         attention_bias: bool = False,
         hidden_act: str = "silu",
         attn_implementation: Literal["eager", "flash_attention"] = "eager",
+        fused_tensor_parallel: bool = True,
         group: str = GlobalComm.WORLD_COMM_GROUP,
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
+        self.fused_tensor_parallel = fused_tensor_parallel
 
         # 3.1.6 Context Parallelism
         self.self_attn = CONTEXT_PARALLEL_Llama_ATTENTION_CLASSES[attn_implementation](
@@ -165,20 +168,34 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         )
 
         # 3.1.6 Tensor Parallelism
-        self.mlp = TensorParallelLlamaMLP(
-            intermediate_size=intermediate_size,
-            hidden_size=hidden_size,
-            hidden_act=hidden_act,
-            group=group,
-            dtype=dtype,
-        )
+        if self.fused_tensor_parallel:
+            self.mlp = FusedTensorParallelLlamaMLP(
+                intermediate_size=intermediate_size,
+                hidden_size=hidden_size,
+                hidden_act=hidden_act,
+                dim=1,
+                group=group,
+                dtype=dtype,
+            )
+        else:
+            self.mlp = TensorParallelLlamaMLP(
+                intermediate_size=intermediate_size,
+                hidden_size=hidden_size,
+                hidden_act=hidden_act,
+                group=group,
+                dtype=dtype,
+            )
 
         self.scale_shift_table = Parameter(Tensor(np.random.randn(1, 6, hidden_size), dtype=dtype) / hidden_size**0.5)
         self.input_layernorm = LlamaRMSNorm(hidden_size, eps=rms_norm_eps, dtype=dtype)
         self.post_attention_layernorm = LlamaRMSNorm(hidden_size, eps=rms_norm_eps, dtype=dtype)
 
-        self.split_forward_gather_backward = SplitForwardGatherBackward(dim=1, grad_scale="down", group=group)
-        self.gather_forward_split_backward = GatherForwardSplitBackward(dim=1, grad_scale="up", group=group)
+        if not self.fused_tensor_parallel:
+            self.split_forward_gather_backward = SplitForwardGatherBackward(dim=1, grad_scale="down", group=group)
+            self.gather_forward_split_backward = GatherForwardSplitBackward(dim=1, grad_scale="up", group=group)
+        else:
+            self.split_forward_gather_backward = nn.Identity()
+            self.gather_forward_split_backward = nn.Identity()
 
     def construct(
         self,
@@ -213,9 +230,12 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = t2i_modulate(hidden_states, shift_mlp, scale_mlp)
-        hidden_states = self.gather_forward_split_backward(hidden_states)
-        hidden_states = self.mlp(hidden_states)
-        hidden_states = self.split_forward_gather_backward(hidden_states)
+        if self.fused_tensor_parallel:
+            hidden_states = self.mlp(hidden_states)
+        else:
+            hidden_states = self.gather_forward_split_backward(hidden_states)
+            hidden_states = self.mlp(hidden_states)
+            hidden_states = self.split_forward_gather_backward(hidden_states)
         hidden_states = gate_mlp * hidden_states
         hidden_states = residual + hidden_states
 
@@ -269,6 +289,7 @@ class LlamaModel(nn.Cell):
         gradient_checkpointing: bool = False,
         use_linear_patch_embedder: bool = True,
         model_parallelism: bool = False,
+        fused_tensor_parallel: bool = True,
         post_init_weight: bool = True,
         dtype: ms.Type = ms.float32,
     ) -> None:
@@ -281,25 +302,47 @@ class LlamaModel(nn.Cell):
         self.num_key_value_heads = num_key_value_heads
         self.max_length = max_length
         self.model_parallelism = model_parallelism
+        mp_group = get_model_parallel_group()
 
-        layer = ModelParallelLlamaDecoderLayer if self.model_parallelism else LlamaDecoderLayer
-        self.layers = nn.CellList(
-            [
-                layer(
-                    hidden_size=self.hidden_size,
-                    intermediate_size=intermediate_size,
-                    num_attention_heads=self.num_attention_heads,
-                    num_key_value_heads=self.num_key_value_heads,
-                    rms_norm_eps=rms_norm_eps,
-                    attention_dropout=attention_dropout,
-                    attention_bias=attention_bias,
-                    hidden_act=hidden_act,
-                    attn_implementation=attn_implementation,
-                    dtype=dtype,
-                )
-                for _ in range(num_hidden_layers)
-            ]
-        )
+        if self.model_parallelism:
+            self.layers = nn.CellList(
+                [
+                    ModelParallelLlamaDecoderLayer(
+                        hidden_size=self.hidden_size,
+                        intermediate_size=intermediate_size,
+                        num_attention_heads=self.num_attention_heads,
+                        num_key_value_heads=self.num_key_value_heads,
+                        rms_norm_eps=rms_norm_eps,
+                        attention_dropout=attention_dropout,
+                        attention_bias=attention_bias,
+                        hidden_act=hidden_act,
+                        attn_implementation=attn_implementation,
+                        fused_tensor_parallel=fused_tensor_parallel,
+                        group=mp_group,
+                        dtype=dtype,
+                    )
+                    for _ in range(num_hidden_layers)
+                ]
+            )
+        else:
+            self.layers = nn.CellList(
+                [
+                    LlamaDecoderLayer(
+                        hidden_size=self.hidden_size,
+                        intermediate_size=intermediate_size,
+                        num_attention_heads=self.num_attention_heads,
+                        num_key_value_heads=self.num_key_value_heads,
+                        rms_norm_eps=rms_norm_eps,
+                        attention_dropout=attention_dropout,
+                        attention_bias=attention_bias,
+                        hidden_act=hidden_act,
+                        attn_implementation=attn_implementation,
+                        dtype=dtype,
+                    )
+                    for _ in range(num_hidden_layers)
+                ]
+            )
+
         self.final_layer = LlamaFinalLayer(
             hidden_size=self.hidden_size,
             patch_size=self.patch_size,
@@ -323,7 +366,6 @@ class LlamaModel(nn.Cell):
         )
 
         if self.model_parallelism:
-            mp_group = get_model_parallel_group()
             self.group_size = get_group_size(mp_group)
             self.split_forward_gather_backward = SplitForwardGatherBackward(dim=1, grad_scale="down", group=mp_group)
             self.gather_forward_split_backward = GatherForwardSplitBackward(dim=1, grad_scale="up", group=mp_group)

@@ -1,7 +1,13 @@
 import logging
 from typing import Optional, Tuple
 
-from moviegen.parallel import ColumnParallelLinear, GatherForwardReduceScatterBackward, RowParallelLinear
+from moviegen.parallel import (
+    ColumnParallelLinear,
+    FusedColumnParallelLinear,
+    FusedRowParallelLinear,
+    GatherForwardReduceScatterBackward,
+    RowParallelLinear,
+)
 
 import mindspore as ms
 import mindspore.mint as mint
@@ -71,6 +77,45 @@ class TensorParallelLlamaMLP(nn.Cell):
         )
         self.down_proj = RowParallelLinear(
             self.intermediate_size, self.hidden_size, bias=False, input_is_parallel=True, group=group, dtype=dtype
+        )
+        self.act_fn = ACT2FN[hidden_act]
+
+    def construct(self, hidden_state: Tensor) -> Tensor:
+        return self.down_proj(self.act_fn(self.gate_proj(hidden_state)) * self.up_proj(hidden_state))
+
+    def load_weight_from_non_parallel_cell(self, target: LlamaMLP):
+        self.gate_proj.load_weight_from_non_parallel_cell(target.gate_proj)
+        self.up_proj.load_weight_from_non_parallel_cell(target.up_proj)
+        self.down_proj.load_weight_from_non_parallel_cell(target.down_proj)
+
+
+class FusedTensorParallelLlamaMLP(nn.Cell):
+    def __init__(
+        self,
+        intermediate_size: int = 8192,
+        hidden_size: int = 3072,
+        hidden_act: str = "silu",
+        dim: int = 1,
+        group: str = GlobalComm.WORLD_COMM_GROUP,
+        dtype: ms.Type = ms.float32,
+    ) -> None:
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
+        self.gate_proj = FusedColumnParallelLinear(
+            self.hidden_size, self.intermediate_size, bias=False, gather_output=False, dim=dim, group=group, dtype=dtype
+        )
+        self.up_proj = FusedColumnParallelLinear(
+            self.hidden_size, self.intermediate_size, bias=False, gather_output=False, dim=dim, group=group, dtype=dtype
+        )
+        self.down_proj = FusedRowParallelLinear(
+            self.intermediate_size,
+            self.hidden_size,
+            bias=False,
+            input_is_parallel=True,
+            dim=dim,
+            group=group,
+            dtype=dtype,
         )
         self.act_fn = ACT2FN[hidden_act]
 
