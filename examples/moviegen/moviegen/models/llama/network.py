@@ -300,7 +300,7 @@ class LlamaModel(nn.Cell):
         self.rms_norm_eps = rms_norm_eps
         self.max_length = max_length
         self.model_parallelism = model_parallelism
-        self.dtype = dtype
+        self._dtype = dtype
         mp_group = get_model_parallel_group()
 
         if self.model_parallelism:
@@ -380,6 +380,10 @@ class LlamaModel(nn.Cell):
         # recompute
         if gradient_checkpointing:
             self.layers.recompute()
+
+    @property
+    def dtype(self):
+        return self._dtype
 
     def init_weights(self):
         std = self.initializer_range

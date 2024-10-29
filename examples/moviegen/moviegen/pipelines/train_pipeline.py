@@ -19,6 +19,12 @@ class DiffusionWithLoss(nn.Cell):
         video_emb_cached: bool = False,
     ):
         super().__init__()
+
+        if not text_emb_cached and text_encoder is None:
+            raise ValueError("`text_encoder` must be provided when `text_emb_cached=False`.")
+        if not video_emb_cached and vae is None:
+            raise ValueError("`vae` must be provided when `video_emb_cached=False`.")
+
         self.network = network
         self.vae = vae
         self.scheduler = scheduler
@@ -27,10 +33,13 @@ class DiffusionWithLoss(nn.Cell):
         self.text_emb_cached = text_emb_cached
         self.video_emb_cached = video_emb_cached
 
-        if not self.text_emb_cached and self.text_encoder is None:
-            raise ValueError("`text_encoder` must be provided when `text_emb_cached=False`.")
-        if not self.video_emb_cached and self.vae is None:
-            raise ValueError("`vae` must be provided when `video_emb_cached=False`.")
+        if self.vae is not None:
+            for param in self.vae.trainable_params():
+                param.requires_grad = False
+
+        if self.text_encoder is not None:
+            for param in self.text_encoder.trainable_params():
+                param.requires_grad = False
 
     def get_condition_embeddings(self, text_tokens: Tensor) -> Tensor:
         if self.text_emb_cached:

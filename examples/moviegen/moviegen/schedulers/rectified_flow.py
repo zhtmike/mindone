@@ -8,9 +8,11 @@ import mindspore as ms
 import mindspore.mint.nn.functional as F
 from mindspore import Tensor, mint, nn, ops
 
+from ..models import LlamaModel
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["RFLOW", "RFlowScheduler"]
+__all__ = ["RFLOW", "RFlowLossWrapper"]
 
 
 class LogisticNormal(nn.Cell):
@@ -38,7 +40,7 @@ class LogisticNormal(nn.Cell):
 class RFLOW:
     def __init__(
         self,
-        num_sampling_steps: int = 10,
+        num_sampling_steps: int = 50,
         num_timesteps: int = 1000,
         sample_method: Literal["linear", "linear-quadratic"] = "linear",
     ) -> None:
@@ -71,15 +73,19 @@ class RFLOW:
         return x
 
 
-class RFlowScheduler:
+class RFlowLossWrapper(nn.Cell):
+    """Wrapper for calculating the training loss"""
+
     def __init__(
         self,
+        model: LlamaModel,
         num_timesteps: int = 1000,
         sample_method: Literal["discrete-uniform", "uniform", "logit-normal"] = "logit-normal",
         loc: float = 0.0,
         scale: float = 1.0,
         eps: float = 1e-5,
     ) -> None:
+        super().__init__(auto_prefix=False)
         self.num_timesteps = num_timesteps
         self.eps = eps
 
@@ -93,6 +99,7 @@ class RFlowScheduler:
         else:
             raise ValueError(f"Unknown sample method: {sample_method}")
 
+        self.model = model
         self.criteria = nn.MSELoss()
 
     def _discrete_sample(self, size: int) -> Tensor:
@@ -104,26 +111,27 @@ class RFlowScheduler:
     def _logit_normal_sample(self, size: int) -> Tensor:
         return self.distribution((size, 1)) * self.num_timesteps
 
-    def training_loss(
-        self, model: nn.Cell, x: Tensor, text_embedding: Tensor, timestep: Optional[Tensor] = None
-    ) -> Tensor:
-        """
+    def construct(self, x: Tensor, text_embedding: Tensor, timestep: Optional[Tensor] = None) -> Tensor:
+        """Calculate the training loss for the corresponding timestep.
         x: (N, T, C, H, W) tensor of inputs (latent representations of video)
         text_embedding: (N, L, C') tensor of the text embedding
         timestep: (N,) tensor to indicate denoising step
         """
+        x = x.to(ms.float32)
+
         if timestep is None:
             timestep = self._sample_func(x.shape[0])
 
-        # TODO: change to mint.randn_like
-        noise = mint.normal(size=x.shape).to(x.dtype)
+        noise = mint.normal(size=x.shape)
         x_t = self.add_noise(x, noise, timestep)
 
-        model_output = model(x_t, timestep, text_embedding)
+        model_output = self.model(x_t.to(self.model.dtype), timestep, text_embedding.to(self.model.dtype)).to(
+            ms.float32
+        )
         v_t = x - (1 - self.eps) * noise
 
         # 3.1.2 Eqa (2)
-        loss = self.criteria(model_output.to(ms.float32), v_t.to(ms.float32))
+        loss = self.criteria(model_output, v_t)
         return loss
 
     def add_noise(self, x: Tensor, noise: Tensor, timesteps: Tensor) -> Tensor:
