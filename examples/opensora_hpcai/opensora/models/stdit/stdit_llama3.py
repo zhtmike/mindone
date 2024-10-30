@@ -1,3 +1,4 @@
+import copy
 import os
 from typing import Literal, Optional
 
@@ -18,7 +19,8 @@ class STDiTLlama3Wrapper(nn.Cell):
         gradient_checkpointing = kwargs.get("use_recompute", False)
         model_parallelism = kwargs.get("enable_model_parallelism", False)
 
-        model_kwargs = dict(
+        self.model_size = model_size
+        self.model_kwargs = dict(
             in_channels=4,
             out_channels=8,
             attn_implementation=attn_implementation,
@@ -26,12 +28,12 @@ class STDiTLlama3Wrapper(nn.Cell):
             model_parallelism=model_parallelism,
         )
 
-        if model_size == "1B":
-            self.llama = llama3_1B(**model_kwargs)
-        elif model_size == "5B":
-            self.llama = llama3_5B(**model_kwargs)
+        if self.model_size == "1B":
+            self.llama = llama3_1B(**self.model_kwargs)
+        elif self.model_size == "5B":
+            self.llama = llama3_5B(**self.model_kwargs)
         else:
-            self.llama = llama3_30B(**model_kwargs)
+            self.llama = llama3_30B(**self.model_kwargs)
 
         self.text_projector = TextProjector(
             out_features=self.llama.hidden_size,
@@ -85,3 +87,36 @@ class STDiTLlama3Wrapper(nn.Cell):
             m, u = load_param_into_net(self, sd, strict_load=True)
             print("net param not load: ", m, len(m))
             print("ckpt param not load: ", u, len(u))
+
+    def load_from_single_checkpoint(self, ckpt_path):
+        # temporarily solution to load checkpoint to model parallel
+        model_parallelism = self.model_kwargs.get("model_parallelism", False)
+        if not model_parallelism:
+            return self.load_from_checkpoint(ckpt_path)
+
+        model_kwargs = copy.deepcopy(self.model_kwargs)
+        model_kwargs["model_parallelism"] = False
+
+        if self.model_size == "1B":
+            llama = llama3_1B(**model_kwargs)
+        elif self.model_size == "5B":
+            llama = llama3_5B(**model_kwargs)
+        else:
+            llama = llama3_30B(**model_kwargs)
+
+        sd = load_checkpoint(ckpt_path)
+        sd = {k.replace("network.llama.", "").replace("_backbone.", ""): v for k, v in sd.items()}
+        m, u = load_param_into_net(llama, sd, strict_load=True)
+        print("net param not load: ", m, len(m))
+        print("ckpt param not load: ", u, len(u))
+
+        param_dict = llama.parameters_dict()
+
+        # filter tensor-parallel block
+        names = ["gate_proj", "up_proj", "down_proj"]
+        param_dict = {k: v for k, v in param_dict.items() if not any([name in k for name in names])}
+        load_param_into_net(self, param_dict)
+
+        # load tensor-parallel block
+        for layer, target_layer in zip(self.llama.layers, llama.layers):
+            layer.mlp.load_weight_from_non_parallel_cell(target_layer.mlp)
