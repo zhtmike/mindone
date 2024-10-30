@@ -12,7 +12,7 @@ from tqdm import tqdm
 from mindspore import Tensor, dtype, ops
 from mindspore.communication import get_rank
 
-from ..acceleration.parallel_states import get_sequence_parallel_group
+from ..acceleration.parallel_states import get_model_parallel_group, get_sequence_parallel_group
 from ..utils.distributions import LogisticNormal
 from .iddpm.diffusion_utils import mean_flat
 
@@ -159,6 +159,11 @@ class RFlowScheduler:
         self.transform_scale = transform_scale
 
         self.sp_group = get_sequence_parallel_group()
+        # tmp fix
+        if self.sp_group is None:
+            self.sp_group = get_model_parallel_group()
+
+        print("scheduler:", self.sp_group)
         if self.sp_group is not None:
             logging.info(
                 f"Broadcasting all random variables from rank (0) to current rank ({get_rank(self.sp_group)}) in group `{self.sp_group}`."

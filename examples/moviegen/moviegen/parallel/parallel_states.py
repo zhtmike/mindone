@@ -1,6 +1,6 @@
 from typing import Optional
 
-from mindspore.communication import create_group, get_group_size, get_rank
+from mindspore.communication import GlobalComm, create_group, get_group_size, get_rank
 
 __all__ = ["set_model_parallel_group", "get_model_parallel_group", "create_parallel_group"]
 
@@ -13,7 +13,8 @@ def set_model_parallel_group(group: str) -> None:
 
 
 def get_model_parallel_group() -> Optional[str]:
-    return _GLOBAL_PARALLEL_GROUPS.get("model", None)
+    # TODO: change group to be None
+    return _GLOBAL_PARALLEL_GROUPS.get("model", GlobalComm.WORLD_COMM_GROUP)
 
 
 def create_parallel_group(model_parallel_shards: int = 1) -> None:
