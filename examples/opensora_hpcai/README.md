@@ -882,14 +882,14 @@ We provide support for training Open-Sora 1.1 using the FiT-Like pipeline as an 
 To begin, we need to prepare the VAE (Variational Autoencoder) latents from multi-resolution videos. For instance, if you intend to train at a resolution of up to 512x512 pixels, please run
 
 ```bash
-python script/infer_vae.py \
+python scripts/infer_vae.py \
     --csv_path /path/to/video_caption.csv  \
     --video_folder /path/to/video_folder  \
     --output_path /path/to/video_embed_folder  \
     --vae_checkpoint models/sd-vae-ft-ema.ckpt \
     --image_size 512 \
     --resize_by_max_value True \
-    --vae-micro-batch-size 1
+    --vae_micro_batch_size 1 \
     --mode 1
 ```
 
