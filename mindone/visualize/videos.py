@@ -1,10 +1,21 @@
+import logging
 import os
 from fractions import Fraction
 from typing import Union
 
-import av
 import imageio
 import numpy as np
+
+_logger = logging.getLogger(__name__)
+
+try:
+    import av
+
+    _AV_INSTALLED = True
+except ImportError:
+    _AV_INSTALLED = False
+    _logger.warning("`pyav` is not installed. You can only save video in `.gif` or `.png` format.")
+
 
 __all__ = ["save_videos", "create_video_from_numpy_frames"]
 
@@ -74,6 +85,9 @@ def save_videos(frames: np.ndarray, path: str, fps: Union[int, float] = 8, loop=
     """
     fmt = path.split(".")[-1]
     assert fmt in ["gif", "mp4", "png"]
+
+    if not _AV_INSTALLED and fmt == "mp4":
+        raise ValueError("`pyav` is not installed.")
 
     # input frames: (b f H W 3), normalized to [0, 1]
     frames = (frames * 255).round().clip(0, 255).astype(np.uint8)

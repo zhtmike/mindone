@@ -14,12 +14,14 @@ import mindspore as ms
 from mindspore import Tensor, ops
 
 from .diffusion_utils import (
+    LossType,
     ModelMeanType,
     ModelVarType,
     _extract_into_tensor,
     discretized_gaussian_log_likelihood,
     mean_flat,
     normal_kl,
+    rescale_zero_terminal_snr,
 )
 
 
@@ -36,10 +38,12 @@ class GaussianDiffusion:
     def __init__(
         self,
         *,
-        betas,
-        model_mean_type,
-        model_var_type,
-        loss_type,
+        betas: np.ndarray,
+        model_mean_type: ModelMeanType,
+        model_var_type: ModelVarType,
+        loss_type: LossType,
+        snr_shift_scale: Optional[float] = None,
+        rescale_betas_zero_snr: bool = False,
     ):
         super().__init__()
         self.model_mean_type = model_mean_type
@@ -55,6 +59,18 @@ class GaussianDiffusion:
 
         alphas = 1.0 - betas
         self.alphas_cumprod = np.cumprod(alphas, axis=0)
+
+        if snr_shift_scale is not None:
+            self.alphas_cumprod = self.alphas_cumprod / (snr_shift_scale + (1 - snr_shift_scale) * self.alphas_cumprod)
+
+        if rescale_betas_zero_snr:
+            self.alphas_cumprod = rescale_zero_terminal_snr(self.alphas_cumprod)
+
+        # rescale
+        alphas = self.alphas_cumprod[1:] / self.alphas_cumprod[:-1]
+        alphas = np.insert(alphas, 0, self.alphas_cumprod[0])
+        betas = 1 - alphas
+
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
         self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
         assert self.alphas_cumprod_prev.shape == (self.num_timesteps,)
@@ -211,6 +227,8 @@ class GaussianDiffusion:
 
         if self.model_mean_type == ModelMeanType.START_X:
             pred_xstart = process_xstart(model_output)
+        elif self.model_mean_type == ModelMeanType.VELOCITY:
+            pred_xstart = process_xstart(self._predict_xstart_from_v(x_t=x, t=t, v=model_output))
         else:
             pred_xstart = process_xstart(self._predict_xstart_from_eps(x_t=x, t=t, eps=model_output))
         model_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart, x_t=x, t=t)
@@ -221,6 +239,7 @@ class GaussianDiffusion:
             "variance": model_variance,
             "log_variance": model_log_variance,
             "pred_xstart": pred_xstart,
+            "model_output": model_output,
             "extra": extra,
         }
 
@@ -237,6 +256,18 @@ class GaussianDiffusion:
         return (
             _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - pred_xstart
         ) / _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+
+    def _predict_xstart_from_v(self, x_t, t, v):
+        return (
+            _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_t.shape) * x_t
+            - _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * v
+        )
+
+    def _predict_eps_from_v(self, x_t, t, v):
+        return (
+            _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_t.shape) * v
+            + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * x_t
+        )
 
     def condition_mean(self, cond_fn, p_mean_var, x, t, model_kwargs=None):
         """
@@ -476,7 +507,10 @@ class GaussianDiffusion:
 
         # Usually our model outputs epsilon, but we re-derive it
         # in case we used x_start or x_prev prediction.
-        eps = self._predict_eps_from_xstart(x, t, out["pred_xstart"])
+        if self.model_mean_type == ModelMeanType.VELOCITY:
+            eps = self._predict_eps_from_v(x, t, out["model_output"])
+        else:
+            eps = self._predict_eps_from_xstart(x, t, out["pred_xstart"])
 
         alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, x.shape)
         alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t, x.shape)
