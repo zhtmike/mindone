@@ -24,6 +24,7 @@ sampling_steps: 50
 guidance_scale: 6.0
 seed: 42
 sampling: ddim
+learn_sigma: False
 noise_schedule: quad
 v_pred: True
 beta_start: 0.00085

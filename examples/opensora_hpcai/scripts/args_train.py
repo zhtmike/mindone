@@ -49,12 +49,17 @@ def parse_train_args(parser):
     )
     # model
     parser.add_argument(
-        "--model_version", default="v1", type=str, choices=["v1", "v1.1"], help="OpenSora model version."
+        "--model_version",
+        default="v1",
+        type=str,
+        choices=["v1", "v1.1", "v1.2", "CogVideoX-2B", "CogVideoX-5B"],
+        help="OpenSora model version.",
     )
     parser.add_argument(
         "--pretrained_model_path",
         default="",
         type=str,
+        nargs="+",
         help="Specify the pretrained model path, either a pretrained " "DiT model or a pretrained Latte model.",
     )
     parser.add_argument("--space_scale", default=0.5, type=float, help="stdit model space scalec")
@@ -79,13 +84,19 @@ def parse_train_args(parser):
     parser.add_argument(
         "--vae_type",
         type=str,
-        choices=["OpenSora-VAE-v1.2", "VideoAutoencoderKL"],
+        choices=["OpenSora-VAE-v1.2", "VideoAutoencoderKL", "CogVideoX-VAE"],
         help="If None, use VideoAutoencoderKL, which is a spatial VAE from SD, for opensora v1.0 and v1.1. \
                 If OpenSora-VAE-v1.2, will use 3D VAE (spatial + temporal), typically for opensora v1.2",
     )
     parser.add_argument(
         "--noise_scheduler", type=str, default="ddpm", choices=["ddpm", "rflow"], help="Diffusion noise scheduler."
     )
+    parser.add_argument("--noise_schedule", default="linear", help="Noise schedule for betas")
+    parser.add_argument("--v_pred", type=str2bool, default=False, help="Use v-prediction in sampling.")
+    parser.add_argument("--beta_start", type=float, default=0.0001, help="beta start value.")
+    parser.add_argument("--beta_end", type=float, default=0.02, help="beta end value.")
+    parser.add_argument("--snr_shift_scale", type=float, help="SNR shift scale.")
+    parser.add_argument("--rescale_betas_zero_snr", type=str2bool, default=False, help="Rescale beta to zero SNR.")
     parser.add_argument(
         "--sample_method",
         type=str,
@@ -409,13 +420,17 @@ def parse_args():
             _check_cfgs_in_parser(cfg, parser)
             parser.set_defaults(**cfg)
     args = parser.parse_args()
+
+    if isinstance(args.pretrained_model_path, str):
+        args.pretrained_model_path = [args.pretrained_model_path]
+
     # convert to absolute path, necessary for modelarts
     args.csv_path = to_abspath(abs_path, args.csv_path)
     args.video_folder = to_abspath(abs_path, args.video_folder)
     args.text_embed_folder = to_abspath(abs_path, args.text_embed_folder)
     args.vae_latent_folder = to_abspath(abs_path, args.vae_latent_folder)
     args.output_path = to_abspath(abs_path, args.output_path)
-    args.pretrained_model_path = to_abspath(abs_path, args.pretrained_model_path)
+    args.pretrained_model_path = [to_abspath(abs_path, x) for x in args.pretrained_model_path]
     args.t5_model_dir = to_abspath(abs_path, args.t5_model_dir)
     args.vae_checkpoint = to_abspath(abs_path, args.vae_checkpoint)
     print(args)

@@ -31,9 +31,10 @@ def apply_rotary_emb(x: Tensor, freqs_cis: Tuple[Tensor, Tensor]) -> Tensor:
 
 
 def scaled_dot_product_attention(query: Tensor, key: Tensor, value: Tensor) -> Tensor:
+    dtype = query.dtype
     scale_factor = 1 / mint.sqrt(Tensor(query.shape[-1]))
     attn_weight = query @ key.swapaxes(-2, -1) * scale_factor.to(query.dtype)
-    attn_weight = F.softmax(attn_weight, dim=-1)
+    attn_weight = F.softmax(attn_weight.to(ms.float32), dim=-1).to(dtype)
     return attn_weight @ value
 
 
@@ -141,6 +142,15 @@ def get_timestep_embedding(
     return emb
 
 
+class FP32LayerNorm(mint.nn.LayerNorm):
+    def construct(self, input: Tensor) -> Tensor:
+        dtype = input.dtype
+        y = ops.layer_norm(
+            input.to(ms.float32), self.normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps
+        ).to(dtype)
+        return y
+
+
 class ApproximateGELU(nn.Cell):
     def __init__(self, dim_in: int, dim_out: int, bias: bool = True, dtype: ms.Type = ms.float32) -> None:
         super().__init__()
@@ -182,7 +192,7 @@ class AdaLayerNorm(nn.Cell):
         output_dim = output_dim or embedding_dim * 2
         self.silu = nn.SiLU()
         self.linear = mint.nn.Linear(embedding_dim, output_dim, dtype=dtype)
-        self.norm = mint.nn.LayerNorm(output_dim // 2, norm_eps, norm_elementwise_affine, dtype=dtype)
+        self.norm = FP32LayerNorm(output_dim // 2, norm_eps, norm_elementwise_affine, dtype=dtype)
 
     def construct(self, x: Tensor, temb: Tensor) -> Tensor:
         temb = self.linear(self.silu(temb))
@@ -207,7 +217,7 @@ class CogVideoXLayerNormZero(nn.Cell):
 
         self.silu = nn.SiLU()
         self.linear = mint.nn.Linear(conditioning_dim, 6 * embedding_dim, bias=bias, dtype=dtype)
-        self.norm = mint.nn.LayerNorm(embedding_dim, eps=eps, elementwise_affine=elementwise_affine, dtype=dtype)
+        self.norm = FP32LayerNorm(embedding_dim, eps=eps, elementwise_affine=elementwise_affine, dtype=dtype)
 
     def construct(self, hidden_states: Tensor, encoder_hidden_states: Tensor, temb: Tensor) -> Tuple[Tensor, Tensor]:
         shift, scale, gate, enc_shift, enc_scale, enc_gate = self.linear(self.silu(temb)).chunk(6, axis=1)
@@ -241,8 +251,8 @@ class Attention(nn.Cell):
             self.norm_q = nn.Identity()
             self.norm_k = nn.Identity()
         elif qk_norm == "layer_norm":
-            self.norm_q = mint.nn.LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
-            self.norm_k = mint.nn.LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
+            self.norm_q = FP32LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
+            self.norm_k = FP32LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
         else:
             raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None,'layer_norm'")
 
@@ -677,6 +687,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         use_rotary_positional_embeddings: bool = False,
         use_learned_positional_embeddings: bool = False,
         enable_flash_attention: bool = False,
+        use_recompute: bool = False,
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
@@ -737,7 +748,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 for _ in range(num_layers)
             ]
         )
-        self.norm_final = mint.nn.LayerNorm(inner_dim, norm_eps, norm_elementwise_affine, dtype=dtype)
+        self.norm_final = FP32LayerNorm(inner_dim, norm_eps, norm_elementwise_affine, dtype=dtype)
 
         # 4. Output blocks
         self.norm_out = AdaLayerNorm(
@@ -748,6 +759,10 @@ class CogVideoXTransformer3DModel(nn.Cell):
             dtype=dtype,
         )
         self.proj_out = mint.nn.Linear(inner_dim, patch_size * patch_size * out_channels, dtype=dtype)
+
+        if use_recompute:
+            for block in self.transformer_blocks:
+                block.recompute()
 
     @property
     def dtype(self):
@@ -818,9 +833,6 @@ class CogVideoXTransformer3DModel(nn.Cell):
             output.permute(0, 4, 1, 2, 5, 3, 6).flatten(start_dim=5, end_dim=6).flatten(start_dim=3, end_dim=4)
         )  # n, c, t, h, w
 
-        # fit for iddpm
-        output = mint.tile(output, (1, 2, 1, 1, 1))
-
         return output
 
     def construct_with_cfg(
@@ -832,15 +844,12 @@ class CogVideoXTransformer3DModel(nn.Cell):
         cfg_scale: Union[float, Tensor] = 6.0,
         **kwargs,
     ) -> Tensor:
-        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
         x = mint.chunk(x, 2, 0)[0]
         x = mint.tile(x, (2, 1, 1, 1, 1))
         x = self.construct(x, timestep, y, image_rotary_emb=image_rotary_emb, **kwargs)
-        x = mint.chunk(x, 2, 1)[0]
         pred_cond, pred_uncond = mint.chunk(x, 2, 0)
         pred = pred_uncond + cfg_scale * (pred_cond - pred_uncond)
-        # fit for iddpm
-        pred = mint.tile(pred, (2, 2, 1, 1, 1))
+        pred = mint.tile(pred, (2, 1, 1, 1, 1))
         return pred
 
     def load_from_checkpoint(self, ckpt_path: List[str]) -> None:
@@ -855,7 +864,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
             for path in ckpt_path:
                 with safe_open(path, framework="np") as f:
                     for k in f.keys():
-                        parameter_dict[k] = Parameter(f.get_tensor(k))
+                        parameter_dict[k] = Parameter(Tensor(f.get_tensor(k), dtype=self.dtype))
             param_not_load, ckpt_not_load = ms.load_param_into_net(self, parameter_dict, strict_load=True)
             assert len(param_not_load) == 0 and len(ckpt_not_load) == 0
 

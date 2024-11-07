@@ -100,7 +100,7 @@ class GaussianDiffusion:
         # 2. convert to ms tensors in float32
         to_mindspore = partial(Tensor, dtype=ms.float32)
 
-        self.betas = betas
+        self.betas = to_mindspore(betas)
 
         self.alphas_cumprod = to_mindspore(self.alphas_cumprod)
         self.alphas_cumprod_prev = to_mindspore(self.alphas_cumprod_prev)
@@ -148,6 +148,14 @@ class GaussianDiffusion:
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
             + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
+        )
+
+    def get_v(self, x_start, t, noise=None):
+        if noise is None:
+            noise = ops.randn_like(x_start)
+        return (
+            _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * noise
+            - _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * x_start
         )
 
     def q_posterior_mean_variance(self, x_start, x_t, t):

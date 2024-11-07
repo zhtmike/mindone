@@ -18,6 +18,8 @@ from mindspore.communication.management import get_group_size, get_rank, init
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
 from mindspore.train.callback import TimeMonitor
 
+from mindone.trainers import TrainOneStepWrapper
+
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
@@ -25,11 +27,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 from args_train import parse_args
 from opensora.acceleration.parallel_states import create_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIOS, get_image_size
+from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B
 from opensora.models.layers.operation_selector import set_dynamic_mode
 from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT_XL_2
+from opensora.models.vae import CogVideoX_VAE
 from opensora.models.vae.vae import SD_CONFIG, OpenSoraVAE_V1_2, VideoAutoencoderKL
 from opensora.pipelines import (
     DiffusionWithLoss,
+    DiffusionWithLossCogVideoX,
     DiffusionWithLossFiTLike,
     RFlowDiffusionWithLoss,
     RFlowEvalDiffusionWithLoss,
@@ -273,12 +278,12 @@ def initialize_dataset(
                 buckets=buckets,
                 filter_data=args.filter_data,
                 pre_patchify=args.pre_patchify,
-                patch_size=latte_model.patch_size,
-                embed_dim=latte_model.hidden_size,
-                num_heads=latte_model.num_heads,
+                patch_size=getattr(latte_model, "patch_size", None),
+                embed_dim=getattr(latte_model, "hidden_size", None),
+                num_heads=getattr(latte_model, "num_heads", None),
                 max_target_size=args.max_image_size,
-                input_sq_size=latte_model.input_sq_size,
-                in_channels=latte_model.in_channels,
+                input_sq_size=getattr(latte_model, "input_sq_size", None),
+                in_channels=getattr(latte_model, "in_channels", None),
                 apply_train_transforms=True,
                 target_size=(img_h, img_w),
                 video_backend=args.video_backend,
@@ -288,15 +293,6 @@ def initialize_dataset(
         ]
 
         num_src_samples = sum([len(ds) for ds in datasets])
-
-        if args.enable_sequence_parallelism:
-            if args.num_workers_dataset != 1:
-                pass
-                # FIXME: 0904 master fixed the seed issue for multiple workers. May remove the commented sentence later.
-                # logger.warning(
-                #     "To make sure the data is consistent across ranks for sequence parallel, the `num_workers_dataset` is set to be `1`."
-                # )
-                # args.num_workers_dataset = 1
 
         dataloaders = [
             create_dataloader(
@@ -371,7 +367,7 @@ def main(args):
     set_logger(name="", output_dir=args.output_path, rank=rank_id, log_level=eval(args.log_level))
 
     # 2. model initiate and weight loading
-    dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16}
+    dtype_map = {"fp32": ms.float32, "fp16": ms.float16, "bf16": ms.bfloat16}
 
     # 2.1 vae
     logger.info("vae init")
@@ -392,18 +388,22 @@ def main(args):
                 ckpt_path=args.vae_checkpoint,
                 freeze_vae_2d=True,
             )
+        elif args.vae_type == "CogVideoX-VAE":
+            vae = CogVideoX_VAE(dtype=dtype_map[args.vae_dtype])
+            vae.load_from_checkpoint(args.vae_checkpoint)
         else:
             raise ValueError(f"Unknown VAE type: {args.vae_type}")
         vae = vae.set_train(False)
 
-        for param in vae.get_parameters():
-            param.requires_grad = False
-            if args.vae_param_dtype in ["fp16", "bf16"]:
-                # filter out norm
-                if "norm" not in param.name:
-                    param.set_dtype(dtype_map[args.vae_param_dtype])
+        if args.vae_type != "CogVideoX-VAE":
+            for param in vae.get_parameters():
+                param.requires_grad = False
+                if args.vae_param_dtype in ["fp16", "bf16"]:
+                    # filter out norm
+                    if "norm" not in param.name:
+                        param.set_dtype(dtype_map[args.vae_param_dtype])
 
-        if args.vae_dtype in ["fp16", "bf16"]:
+        if args.vae_dtype in ["fp16", "bf16"] and args.vae_type != "CogVideoX-VAE":
             vae = auto_mixed_precision(
                 vae,
                 amp_level=args.vae_amp_level,
@@ -461,12 +461,28 @@ def main(args):
         model_extra_args["qk_norm"] = True
         model_extra_args["freeze_y_embedder"] = args.freeze_y_embedder
         latte_model = STDiT3_XL_2(**model_extra_args)
+    elif args.model_version == "CogVideoX-2B":
+        model_name = "CogVideoX-2B"
+        logger.info(f"{model_name} init")
+        latte_model = CogVideoX_2B(
+            enable_flash_attention=args.enable_flash_attention,
+            use_recompute=args.use_recompute,
+            dtype=dtype_map[args.dtype],
+        )
+    elif args.model_version == "CogVideoX-5B":
+        model_name = "CogVideoX-5B"
+        logger.info(f"{model_name} init")
+        latte_model = CogVideoX_5B(
+            enable_flash_attention=args.enable_flash_attention,
+            use_recompute=args.use_recompute,
+            dtype=dtype_map[args.dtype],
+        )
     else:
         raise ValueError(f"Unknown model version: {args.model_version}")
     logger.info(f"{model_name} input size: {latent_size if args.bucket_config is None else 'Variable'}")
 
     # mixed precision
-    if args.dtype in ["fp16", "bf16"]:
+    if args.dtype in ["fp16", "bf16"] and "CogVideoX" not in args.model_version:
         if not args.global_bf16:
             latte_model = auto_mixed_precision(
                 latte_model,
@@ -495,7 +511,15 @@ def main(args):
 
     # 2.3 ldm with loss
     logger.info(f"Train with vae latent cache: {train_with_vae_latent}")
-    diffusion = create_diffusion(timestep_respacing="")
+    diffusion = create_diffusion(
+        timestep_respacing="",
+        noise_schedule=args.noise_schedule,
+        predict_velocity=args.v_pred,
+        beta_start=args.beta_start,
+        beta_end=args.beta_end,
+        snr_shift_scale=args.snr_shift_scale,
+        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+    )
     latent_diffusion_eval, metrics = None, {}
     pipeline_kwargs = dict(
         scale_factor=args.sd_scale_factor,
@@ -517,6 +541,8 @@ def main(args):
             )
             pipeline_kwargs.update(additional_pipeline_kwargs)
             pipeline_ = DiffusionWithLossFiTLike
+        elif "CogVideoX" in args.model_version:
+            pipeline_ = DiffusionWithLossCogVideoX
         else:
             pipeline_ = DiffusionWithLoss
     elif args.noise_scheduler.lower() == "rflow":
@@ -707,17 +733,29 @@ def main(args):
     # trainer (standalone and distributed)
     ema = EMA(latent_diffusion_with_loss.network, ema_decay=args.ema_decay, offloading=True) if args.use_ema else None
 
-    net_with_grads = prepare_train_network(
-        latent_diffusion_with_loss,
-        optimizer=optimizer,
-        scale_sense=loss_scaler,
-        drop_overflow_update=args.drop_overflow_update,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        clip_grad=args.clip_grad,
-        clip_norm=args.max_grad_norm,
-        ema=ema,
-        zero_stage=args.zero_stage,
-    )
+    if args.use_parallel:
+        net_with_grads = prepare_train_network(
+            latent_diffusion_with_loss,
+            optimizer=optimizer,
+            scale_sense=loss_scaler,
+            drop_overflow_update=args.drop_overflow_update,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            clip_grad=args.clip_grad,
+            clip_norm=args.max_grad_norm,
+            ema=ema,
+            zero_stage=args.zero_stage,
+        )
+    else:
+        net_with_grads = TrainOneStepWrapper(
+            latent_diffusion_with_loss,
+            optimizer,
+            scale_sense=loss_scaler,
+            ema=ema,
+            drop_overflow_update=args.drop_overflow_update,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            clip_grad=args.clip_grad,
+            clip_norm=args.max_grad_norm,
+        )
 
     # resume train net states
     if args.resume and resume_ckpt is not None:

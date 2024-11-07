@@ -371,6 +371,7 @@ def main(args):
         sampling=args.sampling,
         micro_batch_size=args.vae_micro_batch_size,
         diffusion_config=dict(
+            learn_sigma=args.learn_sigma,
             noise_schedule=args.noise_schedule,
             predict_velocity=args.v_pred,
             beta_start=args.beta_start,
@@ -774,6 +775,7 @@ def parse_args():
         help="Which sampling technique to use.",
     )
 
+    parser.add_argument("--learn_sigma", type=str2bool, default=True, help="using learned sigma")
     parser.add_argument("--noise_schedule", default="linear", help="Noise schedule for betas")
     parser.add_argument("--v_pred", type=str2bool, default=False, help="Use v-prediction in sampling.")
     parser.add_argument("--beta_start", type=float, default=0.0001, help="beta start value.")

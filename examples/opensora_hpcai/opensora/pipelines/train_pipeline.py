@@ -12,8 +12,10 @@ import mindspore as ms
 from mindspore import Tensor, _no_grad, jit_class, nn, ops
 
 from ..models.layers.operation_selector import get_split_op
+from ..models.vae import AutoencoderKLCogVideoX
 from ..schedulers.iddpm import SpacedDiffusion
 from ..schedulers.iddpm.diffusion_utils import (
+    ModelMeanType,
     _extract_into_tensor,
     discretized_gaussian_log_likelihood,
     mean_flat,
@@ -414,6 +416,36 @@ class DiffusionWithLossFiTLike(DiffusionWithLoss):
         x = ops.transpose(x, (0, 4, 1, 2, 5, 3, 6))
         x = ops.reshape(x, (n, self.c, f, self.nh * self.p[1], self.nw * self.p[2]))
         return x
+
+
+class DiffusionWithLossCogVideoX(DiffusionWithLoss):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.predict_v = self.diffusion.model_mean_type == ModelMeanType.VELOCITY
+
+    def get_latents(self, x: Tensor) -> Tensor:
+        assert isinstance(self.vae, AutoencoderKLCogVideoX)
+        y = self.vae.encode(x.to(self.vae.dtype))
+        y = self.vae.sample(y)
+        y = ops.stop_gradient(y * self.scale_factor)
+        return y
+
+    def compute_loss(self, x: Tensor, text_embed: Tensor, *args, **kwargs) -> Tensor:
+        t = ops.randint(0, self.diffusion.num_timesteps, (x.shape[0],))
+        noise = ops.randn_like(x)
+        x = x.to(ms.float32)
+        x_t = self.diffusion.q_sample(x, t, noise=noise)
+
+        if self.predict_v:
+            target = self.diffusion.get_v(x, t, noise=noise)
+        else:
+            target = noise
+
+        model_output = self.apply_model(x_t, t, text_embed)
+
+        loss = mean_flat((target - model_output) ** 2)
+        loss = loss.mean()
+        return loss
 
 
 # TODO: poor design, extract schedulers away from DiffusionWithLoss
