@@ -22,14 +22,13 @@ use_recompute: True
 image_size: [ 480, 720 ]
 num_frames: 49
 num_parallel_workers: 2
-num_workers_dataset: 2
-prefetch_size: 2
-max_rowsize: 256
+prefetch_size: 4
+max_rowsize: -1
 
 # precision
-dtype: fp16
-loss_scaler_type: dynamic
-init_loss_scale: 1024
+dtype: bf16
+loss_scaler_type: static
+init_loss_scale: 1
 
 # mindspore params, refer to https://www.mindspore.cn/docs/zh-CN/r2.4.0/api_python/mindspore/mindspore.set_context.html
 mode: 1
@@ -37,9 +36,9 @@ jit_level: "O0"
 
 # training hyper-params
 scheduler: "constant"
-start_learning_rate: 2.e-5
-end_learning_rate: 2.e-5
-warmup_steps: 500
+start_learning_rate: 1.e-4
+end_learning_rate: 1.e-4
+warmup_steps: 1000
 
 batch_size: 1
 clip_grad: True
@@ -52,7 +51,7 @@ weight_decay: 1.e-4
 betas: [0.9, 0.95]
 
 epochs: 10000
-ckpt_save_interval: 100
+ckpt_save_interval: 20
 ckpt_max_keep: 3
 
 mask_ratios:

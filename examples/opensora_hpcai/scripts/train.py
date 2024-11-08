@@ -9,6 +9,7 @@ import sys
 import time
 from typing import Optional, Tuple
 
+import numpy as np
 import yaml
 
 import mindspore as ms
@@ -264,6 +265,7 @@ def initialize_dataset(
         if args.pre_patchify:
             output_columns.extend(["spatial_pos", "spatial_mask", "temporal_pos", "temporal_mask"])
 
+        dtype = np.float16 if args.vae_dtype == "fp16" else np.float32
         datasets = [
             VideoDatasetRefactored(
                 csv_path=csv_path,
@@ -287,6 +289,7 @@ def initialize_dataset(
                 apply_train_transforms=True,
                 target_size=(img_h, img_w),
                 video_backend=args.video_backend,
+                dtype=dtype,
                 output_columns=output_columns,
             )
             for buckets in individual_buckets

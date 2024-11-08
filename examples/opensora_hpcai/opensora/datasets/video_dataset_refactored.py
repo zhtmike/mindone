@@ -83,6 +83,7 @@ class VideoDatasetRefactored(BaseDataset):
         target_size: Optional[Tuple[int]] = None,
         tokenizer=None,
         video_backend: str = "cv2",
+        dtype: np.dtype = np.float32,
         *,
         output_columns: List[str],
     ):
@@ -103,6 +104,7 @@ class VideoDatasetRefactored(BaseDataset):
         self._vae_downsample_rate = vae_downsample_rate
         self._vae_scale_factor = vae_scale_factor
         self._fmask_gen = frames_mask_generator
+        self._dtype = dtype
         if t_compress_func is None:
             self._t_compress_func = lambda x: x
         else:
@@ -352,7 +354,11 @@ class VideoDatasetRefactored(BaseDataset):
             data["width"] = np.array(clip.shape[-1], dtype=np.float32)
             # NOTE: here ar = h / w, aligned to torch, while the common practice is w / h
             data["ar"] = np.array(clip.shape[-2] / clip.shape[-1], dtype=np.float32)
-            data["video"] = clip
+
+            if self._dtype != np.float32:
+                data["video"] = clip.astype(self._dtype)
+            else:
+                data["video"] = clip
 
         final_outputs = tuple(data.pop(c) for c in self.output_columns)
         del data
