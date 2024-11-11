@@ -853,20 +853,23 @@ class CogVideoXTransformer3DModel(nn.Cell):
         return pred
 
     def load_from_checkpoint(self, ckpt_path: List[str]) -> None:
+        assert isinstance(ckpt_path, list)
         format = "safetensors" if ckpt_path[0].endswith(".safetensors") else "ckpt"
 
         if format == "ckpt":
             if len(ckpt_path) > 1:
                 raise ValueError("It can read weight from single file (.ckpt) only.")
-            ms.load_checkpoint(ckpt_path, self, format=format)
+            parameter_dict = ms.load_checkpoint(ckpt_path[0])
+            parameter_dict = {k.replace("network.", ""): v for k, v in parameter_dict.items()}
         else:
             parameter_dict = dict()
             for path in ckpt_path:
                 with safe_open(path, framework="np") as f:
                     for k in f.keys():
                         parameter_dict[k] = Parameter(Tensor(f.get_tensor(k), dtype=self.dtype))
-            param_not_load, ckpt_not_load = ms.load_param_into_net(self, parameter_dict, strict_load=True)
-            assert len(param_not_load) == 0 and len(ckpt_not_load) == 0
+
+        param_not_load, ckpt_not_load = ms.load_param_into_net(self, parameter_dict, strict_load=True)
+        assert len(param_not_load) == 0 and len(ckpt_not_load) == 0
 
 
 def CogVideoX_2B(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
