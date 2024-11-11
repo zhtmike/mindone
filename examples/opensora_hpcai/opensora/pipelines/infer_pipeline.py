@@ -477,9 +477,7 @@ class InferPipelineCogVideoX(InferPipeline):
         crop_left = int(round((tw - resize_width) / 2.0))
         return (crop_top, crop_left), (crop_top + resize_height, crop_left + resize_width)
 
-    def prepare_rotary_positional_embeddings(
-        self, height: int, width: int, num_frames: int
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def prepare_rotary_positional_embeddings(self, height: int, width: int, num_frames: int) -> np.ndarray:
         grid_height = height // 2
         grid_width = width // 2
         base_size_width = 720 // (8 * 2)
@@ -489,13 +487,13 @@ class InferPipelineCogVideoX(InferPipeline):
             (grid_height, grid_width), base_size_width, base_size_height
         )
         freqs_cos, freqs_sin = get_3d_rotary_pos_embed(
-            embed_dim=self.model.attention_head_dim,
+            embed_dim=self.model.hidden_size // self.model.num_heads,
             crops_coords=grid_crops_coords,
             grid_size=(grid_height, grid_width),
             temporal_size=num_frames,
         )
 
-        return freqs_cos, freqs_sin
+        return np.stack([freqs_cos, freqs_sin])[None]
 
     def __call__(
         self,
@@ -507,7 +505,7 @@ class InferPipelineCogVideoX(InferPipeline):
 
         if self.model.use_rotary_positional_embeddings:
             image_rotary_emb = self.prepare_rotary_positional_embeddings(z.shape[-2], z.shape[-1], z.shape[-3])
-            image_rotary_emb = [Tensor(x) for x in image_rotary_emb]
+            image_rotary_emb = Tensor(np.tile(image_rotary_emb, (z.shape[0], 1, 1, 1)))
         else:
             image_rotary_emb = None
 

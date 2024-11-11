@@ -18,10 +18,8 @@ __all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B"]
 logger = logging.getLogger(__name__)
 
 
-def apply_rotary_emb(x: Tensor, freqs_cis: Tuple[Tensor, Tensor]) -> Tensor:
-    cos, sin = freqs_cis  # [S, D]
-    cos = cos[None, None]
-    sin = sin[None, None]
+def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
+    cos, sin = freqs_cis.chunk(2, axis=1)  # [B, 2, S, D]
 
     x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
     x_rotated = ops.stack([-x_imag, x_real], axis=-1).flatten(start_dim=3)
@@ -268,7 +266,7 @@ class Attention(nn.Cell):
         self,
         hidden_states: Tensor,
         encoder_hidden_states: Tensor,
-        image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None,
+        image_rotary_emb: Optional[Tensor] = None,
     ) -> Tensor:
         text_seq_length = encoder_hidden_states.shape[1]
         hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
@@ -334,7 +332,7 @@ class FlashAttention(Attention):
         self,
         hidden_states: Tensor,
         encoder_hidden_states: Tensor,
-        image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None,
+        image_rotary_emb: Optional[Tensor] = None,
     ) -> Tensor:
         text_seq_length = encoder_hidden_states.shape[1]
         hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
@@ -624,7 +622,7 @@ class CogVideoXBlock(nn.Cell):
         hidden_states: Tensor,
         encoder_hidden_states: Tensor,
         temb: Tensor,
-        image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None,
+        image_rotary_emb: Optional[Tensor] = None,
     ) -> Tensor:
         text_seq_length = encoder_hidden_states.shape[1]
 
@@ -695,6 +693,8 @@ class CogVideoXTransformer3DModel(nn.Cell):
         self.patch_size = (1, patch_size, patch_size)
         self._dtype = dtype
         self.attention_head_dim = attention_head_dim
+        self.hidden_size = self.attention_head_dim * num_attention_heads
+        self.num_heads = num_attention_heads
 
         inner_dim = num_attention_heads * attention_head_dim
 
@@ -769,7 +769,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         return self._dtype
 
     def construct(
-        self, x: Tensor, timestep: Tensor, y: Tensor, image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None, **kwargs
+        self, x: Tensor, timestep: Tensor, y: Tensor, image_rotary_emb: Optional[Tensor] = None, **kwargs
     ) -> Tensor:
         hidden_states = ops.transpose(x, (0, 2, 1, 3, 4)).to(self.dtype)  # n, t, c, h, w
         encoder_hidden_states = y.to(self.dtype)

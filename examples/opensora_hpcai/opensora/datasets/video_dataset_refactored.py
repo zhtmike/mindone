@@ -18,6 +18,7 @@ from mindspore.dataset.vision import CenterCrop, Inter, Normalize
 
 from mindone.data.video_reader import VideoReader as VideoReader_CV2
 
+from ..models.layers.rotary_embedding import get_3d_rotary_pos_embed
 from .bucket import Bucket
 from .transforms import BucketResizeAndCrop, BucketResizeCrop, Resize, ResizeAndCrop
 
@@ -83,6 +84,7 @@ class VideoDatasetRefactored(BaseDataset):
         target_size: Optional[Tuple[int]] = None,
         tokenizer=None,
         video_backend: str = "cv2",
+        use_rotary_positional_embeddings: bool = False,
         dtype: np.dtype = np.float32,
         *,
         output_columns: List[str],
@@ -103,7 +105,10 @@ class VideoDatasetRefactored(BaseDataset):
         self._vae_latent_folder = vae_latent_folder
         self._vae_downsample_rate = vae_downsample_rate
         self._vae_scale_factor = vae_scale_factor
+        self._embed_dim = embed_dim
+        self._num_heads = num_heads
         self._fmask_gen = frames_mask_generator
+        self._use_rotary_positional_embeddings = use_rotary_positional_embeddings
         self._dtype = dtype
         if t_compress_func is None:
             self._t_compress_func = lambda x: x
@@ -120,8 +125,6 @@ class VideoDatasetRefactored(BaseDataset):
         if self._pre_patchify:
             self._patch_size = patch_size
             assert self._patch_size[0] == 1
-            self._embed_dim = embed_dim
-            self._num_heads = num_heads
             self._input_sq_size = input_sq_size
 
             max_size = int(max_target_size / self._vae_downsample_rate)
@@ -360,6 +363,13 @@ class VideoDatasetRefactored(BaseDataset):
             else:
                 data["video"] = clip
 
+        if self._use_rotary_positional_embeddings:
+            # hard code for cogvideo-x
+            t, _, h, w = data["video"].shape
+            t = self._t_compress_func(t)
+            h, w = h // self._vae_downsample_rate, w // self._vae_downsample_rate
+            data["image_rotary_emb"] = self._prepare_rotary_positional_embeddings(int(h), int(w), t)
+
         final_outputs = tuple(data.pop(c) for c in self.output_columns)
         del data
 
@@ -411,6 +421,41 @@ class VideoDatasetRefactored(BaseDataset):
         temporal_mask = np.ones(temporal_pos.shape[0], dtype=np.uint8)
 
         return latent, spatial_pos, spatial_mask, temporal_pos, temporal_mask
+
+    def _prepare_rotary_positional_embeddings(self, height: int, width: int, num_frames: int) -> np.ndarray:
+        # hard code, for cogvideox
+        grid_height = height // 2
+        grid_width = width // 2
+        base_size_width = 720 // (8 * 2)
+        base_size_height = 480 // (8 * 2)
+
+        grid_crops_coords = self._get_resize_crop_region_for_grid(
+            (grid_height, grid_width), base_size_width, base_size_height
+        )
+        freqs_cos, freqs_sin = get_3d_rotary_pos_embed(
+            embed_dim=self._embed_dim // self._num_heads,
+            crops_coords=grid_crops_coords,
+            grid_size=(grid_height, grid_width),
+            temporal_size=num_frames,
+        )
+
+        return np.stack([freqs_cos, freqs_sin])
+
+    def _get_resize_crop_region_for_grid(self, src, tgt_width, tgt_height):
+        tw = tgt_width
+        th = tgt_height
+        h, w = src
+        r = h / w
+        if r > (th / tw):
+            resize_height = th
+            resize_width = int(round(th / h * w))
+        else:
+            resize_width = tw
+            resize_height = int(round(tw / w * h))
+
+        crop_top = int(round((th - resize_height) / 2.0))
+        crop_left = int(round((tw - resize_width) / 2.0))
+        return (crop_top, crop_left), (crop_top + resize_height, crop_left + resize_width)
 
     def __len__(self):
         return len(self._data)

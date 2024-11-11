@@ -264,6 +264,8 @@ def initialize_dataset(
         output_columns = ["video", "caption", "mask", "frames_mask", "num_frames", "height", "width", "fps", "ar"]
         if args.pre_patchify:
             output_columns.extend(["spatial_pos", "spatial_mask", "temporal_pos", "temporal_mask"])
+        elif getattr(latte_model, "use_rotary_positional_embeddings", False):
+            output_columns.extend(["image_rotary_emb"])
 
         dtype = np.float16 if args.vae_dtype == "fp16" else np.float32
         datasets = [
@@ -289,6 +291,7 @@ def initialize_dataset(
                 apply_train_transforms=True,
                 target_size=(img_h, img_w),
                 video_backend=args.video_backend,
+                use_rotary_positional_embeddings=getattr(latte_model, "use_rotary_positional_embeddings", False),
                 dtype=dtype,
                 output_columns=output_columns,
             )

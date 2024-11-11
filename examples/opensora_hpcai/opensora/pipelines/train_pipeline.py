@@ -9,7 +9,7 @@ except ImportError:
 import numpy as np
 
 import mindspore as ms
-from mindspore import Tensor, _no_grad, jit_class, nn, ops
+from mindspore import Tensor, _no_grad, jit_class, mint, nn, ops
 
 from ..models.layers.operation_selector import get_split_op
 from ..models.vae import AutoencoderKLCogVideoX
@@ -127,6 +127,7 @@ class DiffusionWithLoss(nn.Cell):
         width: Optional[Tensor] = None,
         fps: Optional[Tensor] = None,
         ar: Optional[Tensor] = None,
+        image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None,
     ):
         """
         Video diffusion model forward and loss computation for training
@@ -169,6 +170,7 @@ class DiffusionWithLoss(nn.Cell):
             width=width,
             fps=fps,
             ar=ar,
+            image_rotary_emb=image_rotary_emb,
         )
 
         return loss
@@ -223,6 +225,7 @@ class DiffusionWithLoss(nn.Cell):
         width: Optional[Tensor] = None,
         fps: Optional[Tensor] = None,
         ar: Optional[Tensor] = None,
+        **kwargs,
     ):
         t = ops.randint(0, self.diffusion.num_timesteps, (x.shape[0],))
         noise = ops.randn_like(x)
@@ -430,9 +433,12 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         y = ops.stop_gradient(y * self.scale_factor)
         return y
 
-    def compute_loss(self, x: Tensor, text_embed: Tensor, *args, **kwargs) -> Tensor:
-        t = ops.randint(0, self.diffusion.num_timesteps, (x.shape[0],))
-        noise = ops.randn_like(x)
+    def compute_loss(
+        self, x: Tensor, text_embed: Tensor, *args, image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None, **kwargs
+    ) -> Tensor:
+        # TODO: to mint.randint
+        t = ms.Tensor(np.random.randint(0, self.diffusion.num_timesteps, (x.shape[0],)))
+        noise = mint.normal(size=x.shape)
         x = x.to(ms.float32)
         x_t = self.diffusion.q_sample(x, t, noise=noise)
 
@@ -441,7 +447,7 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         else:
             target = noise
 
-        model_output = self.apply_model(x_t, t, text_embed)
+        model_output = self.apply_model(x_t, t, text_embed, image_rotary_emb=image_rotary_emb)
 
         loss = mean_flat((target - model_output) ** 2)
         loss = loss.mean()
