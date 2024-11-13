@@ -13,7 +13,7 @@ import mindspore.ops as ops
 from mindspore import Parameter, Tensor
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
-__all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B"]
+__all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B", "CogVideoX_5B_v1_5"]
 
 logger = logging.getLogger(__name__)
 
@@ -411,7 +411,7 @@ class FeedForward(nn.Cell):
 class CogVideoXPatchEmbed(nn.Cell):
     def __init__(
         self,
-        patch_size: int = 2,
+        patch_size: Tuple[int, int, int] = (1, 2, 2),
         in_channels: int = 16,
         embed_dim: int = 1920,
         text_embed_dim: int = 4096,
@@ -441,15 +441,19 @@ class CogVideoXPatchEmbed(nn.Cell):
         self.use_positional_embeddings = use_positional_embeddings
         self.use_learned_positional_embeddings = use_learned_positional_embeddings
 
-        self.proj = nn.Conv2d(
-            in_channels,
-            embed_dim,
-            kernel_size=(patch_size, patch_size),
-            stride=patch_size,
-            pad_mode="pad",
-            has_bias=bias,
-            dtype=dtype,
-        )
+        if self.patch_size[0] == 1:
+            self.proj = nn.Conv2d(
+                in_channels,
+                embed_dim,
+                kernel_size=(patch_size[1], patch_size[2]),
+                stride=(patch_size[1], patch_size[2]),
+                pad_mode="pad",
+                has_bias=bias,
+                dtype=dtype,
+            )
+        else:
+            self.proj = mint.nn.Linear(in_channels * np.prod(patch_size).item(), embed_dim, dtype=dtype)
+
         self.text_proj = mint.nn.Linear(text_embed_dim, embed_dim, dtype=dtype)
 
         if use_positional_embeddings or use_learned_positional_embeddings:
@@ -480,12 +484,36 @@ class CogVideoXPatchEmbed(nn.Cell):
     def construct(self, text_embeds: Tensor, image_embeds: Tensor) -> Tensor:
         text_embeds = self.text_proj(text_embeds)
 
-        batch, num_frames, channels, height, width = image_embeds.shape
-        image_embeds = image_embeds.reshape(-1, channels, height, width)
-        image_embeds = self.proj(image_embeds)
-        image_embeds = image_embeds.view(batch, num_frames, *image_embeds.shape[1:])
-        image_embeds = image_embeds.flatten(start_dim=3).swapaxes(2, 3)  # [batch, num_frames, height x width, channels]
-        image_embeds = image_embeds.flatten(start_dim=1, end_dim=2)  # [batch, num_frames x height x width, channels]
+        batch_size, num_frames, channels, height, width = image_embeds.shape
+
+        if self.patch_size[0] == 1:
+            image_embeds = image_embeds.reshape(-1, channels, height, width)
+            image_embeds = self.proj(image_embeds)
+            image_embeds = image_embeds.view(batch_size, num_frames, *image_embeds.shape[1:])
+            image_embeds = image_embeds.flatten(start_dim=3).swapaxes(
+                2, 3
+            )  # [batch, num_frames, height x width, channels]
+            image_embeds = image_embeds.flatten(
+                start_dim=1, end_dim=2
+            )  # [batch, num_frames x height x width, channels]
+        else:
+            image_embeds = image_embeds.permute(0, 1, 3, 4, 2)
+            image_embeds = image_embeds.reshape(
+                batch_size,
+                num_frames // self.patch_size[0],
+                self.patch_size[0],
+                height // self.patch_size[1],
+                self.patch_size[1],
+                width // self.patch_size[2],
+                self.patch_size[2],
+                channels,
+            )
+            image_embeds = (
+                image_embeds.permute(0, 1, 3, 5, 7, 2, 4, 6)
+                .flatten(start_dim=4, end_dim=7)
+                .flatten(start_dim=1, end_dim=3)
+            )
+            image_embeds = self.proj(image_embeds)
 
         embeds = mint.cat(
             [text_embeds, image_embeds], dim=1
@@ -673,7 +701,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         sample_width: int = 90,
         sample_height: int = 60,
         sample_frames: int = 49,
-        patch_size: int = 2,
+        patch_size: Tuple[int, int, int] = (1, 2, 2),
         temporal_compression_ratio: int = 4,
         max_text_seq_length: int = 226,
         activation_fn: str = "gelu-approximate",
@@ -684,13 +712,16 @@ class CogVideoXTransformer3DModel(nn.Cell):
         temporal_interpolation_scale: float = 1.0,
         use_rotary_positional_embeddings: bool = False,
         use_learned_positional_embeddings: bool = False,
+        patch_bias: bool = True,
         enable_flash_attention: bool = False,
         use_recompute: bool = False,
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
         self.use_rotary_positional_embeddings = use_rotary_positional_embeddings
-        self.patch_size = (1, patch_size, patch_size)
+        self.patch_size = patch_size
+        self.sample_height = sample_height
+        self.sample_width = sample_width
         self._dtype = dtype
         self.attention_head_dim = attention_head_dim
         self.hidden_size = self.attention_head_dim * num_attention_heads
@@ -711,7 +742,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
             in_channels=in_channels,
             embed_dim=inner_dim,
             text_embed_dim=text_embed_dim,
-            bias=True,
+            bias=patch_bias,
             sample_width=sample_width,
             sample_height=sample_height,
             sample_frames=sample_frames,
@@ -758,7 +789,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
             norm_eps=norm_eps,
             dtype=dtype,
         )
-        self.proj_out = mint.nn.Linear(inner_dim, patch_size * patch_size * out_channels, dtype=dtype)
+        self.proj_out = mint.nn.Linear(inner_dim, np.prod(patch_size).item() * out_channels, dtype=dtype)
 
         if use_recompute:
             for block in self.transformer_blocks:
@@ -817,21 +848,36 @@ class CogVideoXTransformer3DModel(nn.Cell):
         hidden_states = self.proj_out(hidden_states)
 
         # 5. Unpatchify
-        # Note: we use `-1` instead of `channels`:
-        #   - It is okay to `channels` use for CogVideoX-2b and CogVideoX-5b (number of input channels is equal to output channels)
-        #   - However, for CogVideoX-5b-I2V also takes concatenated input image latents (number of input channels is twice the output channels)
-        output = hidden_states.reshape(
-            batch_size,
-            num_frames,
-            height // self.patch_size[1],
-            width // self.patch_size[2],
-            -1,
-            self.patch_size[1],
-            self.patch_size[2],
-        )
-        output = (
-            output.permute(0, 4, 1, 2, 5, 3, 6).flatten(start_dim=5, end_dim=6).flatten(start_dim=3, end_dim=4)
-        )  # n, c, t, h, w
+        if self.patch_size[0] == 1:
+            output = hidden_states.reshape(
+                batch_size,
+                num_frames,
+                height // self.patch_size[1],
+                width // self.patch_size[2],
+                -1,
+                self.patch_size[1],
+                self.patch_size[2],
+            )
+            output = (
+                output.permute(0, 4, 1, 2, 5, 3, 6).flatten(start_dim=5, end_dim=6).flatten(start_dim=3, end_dim=4)
+            )  # n, c, t, h, w
+        else:
+            output = hidden_states.reshape(
+                batch_size,
+                (num_frames + self.patch_size[0] - 1) // self.patch_size[0],
+                height // self.patch_size[1],
+                width // self.patch_size[2],
+                -1,
+                self.patch_size[0],
+                self.patch_size[1],
+                self.patch_size[2],
+            )
+            output = (
+                output.permute(0, 4, 1, 5, 2, 6, 3, 7)
+                .flatten(start_dim=6, end_dim=7)
+                .flatten(start_dim=4, end_dim=5)
+                .flatten(start_dim=2, end_dim=3)
+            )  # n, c, t, h, w
 
         return output
 
@@ -885,6 +931,24 @@ def CogVideoX_2B(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTr
 def CogVideoX_5B(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
     model = CogVideoXTransformer3DModel(
         num_attention_heads=48, num_layers=42, use_rotary_positional_embeddings=True, **kwargs
+    )
+
+    if from_pretrained is not None:
+        model.load_from_checkpoint(from_pretrained)
+    return model
+
+
+def CogVideoX_5B_v1_5(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
+    model = CogVideoXTransformer3DModel(
+        num_attention_heads=48,
+        num_layers=42,
+        use_rotary_positional_embeddings=True,
+        sample_width=170,
+        sample_height=96,
+        sample_frames=81,
+        patch_size=(2, 2, 2),
+        patch_bias=False,
+        **kwargs,
     )
 
     if from_pretrained is not None:

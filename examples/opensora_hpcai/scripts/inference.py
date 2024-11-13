@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
 from opensora.acceleration.parallel_states import set_sequence_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIO_MAP, ASPECT_RATIOS, get_image_size, get_num_frames
-from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B
+from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_v1_5
 from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT_XL_2
 from opensora.models.text_encoder.t5 import get_text_encoder_and_tokenizer
 from opensora.models.vae import CogVideoX_VAE
@@ -269,6 +269,10 @@ def main(args):
         model_name = "CogVideoX-5B"
         logger.info(f"{model_name} init")
         latte_model = CogVideoX_5B(enable_flash_attention=args.enable_flash_attention, dtype=dtype_map[args.dtype])
+    elif args.model_version == "CogVideoX-5B-v1.5":
+        model_name = "CogVideoX-5B-v1.5"
+        logger.info(f"{model_name} init")
+        latte_model = CogVideoX_5B_v1_5(enable_flash_attention=args.enable_flash_attention, dtype=dtype_map[args.dtype])
     else:
         raise ValueError(f"Unknown model version: {args.model_version}")
 
@@ -489,6 +493,11 @@ def main(args):
             # prepare inputs
             inputs = {}
             # b c t h w
+            if latent_size[0] % latte_model.patch_size[0] != 0:
+                num_padded_t = latte_model.patch_size[0] - latent_size[0] % latte_model.patch_size[0]
+                latent_size[0] += num_padded_t
+                inputs["num_padded_t"] = num_padded_t
+
             z = np.random.randn(ns, VAE_Z_CH, *latent_size).astype(np.float32)
 
             if args.model_version != "v1":
@@ -573,7 +582,7 @@ def parse_args():
         "--model_version",
         default="v1",
         type=str,
-        choices=["v1", "v1.1", "v1.2", "CogVideoX-2B", "CogVideoX-5B"],
+        choices=["v1", "v1.1", "v1.2", "CogVideoX-2B", "CogVideoX-5B", "CogVideoX-5B", "CogVideoX-5B-v1.5"],
         help="OpenSora model version.",
     )
     parser.add_argument("--image_size", type=int, nargs="+", help="image size in [256, 512]")

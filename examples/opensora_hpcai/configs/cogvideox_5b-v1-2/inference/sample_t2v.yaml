@@ -1,7 +1,8 @@
-model_version: CogVideoX-5B
+model_version: CogVideoX-5B-v1.5
 ckpt_path:
-  - "models/CogVideoX-5b/transformer/diffusion_pytorch_model-00001-of-00002.safetensors"
-  - "models/CogVideoX-5b/transformer/diffusion_pytorch_model-00002-of-00002.safetensors"
+  - "models/CogVideoX-1.5-5b/transformer/diffusion_pytorch_model-00001-of-00003.safetensors"
+  - "models/CogVideoX-1.5-5b/transformer/diffusion_pytorch_model-00002-of-00003.safetensors"
+  - "models/CogVideoX-1.5-5b/transformer/diffusion_pytorch_model-00003-of-00003.safetensors"
 
 t5_model: transformers
 t5_model_dir: "models/t5-v1_1-xxl/"
@@ -12,10 +13,10 @@ vae_checkpoint: "models/CogVideoX-5b/vae/diffusion_pytorch_model.safetensors"
 vae_dtype: fp16
 sd_scale_factor: 0.7
 
-image_size: [ 480, 720 ]
-num_frames: 49
+image_size: [ 768, 1360 ]
+num_frames: 81
 enable_flash_attention: True
-model_max_length: 226
+model_max_length: 224
 dtype: bf16
 batch_size: 1
 
@@ -29,7 +30,6 @@ noise_schedule: quad
 v_pred: True
 beta_start: 0.00085
 beta_end: 0.012
-snr_shift_scale: 1.0
 rescale_betas_zero_snr: True
 
 # ms

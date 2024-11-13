@@ -480,8 +480,9 @@ class InferPipelineCogVideoX(InferPipeline):
     def prepare_rotary_positional_embeddings(self, height: int, width: int, num_frames: int) -> np.ndarray:
         grid_height = height // 2
         grid_width = width // 2
-        base_size_width = 720 // (8 * 2)
-        base_size_height = 480 // (8 * 2)
+        base_size_width = self.model.sample_width // self.model.patch_size[2]
+        base_size_height = self.model.sample_height // self.model.patch_size[1]
+        base_num_frames = (num_frames + self.model.patch_size[0] - 1) // self.model.patch_size[0]
 
         grid_crops_coords = self.get_resize_crop_region_for_grid(
             (grid_height, grid_width), base_size_width, base_size_height
@@ -490,7 +491,7 @@ class InferPipelineCogVideoX(InferPipeline):
             embed_dim=self.model.hidden_size // self.model.num_heads,
             crops_coords=grid_crops_coords,
             grid_size=(grid_height, grid_width),
-            temporal_size=num_frames,
+            temporal_size=base_num_frames,
         )
 
         return np.stack([freqs_cos, freqs_sin])[None]
@@ -534,6 +535,10 @@ class InferPipelineCogVideoX(InferPipeline):
                 model_kwargs=model_kwargs,
                 progress=True,
             )
+
+        num_padded_t = inputs.get("num_padded_t", None)
+        if num_padded_t is not None:
+            latents = latents[:, :, num_padded_t:]
 
         if self.vae is not None:
             # latents: (b c t h w)

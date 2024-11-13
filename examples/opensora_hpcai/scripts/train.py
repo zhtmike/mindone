@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 from args_train import parse_args
 from opensora.acceleration.parallel_states import create_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIOS, get_image_size
-from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B
+from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_v1_5
 from opensora.models.layers.operation_selector import set_dynamic_mode
 from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT_XL_2
 from opensora.models.vae import CogVideoX_VAE
@@ -268,6 +268,18 @@ def initialize_dataset(
             output_columns.extend(["image_rotary_emb"])
 
         dtype = np.float16 if args.vae_dtype == "fp16" else np.float32
+
+        model_config = dict(
+            patch_size=getattr(latte_model, "patch_size", None),
+            embed_dim=getattr(latte_model, "hidden_size", None),
+            num_heads=getattr(latte_model, "num_heads", None),
+            input_sq_size=getattr(latte_model, "input_sq_size", None),
+            in_channels=getattr(latte_model, "in_channels", None),
+            use_rotary_positional_embeddings=getattr(latte_model, "use_rotary_positional_embeddings", False),
+            sample_width=getattr(latte_model, "sample_width", None),
+            sample_height=getattr(latte_model, "sample_height", None),
+        )
+
         datasets = [
             VideoDatasetRefactored(
                 csv_path=csv_path,
@@ -282,16 +294,11 @@ def initialize_dataset(
                 buckets=buckets,
                 filter_data=args.filter_data,
                 pre_patchify=args.pre_patchify,
-                patch_size=getattr(latte_model, "patch_size", None),
-                embed_dim=getattr(latte_model, "hidden_size", None),
-                num_heads=getattr(latte_model, "num_heads", None),
                 max_target_size=args.max_image_size,
-                input_sq_size=getattr(latte_model, "input_sq_size", None),
-                in_channels=getattr(latte_model, "in_channels", None),
                 apply_train_transforms=True,
                 target_size=(img_h, img_w),
                 video_backend=args.video_backend,
-                use_rotary_positional_embeddings=getattr(latte_model, "use_rotary_positional_embeddings", False),
+                model_config=model_config,
                 dtype=dtype,
                 output_columns=output_columns,
             )
@@ -479,6 +486,14 @@ def main(args):
         model_name = "CogVideoX-5B"
         logger.info(f"{model_name} init")
         latte_model = CogVideoX_5B(
+            enable_flash_attention=args.enable_flash_attention,
+            use_recompute=args.use_recompute,
+            dtype=dtype_map[args.dtype],
+        )
+    elif args.model_version == "CogVideoX-5B-v1.5":
+        model_name = "CogVideoX-5B-v1.5"
+        logger.info(f"{model_name} init")
+        latte_model = CogVideoX_5B_v1_5(
             enable_flash_attention=args.enable_flash_attention,
             use_recompute=args.use_recompute,
             dtype=dtype_map[args.dtype],

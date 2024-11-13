@@ -6,7 +6,7 @@ import random
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -72,19 +72,14 @@ class VideoDatasetRefactored(BaseDataset):
         frames_mask_generator: Optional[Callable[[int], np.ndarray]] = None,
         t_compress_func: Optional[Callable[[int], int]] = None,
         pre_patchify: bool = False,
-        patch_size: Tuple[int, int, int] = (1, 2, 2),
-        embed_dim: int = 1152,
-        num_heads: int = 16,
         max_target_size: int = 512,
-        input_sq_size: int = 512,
-        in_channels: int = 4,
         buckets: Optional[Bucket] = None,
         filter_data: bool = False,
         apply_train_transforms: bool = False,
         target_size: Optional[Tuple[int]] = None,
         tokenizer=None,
         video_backend: str = "cv2",
-        use_rotary_positional_embeddings: bool = False,
+        model_config: Optional[Dict[str, Any]] = None,
         dtype: np.dtype = np.float32,
         *,
         output_columns: List[str],
@@ -105,17 +100,13 @@ class VideoDatasetRefactored(BaseDataset):
         self._vae_latent_folder = vae_latent_folder
         self._vae_downsample_rate = vae_downsample_rate
         self._vae_scale_factor = vae_scale_factor
-        self._embed_dim = embed_dim
-        self._num_heads = num_heads
         self._fmask_gen = frames_mask_generator
-        self._use_rotary_positional_embeddings = use_rotary_positional_embeddings
         self._dtype = dtype
-        if t_compress_func is None:
-            self._t_compress_func = lambda x: x
-        else:
-            self._t_compress_func = t_compress_func
+        self._t_compress_func = lambda x: x if t_compress_func is None else t_compress_func
         self._pre_patchify = pre_patchify
         self._buckets = buckets
+
+        self._init_model_args(model_config)
 
         self.output_columns = output_columns
         if self._buckets is not None:
@@ -123,14 +114,13 @@ class VideoDatasetRefactored(BaseDataset):
             self.output_columns += ["bucket_id"]  # pass bucket id information to transformations
 
         if self._pre_patchify:
-            self._patch_size = patch_size
-            assert self._patch_size[0] == 1
-            self._input_sq_size = input_sq_size
+            assert self._patch_size is not None and self._patch_size[0] == 1
+            assert self._in_channels is not None
 
             max_size = int(max_target_size / self._vae_downsample_rate)
             max_length = max_size**2 // np.prod(self._patch_size[1:]).item()
             self.pad_info = {
-                "video": ([self._frames, max_length, in_channels * np.prod(self._patch_size).item()], 0),
+                "video": ([self._frames, max_length, self._in_channels * np.prod(self._patch_size).item()], 0),
                 "spatial_pos": ([max_length, self._embed_dim], 0),
                 "spatial_mask": ([max_length], 0),
                 "temporal_pos": ([self._frames, self._embed_dim // self._num_heads], 0),
@@ -159,6 +149,18 @@ class VideoDatasetRefactored(BaseDataset):
         # prepare replacement data in case the loading of a sample fails
         self._prev_ok_sample = self._get_replacement()
         self._require_update_prev = False
+
+    def _init_model_args(self, model_config: Optional[Dict[str, Any]]) -> None:
+        if model_config is None:
+            return
+        self._embed_dim = model_config.get("embed_dim", None)
+        self._num_heads = model_config.get("num_heads", None)
+        self._in_channels = model_config.get("in_channels", None)
+        self._patch_size = model_config.get("patch_size", None)
+        self._input_sq_size = model_config.get("input_sq_size", None)
+        self._sample_width = model_config.get("sample_width", None)
+        self._sample_height = model_config.get("sample_height", None)
+        self._use_rotary_positional_embeddings = model_config.get("use_rotary_positional_embeddings", False)
 
     @staticmethod
     def _read_data(
@@ -423,11 +425,11 @@ class VideoDatasetRefactored(BaseDataset):
         return latent, spatial_pos, spatial_mask, temporal_pos, temporal_mask
 
     def _prepare_rotary_positional_embeddings(self, height: int, width: int, num_frames: int) -> np.ndarray:
-        # hard code, for cogvideox
-        grid_height = height // 2
-        grid_width = width // 2
-        base_size_width = 720 // (8 * 2)
-        base_size_height = 480 // (8 * 2)
+        grid_height = height // self._patch_size[2]
+        grid_width = width // self._patch_size[1]
+        base_size_width = self._sample_width // self._patch_size[1]
+        base_size_height = self._sample_height // self._patch_size[2]
+        base_num_frames = (num_frames + self._patch_size[0] - 1) // self._patch_size[0]
 
         grid_crops_coords = self._get_resize_crop_region_for_grid(
             (grid_height, grid_width), base_size_width, base_size_height
@@ -436,7 +438,7 @@ class VideoDatasetRefactored(BaseDataset):
             embed_dim=self._embed_dim // self._num_heads,
             crops_coords=grid_crops_coords,
             grid_size=(grid_height, grid_width),
-            temporal_size=num_frames,
+            temporal_size=base_num_frames,
         )
 
         return np.stack([freqs_cos, freqs_sin])

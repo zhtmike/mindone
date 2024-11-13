@@ -52,7 +52,7 @@ def parse_train_args(parser):
         "--model_version",
         default="v1",
         type=str,
-        choices=["v1", "v1.1", "v1.2", "CogVideoX-2B", "CogVideoX-5B"],
+        choices=["v1", "v1.1", "v1.2", "CogVideoX-2B", "CogVideoX-5B", "CogVideoX-5B-v1.5"],
         help="OpenSora model version.",
     )
     parser.add_argument(
