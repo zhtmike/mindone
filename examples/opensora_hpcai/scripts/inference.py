@@ -264,15 +264,27 @@ def main(args):
     elif args.model_version == "CogVideoX-2B":
         model_name = "CogVideoX-2B"
         logger.info(f"{model_name} init")
-        latte_model = CogVideoX_2B(enable_flash_attention=args.enable_flash_attention, dtype=dtype_map[args.dtype])
+        latte_model = CogVideoX_2B(
+            enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
+            dtype=dtype_map[args.dtype],
+        )
     elif args.model_version == "CogVideoX-5B":
         model_name = "CogVideoX-5B"
         logger.info(f"{model_name} init")
-        latte_model = CogVideoX_5B(enable_flash_attention=args.enable_flash_attention, dtype=dtype_map[args.dtype])
+        latte_model = CogVideoX_5B(
+            enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
+            dtype=dtype_map[args.dtype],
+        )
     elif args.model_version == "CogVideoX-5B-v1.5":
         model_name = "CogVideoX-5B-v1.5"
         logger.info(f"{model_name} init")
-        latte_model = CogVideoX_5B_v1_5(enable_flash_attention=args.enable_flash_attention, dtype=dtype_map[args.dtype])
+        latte_model = CogVideoX_5B_v1_5(
+            enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
+            dtype=dtype_map[args.dtype],
+        )
     else:
         raise ValueError(f"Unknown model version: {args.model_version}")
 

@@ -21,18 +21,18 @@ logger = logging.getLogger(__name__)
 
 
 ACTIVATION_FUNCTIONS = {
-    "swish": nn.SiLU(),
-    "silu": nn.SiLU(),
-    "mish": nn.Mish(),
-    "gelu": nn.GELU(),
-    "relu": nn.ReLU(),
+    "swish": nn.SiLU,
+    "silu": nn.SiLU,
+    "mish": nn.Mish,
+    "gelu": nn.GELU,
+    "relu": nn.ReLU,
 }
 
 
 def get_activation(act_fn: str) -> nn.Cell:
     act_fn = act_fn.lower()
     if act_fn in ACTIVATION_FUNCTIONS:
-        return ACTIVATION_FUNCTIONS[act_fn]
+        return ACTIVATION_FUNCTIONS[act_fn]()
     else:
         raise ValueError(f"Unsupported activation function: {act_fn}")
 

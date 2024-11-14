@@ -3,6 +3,8 @@ import logging
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
+from opensora.acceleration.communications import AlltoAll, GatherFowardSplitBackward, SplitFowardGatherBackward
+from opensora.acceleration.parallel_states import get_sequence_parallel_group
 from safetensors import safe_open
 
 import mindspore as ms
@@ -11,6 +13,7 @@ import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
+from mindspore.communication import get_group_size
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
 __all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B", "CogVideoX_5B_v1_5"]
@@ -140,6 +143,25 @@ def get_timestep_embedding(
     return emb
 
 
+class QKVAlltoALL(AlltoAll):
+    def construct(
+        self, q: Tensor, k: Tensor, v: Tensor, split_pad: Union[int, Tensor] = 0, concat_pad: Union[int, Tensor] = 0
+    ) -> Tuple[Tensor, Tensor, Tensor]:
+        x = mint.cat([q, k, v], dim=0)
+
+        if split_pad > 0:
+            padding = (len(x.shape) - self.split_dim - 1) * (0, 0) + (0, split_pad)
+            x = mint.nn.functional.pad(x, padding)
+
+        x = self.alltoall(x)
+
+        if concat_pad > 0:
+            x = x.narrow(self.concat_dim, 0, x.shape[self.concat_dim] - concat_pad)
+
+        q, k, v = x.chunk(3, axis=0)
+        return q, k, v
+
+
 class FP32LayerNorm(mint.nn.LayerNorm):
     def construct(self, input: Tensor) -> Tensor:
         dtype = input.dtype
@@ -267,7 +289,7 @@ class Attention(nn.Cell):
         hidden_states: Tensor,
         encoder_hidden_states: Tensor,
         image_rotary_emb: Optional[Tensor] = None,
-    ) -> Tensor:
+    ) -> Tuple[Tensor, Tensor]:
         text_seq_length = encoder_hidden_states.shape[1]
         hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
 
@@ -293,12 +315,117 @@ class Attention(nn.Cell):
             key[:, :, text_seq_length:] = apply_rotary_emb(key[:, :, text_seq_length:], image_rotary_emb)
 
         hidden_states = scaled_dot_product_attention(query, key, value)
+
         hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
         hidden_states = self.to_out(hidden_states)
 
         encoder_hidden_states, hidden_states = hidden_states.split(
             [text_seq_length, hidden_states.shape[1] - text_seq_length], axis=1
         )
+        return hidden_states, encoder_hidden_states
+
+
+class SequenceParallelAttention(nn.Cell):
+    def __init__(
+        self,
+        query_dim: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        dropout: float = 0.0,
+        bias: bool = False,
+        qk_norm: Optional[str] = None,
+        out_bias: bool = True,
+        eps: float = 1e-5,
+        dtype: ms.Type = ms.float32,
+    ) -> None:
+        super().__init__()
+
+        inner_dim = dim_head * heads
+        inner_kv_dim = inner_dim
+        cross_attention_dim = query_dim
+        out_dim = query_dim
+        self.heads = heads
+
+        if qk_norm is None:
+            self.norm_q = nn.Identity()
+            self.norm_k = nn.Identity()
+        elif qk_norm == "layer_norm":
+            self.norm_q = FP32LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
+            self.norm_k = FP32LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
+        else:
+            raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None,'layer_norm'")
+
+        self.to_q = mint.nn.Linear(query_dim, inner_dim, bias=bias, dtype=dtype)
+        self.to_k = mint.nn.Linear(cross_attention_dim, inner_kv_dim, bias=bias, dtype=dtype)
+        self.to_v = mint.nn.Linear(cross_attention_dim, inner_kv_dim, bias=bias, dtype=dtype)
+
+        self.to_out = nn.SequentialCell(
+            [mint.nn.Linear(inner_dim, out_dim, bias=out_bias, dtype=dtype), mint.nn.Dropout(p=dropout)]
+        )
+
+        self.sp_group = get_sequence_parallel_group()
+        self.sp_size = get_group_size(self.sp_group)
+        self.alltoall = QKVAlltoALL(split_dim=1, concat_dim=2, group=self.sp_group)
+        self.alltoall_back = AlltoAll(split_dim=2, concat_dim=1, group=self.sp_group)
+
+    def construct(
+        self,
+        hidden_states: Tensor,
+        encoder_hidden_states: Tensor,
+        image_rotary_emb: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Tensor]:
+        query = self.to_q(hidden_states)
+        key = self.to_k(hidden_states)
+        value = self.to_v(hidden_states)
+
+        encoder_query = self.to_q(encoder_hidden_states)
+        encoder_key = self.to_k(encoder_hidden_states)
+        encoder_value = self.to_v(encoder_hidden_states)
+
+        batch_size, _, _ = encoder_hidden_states.shape
+
+        inner_dim = key.shape[-1]
+        head_dim = inner_dim // self.heads
+
+        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+
+        encoder_query = encoder_query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+
+        # b, h, sub_n, d -> b, sub_h, n, d
+        query, key, value = self.alltoall(query, key, value)
+        encoder_query, encoder_key, encoder_value = self.alltoall(encoder_query, encoder_key, encoder_value)
+
+        text_seq_length = encoder_query.shape[2]
+
+        query = mint.cat([encoder_query, query], dim=2)
+        key = mint.cat([encoder_key, key], dim=2)
+        value = mint.cat([encoder_value, value], dim=2)
+
+        query = self.norm_q(query)
+        key = self.norm_k(key)
+
+        # Apply RoPE if needed
+        if image_rotary_emb is not None:
+            query[:, :, text_seq_length:] = apply_rotary_emb(query[:, :, text_seq_length:], image_rotary_emb)
+            key[:, :, text_seq_length:] = apply_rotary_emb(key[:, :, text_seq_length:], image_rotary_emb)
+
+        hidden_states = scaled_dot_product_attention(query, key, value)
+
+        encoder_hidden_states, hidden_states = hidden_states.split(
+            [text_seq_length, hidden_states.shape[2] - text_seq_length], axis=2
+        )
+        # b, sub_h, n, d -> b, h, sub_n, d
+        encoder_hidden_states = self.alltoall_back(encoder_hidden_states)
+        hidden_states = self.alltoall_back(hidden_states)
+        hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
+        encoder_hidden_states = encoder_hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
+
+        hidden_states = self.to_out(hidden_states)
+        encoder_hidden_states = self.to_out(encoder_hidden_states)
         return hidden_states, encoder_hidden_states
 
 
@@ -333,7 +460,7 @@ class FlashAttention(Attention):
         hidden_states: Tensor,
         encoder_hidden_states: Tensor,
         image_rotary_emb: Optional[Tensor] = None,
-    ) -> Tensor:
+    ) -> Tuple[Tensor, Tensor]:
         text_seq_length = encoder_hidden_states.shape[1]
         hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
 
@@ -364,12 +491,111 @@ class FlashAttention(Attention):
         value = mint.permute(value, (0, 2, 1, 3))
 
         _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
+
         hidden_states = hidden_states.reshape(batch_size, -1, self.heads * head_dim)
         hidden_states = self.to_out(hidden_states)
 
         encoder_hidden_states, hidden_states = hidden_states.split(
             [text_seq_length, hidden_states.shape[1] - text_seq_length], axis=1
         )
+        return hidden_states, encoder_hidden_states
+
+
+class SequenceParallelFlashAttention(SequenceParallelAttention):
+    def __init__(
+        self,
+        query_dim: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        dropout: float = 0.0,
+        bias: bool = False,
+        qk_norm: Optional[str] = None,
+        out_bias: bool = True,
+        eps: float = 1e-5,
+        dtype: ms.Type = ms.float32,
+    ) -> None:
+        super().__init__(
+            query_dim=query_dim,
+            heads=heads,
+            dim_head=dim_head,
+            dropout=dropout,
+            bias=bias,
+            qk_norm=qk_norm,
+            out_bias=out_bias,
+            eps=eps,
+            dtype=dtype,
+        )
+        self.flash_attention = FlashAttentionScore(
+            heads // self.sp_size, scale_value=dim_head**-0.5, input_layout="BSND"
+        )
+
+    def construct(
+        self,
+        hidden_states: Tensor,
+        encoder_hidden_states: Tensor,
+        image_rotary_emb: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Tensor]:
+        query = self.to_q(hidden_states)
+        key = self.to_k(hidden_states)
+        value = self.to_v(hidden_states)
+
+        encoder_query = self.to_q(encoder_hidden_states)
+        encoder_key = self.to_k(encoder_hidden_states)
+        encoder_value = self.to_v(encoder_hidden_states)
+
+        batch_size, _, _ = encoder_hidden_states.shape
+
+        inner_dim = key.shape[-1]
+        head_dim = inner_dim // self.heads
+
+        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+
+        encoder_query = encoder_query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+
+        # b, h, sub_n, d -> b, sub_h, n, d
+        query, key, value = self.alltoall(query, key, value)
+        encoder_query, encoder_key, encoder_value = self.alltoall(encoder_query, encoder_key, encoder_value)
+
+        text_seq_length = encoder_query.shape[2]
+
+        query = mint.cat([encoder_query, query], dim=2)
+        key = mint.cat([encoder_key, key], dim=2)
+        value = mint.cat([encoder_value, value], dim=2)
+
+        query = self.norm_q(query)
+        key = self.norm_k(key)
+
+        # Apply RoPE if needed
+        if image_rotary_emb is not None:
+            query[:, :, text_seq_length:] = apply_rotary_emb(query[:, :, text_seq_length:], image_rotary_emb)
+            key[:, :, text_seq_length:] = apply_rotary_emb(key[:, :, text_seq_length:], image_rotary_emb)
+
+        # Reshape to the expected shape for Flash Attention
+        query = mint.permute(query, (0, 2, 1, 3))
+        key = mint.permute(key, (0, 2, 1, 3))
+        value = mint.permute(value, (0, 2, 1, 3))
+
+        _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
+
+        # Reshape back for sequence parallel
+        hidden_states = mint.permute(hidden_states, (0, 2, 1, 3))
+
+        encoder_hidden_states, hidden_states = hidden_states.split(
+            [text_seq_length, hidden_states.shape[2] - text_seq_length], axis=2
+        )
+        # b, sub_h, n, d -> b, h, sub_n, d
+        encoder_hidden_states = self.alltoall_back(encoder_hidden_states)
+        hidden_states = self.alltoall_back(hidden_states)
+
+        hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
+        encoder_hidden_states = encoder_hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
+
+        hidden_states = self.to_out(hidden_states)
+        encoder_hidden_states = self.to_out(encoder_hidden_states)
         return hidden_states, encoder_hidden_states
 
 
@@ -464,8 +690,8 @@ class CogVideoXPatchEmbed(nn.Cell):
                 self.pos_embedding = pos_embedding
 
     def _get_positional_embeddings(self, sample_height: int, sample_width: int, sample_frames: int) -> Tensor:
-        post_patch_height = sample_height // self.patch_size
-        post_patch_width = sample_width // self.patch_size
+        post_patch_height = sample_height // self.patch_size[1]
+        post_patch_width = sample_width // self.patch_size[2]
         post_time_compression_frames = (sample_frames - 1) // self.temporal_compression_ratio + 1
         num_patches = post_patch_height * post_patch_width * post_time_compression_frames
 
@@ -609,6 +835,7 @@ class CogVideoXBlock(nn.Cell):
         ff_bias: bool = True,
         attention_out_bias: bool = True,
         enable_flash_attention: bool = False,
+        enable_sequence_parallelism: bool = False,
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
@@ -618,7 +845,11 @@ class CogVideoXBlock(nn.Cell):
             time_embed_dim, dim, norm_elementwise_affine, norm_eps, bias=True, dtype=dtype
         )
 
-        attn_ = FlashAttention if enable_flash_attention else Attention
+        if enable_sequence_parallelism:
+            attn_ = SequenceParallelFlashAttention if enable_flash_attention else SequenceParallelAttention
+        else:
+            attn_ = FlashAttention if enable_flash_attention else Attention
+
         self.attn1 = attn_(
             query_dim=dim,
             dim_head=attention_head_dim,
@@ -714,6 +945,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         use_learned_positional_embeddings: bool = False,
         patch_bias: bool = True,
         enable_flash_attention: bool = False,
+        enable_sequence_parallelism: bool = False,
         use_recompute: bool = False,
         dtype: ms.Type = ms.float32,
     ) -> None:
@@ -726,6 +958,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         self.attention_head_dim = attention_head_dim
         self.hidden_size = self.attention_head_dim * num_attention_heads
         self.num_heads = num_attention_heads
+        self.enable_sequence_parallelism = enable_sequence_parallelism
 
         inner_dim = num_attention_heads * attention_head_dim
 
@@ -774,6 +1007,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
                     norm_elementwise_affine=norm_elementwise_affine,
                     norm_eps=norm_eps,
                     enable_flash_attention=enable_flash_attention,
+                    enable_sequence_parallelism=enable_sequence_parallelism,
                     dtype=dtype,
                 )
                 for _ in range(num_layers)
@@ -790,6 +1024,14 @@ class CogVideoXTransformer3DModel(nn.Cell):
             dtype=dtype,
         )
         self.proj_out = mint.nn.Linear(inner_dim, np.prod(patch_size).item() * out_channels, dtype=dtype)
+
+        if self.enable_sequence_parallelism:
+            sp_group = get_sequence_parallel_group()
+            logger.info(f"Initialize STDIT-v3 model with sequence parallel group `{sp_group}`.")
+            self.sp_size = get_group_size(sp_group)
+            assert self.num_heads % self.sp_size == 0
+            self.split_forward_gather_backward = SplitFowardGatherBackward(dim=1, grad_scale="down", group=sp_group)
+            self.gather_forward_split_backward = GatherFowardSplitBackward(dim=1, grad_scale="up", group=sp_group)
 
         if use_recompute:
             for block in self.transformer_blocks:
@@ -825,6 +1067,12 @@ class CogVideoXTransformer3DModel(nn.Cell):
         encoder_hidden_states = hidden_states[:, :text_seq_length]
         hidden_states = hidden_states[:, text_seq_length:]
 
+        if self.enable_sequence_parallelism:
+            assert hidden_states.shape[1] % self.sp_size == 0
+            assert encoder_hidden_states.shape[1] % self.sp_size == 0
+            hidden_states = self.split_forward_gather_backward(hidden_states)
+            encoder_hidden_states = self.split_forward_gather_backward(encoder_hidden_states)
+
         # 3. Transformer blocks
         for block in self.transformer_blocks:
             hidden_states, encoder_hidden_states = block(
@@ -833,6 +1081,10 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 temb=emb,
                 image_rotary_emb=image_rotary_emb,
             )
+
+        if self.enable_sequence_parallelism:
+            hidden_states = self.gather_forward_split_backward(hidden_states)
+            encoder_hidden_states = self.gather_forward_split_backward(encoder_hidden_states)
 
         if not self.use_rotary_positional_embeddings:
             # CogVideoX-2B
@@ -886,7 +1138,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         x: Tensor,
         timestep: Tensor,
         y: Tensor,
-        image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None,
+        image_rotary_emb: Optional[Tensor] = None,
         cfg_scale: Union[float, Tensor] = 6.0,
         **kwargs,
     ) -> Tensor:
