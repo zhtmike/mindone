@@ -1,6 +1,6 @@
 # diffusers/models/transformers/cogvideox_transformer_3d.py -- v0.31.0
 import logging
-from typing import List, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 import numpy as np
 from opensora.acceleration.communications import AlltoAll, GatherFowardSplitBackward, SplitFowardGatherBackward
@@ -947,6 +947,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         enable_flash_attention: bool = False,
         enable_sequence_parallelism: bool = False,
         use_recompute: bool = False,
+        rope_grid_type: Literal["linspace", "slice"] = "linspace",
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
@@ -959,6 +960,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         self.hidden_size = self.attention_head_dim * num_attention_heads
         self.num_heads = num_attention_heads
         self.enable_sequence_parallelism = enable_sequence_parallelism
+        self.rope_grid_type = rope_grid_type
 
         inner_dim = num_attention_heads * attention_head_dim
 
@@ -1195,11 +1197,12 @@ def CogVideoX_5B_v1_5(from_pretrained: Optional[str] = None, **kwargs) -> CogVid
         num_attention_heads=48,
         num_layers=42,
         use_rotary_positional_embeddings=True,
-        sample_width=170,
-        sample_height=96,
+        sample_width=300,
+        sample_height=300,
         sample_frames=81,
         patch_size=(2, 2, 2),
         patch_bias=False,
+        rope_grid_type="slice",
         **kwargs,
     )
 

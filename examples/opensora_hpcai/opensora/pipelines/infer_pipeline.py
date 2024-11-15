@@ -422,6 +422,12 @@ class InferPipelineFiTLike(InferPipeline):
 
 
 class InferPipelineCogVideoX(InferPipeline):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert isinstance(self.vae, AutoencoderKLCogVideoX)
+        self.vae.enable_slicing()
+        self.vae.enable_tiling()
+
     def vae_decode_video(self, x: Tensor) -> Tensor:
         """
         Args:
@@ -429,7 +435,6 @@ class InferPipelineCogVideoX(InferPipeline):
         Return:
             y: (b f H W 3), batch of images, normalized to [0, 1]
         """
-        assert isinstance(self.vae, AutoencoderKLCogVideoX)
         y = ops.stop_gradient(self.vae.decode(x.to(self.vae.dtype)) / self.vae.scaling_factor)
         y = ops.clip_by_value((y + 1.0) / 2.0, clip_value_min=0.0, clip_value_max=1.0)
         # (b 3 t h w) -> (b t h w 3)
@@ -492,6 +497,8 @@ class InferPipelineCogVideoX(InferPipeline):
             crops_coords=grid_crops_coords,
             grid_size=(grid_height, grid_width),
             temporal_size=base_num_frames,
+            grid_type=self.model.rope_grid_type,
+            max_size=(base_size_height, base_size_width),
         )
 
         return np.stack([freqs_cos, freqs_sin])[None]

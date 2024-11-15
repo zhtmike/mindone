@@ -278,6 +278,7 @@ def initialize_dataset(
             use_rotary_positional_embeddings=getattr(latte_model, "use_rotary_positional_embeddings", False),
             sample_width=getattr(latte_model, "sample_width", None),
             sample_height=getattr(latte_model, "sample_height", None),
+            rope_grid_type=getattr(latte_model, "rope_grid_type", None),
         )
 
         datasets = [

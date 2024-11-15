@@ -161,6 +161,7 @@ class VideoDatasetRefactored(BaseDataset):
         self._sample_width = model_config.get("sample_width", None)
         self._sample_height = model_config.get("sample_height", None)
         self._use_rotary_positional_embeddings = model_config.get("use_rotary_positional_embeddings", False)
+        self._rope_grid_type = model_config.get("rope_grid_type", None)
 
     @staticmethod
     def _read_data(
@@ -439,6 +440,8 @@ class VideoDatasetRefactored(BaseDataset):
             crops_coords=grid_crops_coords,
             grid_size=(grid_height, grid_width),
             temporal_size=base_num_frames,
+            grid_type=self._rope_grid_type,
+            max_size=(base_size_height, base_size_width),
         )
 
         return np.stack([freqs_cos, freqs_sin])

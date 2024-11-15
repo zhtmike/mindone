@@ -1016,6 +1016,14 @@ class AutoencoderKLCogVideoX(nn.Cell):
 
         return h
 
+    def encode_with_moments_output(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+        """For latent caching usage"""
+        x = self.encode(x)
+        mean, logvar = mint.chunk(x, 2, dim=1)
+        logvar = mint.clamp(logvar, -30.0, 20.0)
+        std = mint.exp(0.5 * logvar)
+        return mean, std
+
     def _decode(self, z: Tensor) -> Tensor:
         batch_size, num_channels, num_frames, height, width = z.shape
 
