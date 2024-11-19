@@ -723,6 +723,7 @@ class CogVideoXPatchEmbed(nn.Cell):
                 start_dim=1, end_dim=2
             )  # [batch, num_frames x height x width, channels]
         else:
+            assert num_frames % self.patch_size[0] == 0
             image_embeds = image_embeds.permute(0, 1, 3, 4, 2)
             image_embeds = image_embeds.reshape(
                 batch_size,

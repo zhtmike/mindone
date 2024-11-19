@@ -130,7 +130,7 @@ def main(args):
 
     # model initiate and weight loading
     ckpt_path = args.t5_model_dir
-    dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16}
+    dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16, "fp32": ms.float32}
     if args.t5_model == "integrated":
         text_encoder, tokenizer = get_text_encoder_and_tokenizer(
             "t5", ckpt_path, model_max_length=args.model_max_length

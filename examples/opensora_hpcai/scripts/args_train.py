@@ -57,7 +57,7 @@ def parse_train_args(parser):
     )
     parser.add_argument(
         "--pretrained_model_path",
-        default="",
+        default=None,
         type=str,
         nargs="+",
         help="Specify the pretrained model path, either a pretrained " "DiT model or a pretrained Latte model.",
@@ -292,6 +292,9 @@ def parse_train_args(parser):
         "--aspect_ratio", type=str, help=f"Supported video aspect ratios: {list(ASPECT_RATIO_MAP.keys())}"
     )
     parser.add_argument("--num_frames", default=16, type=int, help="the num of frames used to initiate model")
+    parser.add_argument(
+        "--num_latent_frames", default=None, type=int, help="the num of latent frames used to initiate model"
+    )
     parser.add_argument("--frame_stride", default=1, type=int, help="frame sampling stride")
     parser.add_argument("--mask_ratios", type=dict, help="Masking ratios")
     parser.add_argument("--bucket_config", type=dict, help="Multi-resolution bucketing configuration")
@@ -423,6 +426,8 @@ def parse_args():
 
     if isinstance(args.pretrained_model_path, str):
         args.pretrained_model_path = [args.pretrained_model_path]
+    elif args.pretrained_model_path is None:
+        args.pretrained_model_path = []
 
     # convert to absolute path, necessary for modelarts
     args.csv_path = to_abspath(abs_path, args.csv_path)

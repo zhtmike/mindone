@@ -267,6 +267,7 @@ def main(args):
         latte_model = CogVideoX_2B(
             enable_flash_attention=args.enable_flash_attention,
             enable_sequence_parallelism=args.enable_sequence_parallelism,
+            max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
     elif args.model_version == "CogVideoX-5B":
@@ -275,6 +276,7 @@ def main(args):
         latte_model = CogVideoX_5B(
             enable_flash_attention=args.enable_flash_attention,
             enable_sequence_parallelism=args.enable_sequence_parallelism,
+            max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
     elif args.model_version == "CogVideoX-5B-v1.5":
@@ -283,6 +285,7 @@ def main(args):
         latte_model = CogVideoX_5B_v1_5(
             enable_flash_attention=args.enable_flash_attention,
             enable_sequence_parallelism=args.enable_sequence_parallelism,
+            max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
     else:
@@ -505,11 +508,6 @@ def main(args):
             # prepare inputs
             inputs = {}
             # b c t h w
-            if latent_size[0] % latte_model.patch_size[0] != 0:
-                num_padded_t = latte_model.patch_size[0] - latent_size[0] % latte_model.patch_size[0]
-                latent_size[0] += num_padded_t
-                inputs["num_padded_t"] = num_padded_t
-
             z = np.random.randn(ns, VAE_Z_CH, *latent_size).astype(np.float32)
 
             if args.model_version != "v1":
@@ -613,7 +611,7 @@ def parse_args():
     parser.add_argument(
         "--ckpt_path",
         type=str,
-        default=[""],
+        default=None,
         nargs="+",
         help="latte checkpoint path. If specified, will load from it, otherwise, will use random initialization",
     )
@@ -822,6 +820,9 @@ def parse_args():
     # convert to absolute path, necessary for modelarts
     if isinstance(args.ckpt_path, str):
         args.ckpt_path = [args.ckpt_path]
+    elif args.ckpt_path is None:
+        args.ckpt_path = []
+
     args.ckpt_path = [to_abspath(abs_path, x) for x in args.ckpt_path]
     args.vae_checkpoint = to_abspath(abs_path, args.vae_checkpoint)
     args.prompt_path = to_abspath(abs_path, args.prompt_path)

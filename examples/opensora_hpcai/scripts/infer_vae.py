@@ -147,13 +147,13 @@ def main(args):
 
     # model initiate and weight loading
     logger.info("vae init")
-    dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16}
+    dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16, "fp32": ms.float32}
     if args.vae_type == "CogVideoX-VAE":
         vae = CogVideoX_VAE(dtype=dtype_map[args.dtype])
         vae.load_from_checkpoint(args.vae_checkpoint)
         vae.set_train(False)
-        # vae.enable_slicing()
-        # vae.enable_tiling()
+        vae.enable_slicing()
+        vae.enable_tiling()
     else:
         VAE_Z_CH = SD_CONFIG["z_channels"]
         vae = AutoencoderKL(
@@ -251,7 +251,11 @@ def main(args):
                         video_latent_mean, video_latent_std = vae.encode_with_moments_output(
                             ms.Tensor(frame_data, dtype_map[args.dtype])
                         )
-                        save_output(video_path, video_latent_mean.asnumpy(), video_latent_std.asnumpy(), fps, ori_size)
+                        video_latent_mean = video_latent_mean.swapaxes(1, 2)
+                        video_latent_std = video_latent_std.swapaxes(1, 2)
+                        save_output(
+                            video_path, video_latent_mean[0].asnumpy(), video_latent_std[0].asnumpy(), fps, ori_size
+                        )
                         break
 
                     save_output(video_path, video_latent_mean, video_latent_std, fps, ori_size)

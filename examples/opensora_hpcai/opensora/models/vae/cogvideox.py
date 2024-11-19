@@ -5,13 +5,14 @@ import os
 from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
+from safetensors import safe_open
 
 import mindspore as ms
 import mindspore.mint as mint
 import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 import mindspore.ops as ops
-from mindspore import Tensor
+from mindspore import Parameter, Tensor
 
 from .layer import GroupNorm
 
@@ -66,11 +67,20 @@ class CogVideoXSafeConv3d(nn.Conv3d):
 
             output_chunks = []
             for input_chunk in input_chunks:
-                output_chunks.append(super().construct(input_chunk))
+                output_chunks.append(self._construct(input_chunk))
             output = mint.cat(output_chunks, dim=2)
             return output
         else:
-            return super().construct(input)
+            return self._construct(input)
+
+    def _construct(self, x):
+        # TODO: drop cast when it supports fp32
+        dtype = x.dtype
+        assert self.group == 1
+        out = self.conv3d(x.to(ms.bfloat16), self.weight.to(ms.bfloat16))
+        if self.has_bias:
+            out = self.bias_add(out, self.bias.to(ms.bfloat16))
+        return out.to(dtype)
 
 
 class CogVideoXCausalConv3d(nn.Cell):
@@ -1231,7 +1241,15 @@ class AutoencoderKLCogVideoX(nn.Cell):
             logger.warning(f"{ckpt_path} not found. No checkpoint loaded!!")
         else:
             format = "safetensors" if ckpt_path.endswith(".safetensors") else "ckpt"
-            ms.load_checkpoint(ckpt_path, self, format=format)
+            if format == "ckpt":
+                parameter_dict = ms.load_checkpoint(ckpt_path)
+            else:
+                parameter_dict = dict()
+                with safe_open(ckpt_path, framework="np") as f:
+                    for k in f.keys():
+                        parameter_dict[k] = Parameter(Tensor(f.get_tensor(k), dtype=self.dtype))
+            param_not_load, ckpt_not_load = ms.load_param_into_net(self, parameter_dict, strict_load=True)
+            assert len(param_not_load) == 0 and len(ckpt_not_load) == 0
 
     def get_latent_size(self, input_size: Tuple[Optional[int], ...]) -> Tuple[Optional[int], ...]:
         latent_size = []

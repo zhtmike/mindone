@@ -208,7 +208,7 @@ class VideoDataset:
 
         bs = micro_batch_size
         for i in range(0, video_length, bs):
-            frame_indice = list(range(i, min(i + bs, min(video_length, 81)), sample_stride))
+            frame_indice = list(range(i, min(i + bs, min(video_length, 77)), sample_stride))
             if len(frame_indice) == 0:
                 return
             pixel_values = video_reader.get_batch(frame_indice).asnumpy()  # shape: (f, h, w, c)

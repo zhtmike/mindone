@@ -289,6 +289,7 @@ def initialize_dataset(
                 vae_latent_folder=vae_latent_folder,
                 vae_scale_factor=args.sd_scale_factor,
                 sample_n_frames=args.num_frames,
+                sample_n_latent_frames=args.num_latent_frames,
                 sample_stride=args.frame_stride,
                 frames_mask_generator=mask_gen,
                 t_compress_func=(lambda x: vae.get_latent_size((x, None, None))[0]) if vae is not None else None,
@@ -480,7 +481,9 @@ def main(args):
         logger.info(f"{model_name} init")
         latte_model = CogVideoX_2B(
             enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
             use_recompute=args.use_recompute,
+            max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
     elif args.model_version == "CogVideoX-5B":
@@ -488,7 +491,9 @@ def main(args):
         logger.info(f"{model_name} init")
         latte_model = CogVideoX_5B(
             enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
             use_recompute=args.use_recompute,
+            max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
     elif args.model_version == "CogVideoX-5B-v1.5":
@@ -496,7 +501,9 @@ def main(args):
         logger.info(f"{model_name} init")
         latte_model = CogVideoX_5B_v1_5(
             enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
             use_recompute=args.use_recompute,
+            max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
     else:

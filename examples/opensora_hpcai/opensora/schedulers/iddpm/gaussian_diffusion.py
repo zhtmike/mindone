@@ -4,6 +4,7 @@
 #     IDDPM: https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/gaussian_diffusion.py
 
 
+import logging
 from functools import partial
 from typing import Optional
 
@@ -23,6 +24,8 @@ from .diffusion_utils import (
     normal_kl,
     rescale_zero_terminal_snr,
 )
+
+_logger = logging.getLogger()
 
 
 @ms.jit_class
@@ -649,6 +652,10 @@ class GaussianDiffusion:
                 model_kwargs=model_kwargs,
                 eta=eta,
                 frames_mask=frames_mask,
+            )
+            sample = out["sample"]
+            _logger.info(
+                f"max: {sample.max().item()}, min: {sample.min().item()}, mean: {sample.mean().item()}, std: {sample.std().item()}"
             )
             yield out
             img = out["sample"]

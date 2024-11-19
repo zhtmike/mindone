@@ -68,6 +68,7 @@ class VideoDatasetRefactored(BaseDataset):
         vae_downsample_rate: float = 8.0,
         vae_scale_factor: float = 0.18215,
         sample_n_frames: int = 16,
+        sample_n_latent_frames: Optional[int] = None,
         sample_stride: int = 1,
         frames_mask_generator: Optional[Callable[[int], np.ndarray]] = None,
         t_compress_func: Optional[Callable[[int], int]] = None,
@@ -93,7 +94,11 @@ class VideoDatasetRefactored(BaseDataset):
             )
 
         self._data = self._read_data(video_folder, csv_path, text_emb_folder, vae_latent_folder, filter_data)
-        self._frames = sample_n_frames
+        self._frames = (
+            sample_n_latent_frames
+            if sample_n_latent_frames is not None and vae_latent_folder is not None
+            else sample_n_frames
+        )
         self._stride = sample_stride
         self._min_length = (self._frames - 1) * self._stride + 1
         self._text_emb_folder = text_emb_folder
@@ -257,8 +262,8 @@ class VideoDatasetRefactored(BaseDataset):
             batch_index = np.linspace(start_pos, start_pos + self._min_length - 1, num_frames, dtype=int)
 
             latent_mean, latent_std = latent_mean[batch_index], latent_std[batch_index]
-            vae_latent = latent_mean + latent_std * np.random.standard_normal(latent_mean.shape)
-            video = (vae_latent * self._vae_scale_factor).astype(np.float32)
+            vae_latent = np.random.normal(loc=latent_mean, scale=latent_std, size=latent_mean.shape)
+            video = vae_latent * self._vae_scale_factor
 
             data["height"] = np.array(video.shape[-2] * self._vae_downsample_rate, dtype=np.float32)
             data["width"] = np.array(video.shape[-1] * self._vae_downsample_rate, dtype=np.float32)
@@ -367,10 +372,11 @@ class VideoDatasetRefactored(BaseDataset):
                 data["video"] = clip
 
         if self._use_rotary_positional_embeddings:
-            # hard code for cogvideo-x
+            # for cogvideo-x
             t, _, h, w = data["video"].shape
-            t = self._t_compress_func(t)
-            h, w = h // self._vae_downsample_rate, w // self._vae_downsample_rate
+            if self._vae_latent_folder is None:
+                t = self._t_compress_func(t)
+                h, w = h // self._vae_downsample_rate, w // self._vae_downsample_rate
             data["image_rotary_emb"] = self._prepare_rotary_positional_embeddings(int(h), int(w), t)
 
         final_outputs = tuple(data.pop(c) for c in self.output_columns)

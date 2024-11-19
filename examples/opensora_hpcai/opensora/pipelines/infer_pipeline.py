@@ -5,6 +5,8 @@ try:
 except ImportError:
     from typing_extensions import Literal  # FIXME: python 3.7
 
+import logging
+
 import numpy as np
 
 import mindspore as ms
@@ -20,6 +22,8 @@ from ..schedulers.iddpm import create_diffusion
 from ..schedulers.rectified_flow import RFLOW
 
 __all__ = ["InferPipeline", "InferPipelineFiTLike", "InferPipelineCogVideoX"]
+
+_logger = logging.getLogger()
 
 
 class InferPipeline:
@@ -483,8 +487,8 @@ class InferPipelineCogVideoX(InferPipeline):
         return (crop_top, crop_left), (crop_top + resize_height, crop_left + resize_width)
 
     def prepare_rotary_positional_embeddings(self, height: int, width: int, num_frames: int) -> np.ndarray:
-        grid_height = height // 2
-        grid_width = width // 2
+        grid_height = height // self.model.patch_size[1]
+        grid_width = width // self.model.patch_size[2]
         base_size_width = self.model.sample_width // self.model.patch_size[2]
         base_size_height = self.model.sample_height // self.model.patch_size[1]
         base_num_frames = (num_frames + self.model.patch_size[0] - 1) // self.model.patch_size[0]
@@ -543,14 +547,14 @@ class InferPipelineCogVideoX(InferPipeline):
                 progress=True,
             )
 
-        num_padded_t = inputs.get("num_padded_t", None)
-        if num_padded_t is not None:
-            latents = latents[:, :, num_padded_t:]
-
         if self.vae is not None:
             # latents: (b c t h w)
             # out: (b T H W C)
-            images = self.vae_decode_video(latents)
-            return images, latents
+            try:
+                images = self.vae_decode_video(latents)
+                return images, latents
+            except Exception as e:
+                _logger.warning(f"Cannot decode video. {repr(e)}.")
+                return None, latents
         else:
             return None, latents
