@@ -344,9 +344,10 @@ class ZeroHelper:
                     param.assign_value(self.split_param(param))
                     _logger.debug(f"Optimizer {param.name} from {ori_shape} to {param.shape}")
                 for param_tuple in param_tuples:
-                    ori_shape = param_tuple[i].shape
-                    param_tuple[i].assign_value(self.split_param(param_tuple[i]))
-                    _logger.debug(f"Optimizer {param_tuple[i].name} " f"from {ori_shape} to {param_tuple[i].shape}")
+                    if param_tuple[i].parallel_optimizer:
+                        ori_shape = param_tuple[i].shape
+                        param_tuple[i].assign_value(self.split_param(param_tuple[i]))
+                        _logger.debug(f"Optimizer {param_tuple[i].name} " f"from {ori_shape} to {param_tuple[i].shape}")
 
     def reduce_scatter_gradients(self, gradients):
         dtype = gradients[0].dtype

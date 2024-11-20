@@ -1,5 +1,7 @@
 from typing import List, Tuple
 
+import numpy as np
+
 import mindspore as ms
 import mindspore.nn as nn
 import mindspore.ops as ops
@@ -142,71 +144,78 @@ class CAME(nn.Optimizer):
             if len(x.shape) >= 2:
                 v_row.append(
                     Parameter(
-                        ops.zeros(x.shape[:-1], dtype=ms.float32),
+                        np.zeros(x.shape[:-1], dtype=np.float32),
                         name=x.name + "_v_row",
                         requires_grad=False,
                     )
                 )
                 v_col.append(
                     Parameter(
-                        ops.zeros(x.shape[:-2] + x.shape[-1:], dtype=ms.float32),
+                        np.zeros(x.shape[:-2] + x.shape[-1:], dtype=np.float32),
                         name=x.name + "_v_col",
                         requires_grad=False,
+                        parallel_optimizer=False if len(x.shape) == 2 else True,
                     )
                 )
                 v_res_row.append(
                     Parameter(
-                        ops.zeros(x.shape[:-1], dtype=ms.float32),
+                        np.zeros(x.shape[:-1], dtype=np.float32),
                         name=x.name + "_v_res_row",
                         requires_grad=False,
                     )
                 )
                 v_res_col.append(
                     Parameter(
-                        ops.zeros(x.shape[:-2] + x.shape[-1:], dtype=ms.float32),
+                        np.zeros(x.shape[:-2] + x.shape[-1:], dtype=np.float32),
                         name=x.name + "_v_res_col",
                         requires_grad=False,
+                        parallel_optimizer=False if len(x.shape) == 2 else True,
                     )
                 )
                 v.append(
                     Parameter(
-                        ops.zeros((1,), dtype=ms.float32),
+                        np.zeros((1,), dtype=np.uint8),
                         name=x.name + "_v",
                         requires_grad=False,
+                        parallel_optimizer=False,
                     )
                 )
             else:
                 v_row.append(
                     Parameter(
-                        ops.zeros((1,), dtype=ms.float32),
+                        np.zeros((1,), dtype=np.uint8),
                         name=x.name + "_v_row",
                         requires_grad=False,
+                        parallel_optimizer=False,
                     )
                 )
                 v_col.append(
                     Parameter(
-                        ops.zeros((1,), dtype=ms.float32),
+                        np.zeros((1,), dtype=np.uint8),
                         name=x.name + "_v_col",
                         requires_grad=False,
+                        parallel_optimizer=False,
                     )
                 )
                 v_res_row.append(
                     Parameter(
-                        ops.zeros((1,), dtype=ms.float32),
+                        np.zeros((1,), dtype=np.uint8),
                         name=x.name + "_v_res_row",
                         requires_grad=False,
+                        parallel_optimizer=False,
                     )
                 )
                 v_res_col.append(
                     Parameter(
-                        ops.zeros((1,), dtype=ms.float32),
+                        np.zeros((1,), dtype=np.uint8),
                         name=x.name + "_v_res_col",
                         requires_grad=False,
+                        parallel_optimizer=False,
                     )
                 )
                 v.append(
                     Parameter(
-                        ops.zeros_like(x, dtype=ms.float32),
+                        np.zeros(x.shape, dtype=np.float32),
                         name=x.name + "_v",
                         requires_grad=False,
                     )
@@ -221,7 +230,7 @@ class CAME(nn.Optimizer):
         self.m = ParameterTuple(
             [
                 Parameter(
-                    ops.zeros_like(x, dtype=ms.float32),
+                    np.zeros(x.shape, dtype=np.float32),
                     name=x.name + "_m",
                     requires_grad=False,
                 )
