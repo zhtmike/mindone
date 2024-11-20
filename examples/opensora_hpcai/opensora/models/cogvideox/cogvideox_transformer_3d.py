@@ -151,7 +151,7 @@ class QKVAlltoALL(AlltoAll):
 
         if split_pad > 0:
             padding = (len(x.shape) - self.split_dim - 1) * (0, 0) + (0, split_pad)
-            x = mint.nn.functional.pad(x, padding)
+            x = F.pad(x, padding)
 
         x = self.alltoall(x)
 
@@ -1085,22 +1085,14 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 image_rotary_emb=image_rotary_emb,
             )
 
-        if self.enable_sequence_parallelism:
-            hidden_states = self.gather_forward_split_backward(hidden_states)
-            encoder_hidden_states = self.gather_forward_split_backward(encoder_hidden_states)
-
-        if not self.use_rotary_positional_embeddings:
-            # CogVideoX-2B
-            hidden_states = self.norm_final(hidden_states)
-        else:
-            # CogVideoX-5B
-            hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
-            hidden_states = self.norm_final(hidden_states)
-            hidden_states = hidden_states[:, text_seq_length:]
+        hidden_states = self.norm_final(hidden_states)
 
         # 4. Final block
         hidden_states = self.norm_out(hidden_states, emb)
         hidden_states = self.proj_out(hidden_states)
+
+        if self.enable_sequence_parallelism:
+            hidden_states = self.gather_forward_split_backward(hidden_states)
 
         # 5. Unpatchify
         if self.patch_size[0] == 1:

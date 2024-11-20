@@ -7,7 +7,7 @@ PACKAGE_DIR="$(dirname "${EXAMPLE_DIR}")"
 
 export PYTHONPATH="${PROJECT_DIR}:${PACKAGE_DIR}:${PYTHONPATH}"
 
-echo "Pynative Mode:"
-msrun --master_port=1234 --worker_num=2 --local_worker_num=2 --log_dir="./log_test_sp_graph" --join True ${SCRIPT_DIR}/test_cogvideox_sequence_parallelism.py --mode 1
+echo "Graph Mode:"
+msrun --master_port=1234 --worker_num=2 --local_worker_num=2 --log_dir="./log_test_sp_graph" --join True ${SCRIPT_DIR}/test_cogvideox_sequence_parallelism.py --mode 0
 echo "Done. Check the log at './log_test_sp_graph'."
 echo "=============================================="
