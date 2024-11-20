@@ -89,16 +89,15 @@ def _update_run_op(
     if decay_flag:
         param_ = param_ - lr * weight_decay * param_
 
-    param_ = ops.cast(param_, dtype)
-    ops.assign(param, param_)
-    ops.assign(m, m_next)
+    ops.assign(param, ops.cast(param_, dtype))
+    ops.assign(m, ops.cast(m_next, dtype))
     if factored:
-        ops.assign(v_row, v_row_next)
-        ops.assign(v_col, v_col_next)
-        ops.assign(v_res_row, v_res_row_next)
-        ops.assign(v_res_col, v_res_col_next)
+        ops.assign(v_row, ops.cast(v_row_next, dtype))
+        ops.assign(v_col, ops.cast(v_col_next, dtype))
+        ops.assign(v_res_row, ops.cast(v_res_row_next, dtype))
+        ops.assign(v_res_col, ops.cast(v_res_col_next, dtype))
     else:
-        ops.assign(v, v_next)
+        ops.assign(v, ops.cast(v_next, dtype))
 
     return param_
 
@@ -144,14 +143,14 @@ class CAME(nn.Optimizer):
             if len(x.shape) >= 2:
                 v_row.append(
                     Parameter(
-                        np.zeros(x.shape[:-1], dtype=np.float32),
+                        ops.zeros(x.shape[:-1], dtype=x.dtype),
                         name=x.name + "_v_row",
                         requires_grad=False,
                     )
                 )
                 v_col.append(
                     Parameter(
-                        np.zeros(x.shape[:-2] + x.shape[-1:], dtype=np.float32),
+                        ops.zeros(x.shape[:-2] + x.shape[-1:], dtype=x.dtype),
                         name=x.name + "_v_col",
                         requires_grad=False,
                         parallel_optimizer=False if len(x.shape) == 2 else True,
@@ -159,14 +158,14 @@ class CAME(nn.Optimizer):
                 )
                 v_res_row.append(
                     Parameter(
-                        np.zeros(x.shape[:-1], dtype=np.float32),
+                        ops.zeros(x.shape[:-1], dtype=x.dtype),
                         name=x.name + "_v_res_row",
                         requires_grad=False,
                     )
                 )
                 v_res_col.append(
                     Parameter(
-                        np.zeros(x.shape[:-2] + x.shape[-1:], dtype=np.float32),
+                        ops.zeros(x.shape[:-2] + x.shape[-1:], dtype=x.dtype),
                         name=x.name + "_v_res_col",
                         requires_grad=False,
                         parallel_optimizer=False if len(x.shape) == 2 else True,
@@ -215,7 +214,7 @@ class CAME(nn.Optimizer):
                 )
                 v.append(
                     Parameter(
-                        np.zeros(x.shape, dtype=np.float32),
+                        ops.zeros(x.shape, dtype=x.dtype),
                         name=x.name + "_v",
                         requires_grad=False,
                     )
@@ -230,7 +229,7 @@ class CAME(nn.Optimizer):
         self.m = ParameterTuple(
             [
                 Parameter(
-                    np.zeros(x.shape, dtype=np.float32),
+                    ops.zeros(x.shape, dtype=x.dtype),
                     name=x.name + "_m",
                     requires_grad=False,
                 )
