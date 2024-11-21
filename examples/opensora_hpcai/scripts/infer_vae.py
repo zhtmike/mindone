@@ -152,8 +152,6 @@ def main(args):
         vae = CogVideoX_VAE(dtype=dtype_map[args.dtype])
         vae.load_from_checkpoint(args.vae_checkpoint)
         vae.set_train(False)
-        vae.enable_slicing()
-        vae.enable_tiling()
     else:
         VAE_Z_CH = SD_CONFIG["z_channels"]
         vae = AutoencoderKL(
