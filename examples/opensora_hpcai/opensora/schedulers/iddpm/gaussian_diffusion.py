@@ -13,7 +13,9 @@ from opensora.models.layers.operation_selector import get_split_op
 
 import mindspore as ms
 from mindspore import Tensor, ops
+from mindspore.communication import get_rank
 
+from ...acceleration.parallel_states import get_sequence_parallel_group
 from .diffusion_utils import (
     LossType,
     ModelMeanType,
@@ -125,6 +127,13 @@ class GaussianDiffusion:
 
         self.split = get_split_op()
 
+        self.sp_group = get_sequence_parallel_group()
+        if self.sp_group is not None:
+            logging.info(
+                f"Broadcasting all random variables from rank (0) to current rank ({get_rank(self.sp_group)}) in group `{self.sp_group}`."
+            )
+            self.broadcast = ops.Broadcast(0, group=self.sp_group)
+
     def q_mean_variance(self, x_start, t):
         """
         Get the distribution q(x_t | x_0).
@@ -147,7 +156,7 @@ class GaussianDiffusion:
         :return: A noisy version of x_start.
         """
         if noise is None:
-            noise = ops.randn_like(x_start)
+            noise = self._broadcast(ops.randn_like(x_start))
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
             + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
@@ -155,7 +164,7 @@ class GaussianDiffusion:
 
     def get_v(self, x_start, t, noise=None):
         if noise is None:
-            noise = ops.randn_like(x_start)
+            noise = self._broadcast(ops.randn_like(x_start))
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * noise
             - _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * x_start
@@ -345,8 +354,8 @@ class GaussianDiffusion:
             # x0: copy unchanged x values
             # x_noise: add noise to x values
             x0 = x.copy()
-            x_noise = x0 * _extract_into_tensor(self.sqrt_alphas_cumprod, t, x.shape) + ops.randn_like(
-                x
+            x_noise = x0 * _extract_into_tensor(self.sqrt_alphas_cumprod, t, x.shape) + self._broadcast(
+                ops.randn_like(x)
             ) * _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
 
             # active noise addition
@@ -366,7 +375,7 @@ class GaussianDiffusion:
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
         )
-        noise = ops.randn_like(x)
+        noise = self._broadcast(ops.randn_like(x))
         nonzero_mask = (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))  # no noise when t == 0
         if cond_fn is not None:
             out["mean"] = self.condition_mean(cond_fn, out, x, t, model_kwargs=model_kwargs)
@@ -443,7 +452,7 @@ class GaussianDiffusion:
         if noise is not None:
             img = noise
         else:
-            img = ops.randn(*shape)
+            img = self._broadcast(ops.randn(*shape))
         indices = list(range(self.num_timesteps))[::-1]
 
         if progress:
@@ -492,8 +501,8 @@ class GaussianDiffusion:
             # x0: copy unchanged x values
             # x_noise: add noise to x values
             x0 = x.copy()
-            x_noise = x0 * _extract_into_tensor(self.sqrt_alphas_cumprod, t, x.shape) + ops.randn_like(
-                x
+            x_noise = x0 * _extract_into_tensor(self.sqrt_alphas_cumprod, t, x.shape) + self._broadcast(
+                ops.randn_like(x)
             ) * _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
 
             # active noise addition
@@ -527,7 +536,7 @@ class GaussianDiffusion:
         alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t, x.shape)
         sigma = eta * ops.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar)) * ops.sqrt(1 - alpha_bar / alpha_bar_prev)
         # Equation 12.
-        noise = ops.randn_like(x)
+        noise = self._broadcast(ops.randn_like(x))
         mean_pred = out["pred_xstart"] * ops.sqrt(alpha_bar_prev) + ops.sqrt(1 - alpha_bar_prev - sigma**2) * eps
         nonzero_mask = (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))  # no noise when t == 0
         sample = mean_pred + nonzero_mask * sigma * noise
@@ -628,9 +637,7 @@ class GaussianDiffusion:
         if noise is not None:
             img = noise
         else:
-            img = ops.randn(
-                *shape,
-            )
+            img = self._broadcast(ops.randn(*shape))
         indices = list(range(self.num_timesteps))[::-1]
 
         if progress:
@@ -684,3 +691,8 @@ class GaussianDiffusion:
         # otherwise return KL(q(x_{t-1}|x_t,x_0) || p(x_{t-1}|x_t))
         output = ops.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
+
+    def _broadcast(self, x: Tensor) -> Tensor:
+        if self.sp_group is None:
+            return x
+        return self.broadcast((x,))[0]
