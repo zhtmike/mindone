@@ -107,7 +107,7 @@ class VideoDatasetRefactored(BaseDataset):
         self._vae_scale_factor = vae_scale_factor
         self._fmask_gen = frames_mask_generator
         self._dtype = dtype
-        self._t_compress_func = lambda x: x if t_compress_func is None else t_compress_func
+        self._t_compress_func = (lambda x: x) if t_compress_func is None else t_compress_func
         self._pre_patchify = pre_patchify
         self._buckets = buckets
 
