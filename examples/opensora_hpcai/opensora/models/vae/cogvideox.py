@@ -1215,7 +1215,7 @@ class AutoencoderKLCogVideoX(nn.Cell):
         mean, logvar = mint.chunk(x, 2, dim=1)
         logvar = mint.clamp(logvar, -30.0, 20.0)
         std = mint.exp(0.5 * logvar)
-        x = mint.normal(mean=mean.to(ms.float32), std=std.to(ms.float16), size=mean.shape).to(dtype)
+        x = mint.normal(mean=mean.to(ms.float32), std=std.to(ms.float32), size=mean.shape).to(dtype)
         return x
 
     def mode(self, x: Tensor) -> Tensor:
