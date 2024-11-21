@@ -1283,6 +1283,8 @@ class AutoencoderKLCogVideoX(nn.Cell):
             z = self.sample(posterior)
         else:
             z = self.mode(posterior)
+
+        z = z[:, :, 3:3+5]
         dec = self.decode(z)
         return dec
 

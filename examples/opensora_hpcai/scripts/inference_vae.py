@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
 from opensora.datasets.vae_dataset import create_dataloader
 from opensora.models.vae.vae import SD_CONFIG, SDXL_CONFIG, OpenSoraVAE_V1_2, VideoAutoencoderKL
+from opensora.models.vae import CogVideoX_VAE
 
 from mindone.utils.amp import auto_mixed_precision
 from mindone.utils.config import instantiate_from_config, str2bool
@@ -84,13 +85,21 @@ def main(args):
     set_logger(name="", output_dir=args.output_path, rank=0)
 
     # build model
-    if args.use_temporal_vae:
+    if args.use_temporal_vae and args.vae_type=='opensora':
         model = OpenSoraVAE_V1_2(
             micro_batch_size=4,
             micro_frame_size=17,
             ckpt_path=args.ckpt_path,
             freeze_vae_2d=True,
         )
+    elif args.vae_type == "cvx":
+        dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16, "fp32": ms.float32}
+        vae = CogVideoX_VAE(dtype=dtype_map[args.dtype])
+        vae.load_from_checkpoint(args.ckpt_path)
+        vae.set_train(False)
+        # vae.enable_slicing()
+        # vae.enable_tiling()
+        model = vae
     else:
         model = VideoAutoencoderKL(config=SDXL_CONFIG, ckpt_path=args.ckpt_path, micro_batch_size=4)
 
@@ -100,7 +109,7 @@ def main(args):
     # if args.eval_loss:
     #    lpips_loss_fn = LPIPS()
 
-    if args.dtype != "fp32":
+    if args.dtype != "fp32": # and args.vae_type != "cvx":
         amp_level = "O2"
         dtype = {"fp16": ms.float16, "bf16": ms.bfloat16}[args.dtype]
         # FIXME: due to AvgPool and ops.interpolate doesn't support bf16, we add them to fp32 cells
@@ -155,13 +164,17 @@ def main(args):
     for step, data in tqdm(enumerate(ds_iter)):
         x = data["video"]
         start_time = time.time()
-
+        
+        '''
         z = model.encode(x)
         if not args.encode_only:
-            if args.use_temporal_vae:
+            if args.use_temporal_vae and args.vae_type=='opensora':
                 recons = model.decode(z, num_frames=args.num_frames)
             else:
                 recons = model.decode(z)
+        '''
+        recons = model(x)
+
 
         # adapt to bf16
         recons = recons.to(ms.float32)
@@ -180,7 +193,7 @@ def main(args):
 
             recons_rgb = postprocess(recons.asnumpy())
             x_rgb = postprocess(x.asnumpy())
-
+            
             psnr_cur = [calc_psnr(x_rgb[i], recons_rgb[i]) for i in range(x_rgb.shape[0])]
             ssim_cur = [
                 calc_ssim(x_rgb[i], recons_rgb[i], data_range=255, channel_axis=-1, multichannel=True)
@@ -189,6 +202,9 @@ def main(args):
             mean_psnr += sum(psnr_cur)
             mean_ssim += sum(ssim_cur)
             num_samples += x_rgb.shape[0]
+            
+            logger.info(f"cur psnr: {psnr_cur[-1]:.4f}, mean psnr:{mean_psnr/num_samples:.4f}")
+            logger.info(f"cur ssim: {ssim_cur[-1]:.4f}, mean ssim:{mean_ssim/num_samples:.4f}")
 
             if args.eval_loss:
                 recon_loss = np.abs((x - recons).asnumpy())
@@ -267,6 +283,7 @@ def parse_args():
     )
     parser.add_argument("--save_vis", default=True, type=str2bool, help="whether save reconstructed images")
     parser.add_argument("--use_temporal_vae", default=True, type=str2bool, help="if False, just use spatial vae")
+    parser.add_argument("--vae_type", default="opensora", type=str, help="cvx, opensora")
     parser.add_argument("--encode_only", default=False, type=str2bool, help="only encode to save z or distribution")
     parser.add_argument("--video_column", default="video", type=str, help="name of column for videos saved in csv file")
     parser.add_argument(
