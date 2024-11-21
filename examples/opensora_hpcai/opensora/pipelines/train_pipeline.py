@@ -10,7 +10,9 @@ import numpy as np
 
 import mindspore as ms
 from mindspore import Tensor, _no_grad, jit_class, mint, nn, ops
+from mindspore.communication import get_rank
 
+from ..acceleration.parallel_states import get_sequence_parallel_group
 from ..models.layers.operation_selector import get_split_op
 from ..models.vae import AutoencoderKLCogVideoX
 from ..schedulers.iddpm import SpacedDiffusion
@@ -426,6 +428,13 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         super().__init__(*args, **kwargs)
         self.predict_v = self.diffusion.model_mean_type == ModelMeanType.VELOCITY
 
+        self.sp_group = get_sequence_parallel_group()
+        if self.sp_group is not None:
+            logging.info(
+                f"Broadcasting all random variables from rank (0) to current rank ({get_rank(self.sp_group)}) in group `{self.sp_group}`."
+            )
+            self.broadcast = ops.Broadcast(0, group=self.sp_group)
+
     def get_latents(self, x: Tensor) -> Tensor:
         assert isinstance(self.vae, AutoencoderKLCogVideoX)
         y = self.vae.encode(x.to(self.vae.dtype))
@@ -437,8 +446,8 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         self, x: Tensor, text_embed: Tensor, *args, image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None, **kwargs
     ) -> Tensor:
         # TODO: to mint.randint
-        t = ms.Tensor(np.random.randint(0, self.diffusion.num_timesteps, (x.shape[0],)))
-        noise = mint.normal(size=x.shape)
+        t = ops.randint(0, self.diffusion.num_timesteps, (x.shape[0],))
+        noise = self._broadcast(mint.normal(size=x.shape))
         x = x.to(ms.float32)
         x_t = self.diffusion.q_sample(x, t, noise=noise)
 
@@ -452,6 +461,11 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         loss = mean_flat((target - model_output) ** 2)
         loss = loss.mean()
         return loss
+
+    def _broadcast(self, x: Tensor) -> Tensor:
+        if self.sp_group is None:
+            return x
+        return self.broadcast((x,))[0]
 
 
 # TODO: poor design, extract schedulers away from DiffusionWithLoss
