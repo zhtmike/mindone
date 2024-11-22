@@ -8,4 +8,5 @@ python scripts/infer_vae.py \
     --dtype fp32 \
     --mode 1 \
     --max_frames 85 \
-    --num_parallel_workers 1
+    --num_parallel_workers 1 \
+    --transform_name crop_resize
