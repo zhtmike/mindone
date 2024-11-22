@@ -46,7 +46,7 @@ warmup_steps: 1000
 batch_size: 1
 clip_grad: True
 max_grad_norm: 1.0
-use_ema: True
+use_ema: False
 
 optim: "adamw_re"
 optim_eps: 1.e-8
