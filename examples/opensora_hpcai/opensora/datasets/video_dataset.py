@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import albumentations as A
 import cv2
@@ -116,6 +116,7 @@ class VideoDataset:
         resize_by_max_value=False,
         transform_name="center",
         filter_data: bool = False,
+        max_frames: Optional[int] = None,
         dtype: np.dtype = np.float32,
     ):
         logger.info(f"loading annotations from {csv_path} ...")
@@ -127,6 +128,7 @@ class VideoDataset:
         self.return_frame_data = return_frame_data
         self.sample_stride = sample_stride
         self.micro_batch_size = micro_batch_size
+        self.max_frames = max_frames
         self.dtype = dtype
 
         if resize_by_max_value:
@@ -204,11 +206,14 @@ class VideoDataset:
 
         video_reader = VideoReader(video_path)
         video_length = len(video_reader)
+        if self.max_frames is not None:
+            video_length = min(video_length, self.max_frames)
+
         fps = video_reader.get_avg_fps()
 
         bs = micro_batch_size
         for i in range(0, video_length, bs):
-            frame_indice = list(range(i, min(i + bs, min(video_length, 77)), sample_stride))
+            frame_indice = list(range(i, min(i + bs, video_length), sample_stride))
             if len(frame_indice) == 0:
                 return
             pixel_values = video_reader.get_batch(frame_indice).asnumpy()  # shape: (f, h, w, c)
