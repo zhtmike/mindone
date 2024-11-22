@@ -547,6 +547,10 @@ class InferPipelineCogVideoX(InferPipeline):
                 progress=True,
             )
 
+        t_offset = inputs.get("t_offset", 0)
+        if t_offset > 0:
+            latents = latents[:, :, t_offset:]
+
         if self.vae is not None:
             # latents: (b c t h w)
             # out: (b T H W C)
