@@ -48,7 +48,7 @@ def cogvideox_vae_decode_video(x: ms.Tensor, vae: AutoencoderKLCogVideoX, scale_
     Return:
         y: (b f H W 3), batch of images, normalized to [0, 1]
     """
-    y = ops.stop_gradient(vae.decode(x.to(vae.dtype) / scale_factor))
+    y = ops.stop_gradient(vae.decode((x / scale_factor).to(vae.dtype)))
     y = ops.clip_by_value((y + 1.0) / 2.0, clip_value_min=0.0, clip_value_max=1.0)
     # (b 3 t h w) -> (b t h w 3)
     y = ops.transpose(y, (0, 2, 3, 4, 1))
