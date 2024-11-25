@@ -439,7 +439,7 @@ class InferPipelineCogVideoX(InferPipeline):
         Return:
             y: (b f H W 3), batch of images, normalized to [0, 1]
         """
-        y = ops.stop_gradient(self.vae.decode(x.to(self.vae.dtype)) / self.scale_factor)
+        y = ops.stop_gradient(self.vae.decode(x.to(self.vae.dtype) / self.scale_factor))
         y = ops.clip_by_value((y + 1.0) / 2.0, clip_value_min=0.0, clip_value_max=1.0)
         # (b 3 t h w) -> (b t h w 3)
         y = ops.transpose(y, (0, 2, 3, 4, 1))
