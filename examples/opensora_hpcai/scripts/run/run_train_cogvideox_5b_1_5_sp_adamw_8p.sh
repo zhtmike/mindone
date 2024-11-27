@@ -8,11 +8,8 @@ msrun --worker_num=8 --local_worker_num=8 --log_dir=$output_dir scripts/train.py
     --vae_latent_folder datasets/mixkit-100videos/vae_448_720 \
     --use_parallel True \
     --zero_stage 2 \
-    --num_frames 77 \
-    --num_latent_frames 20 \
+    --num_frames 69 \
+    --num_latent_frames 18 \
     --enable_sequence_parallelism True \
     --sequence_parallel_shards 8 \
-    --optim came \
-    --betas 0.9 0.95 0.99 \
-    --optim_eps 1e-8 1e-8 \
     --max_device_memory 59GB
