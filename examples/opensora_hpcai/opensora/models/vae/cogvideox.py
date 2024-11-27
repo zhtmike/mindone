@@ -1284,7 +1284,6 @@ class AutoencoderKLCogVideoX(nn.Cell):
         else:
             z = self.mode(posterior)
 
-        z = z[:, :, 3:3+5]
         dec = self.decode(z)
         return dec
 
