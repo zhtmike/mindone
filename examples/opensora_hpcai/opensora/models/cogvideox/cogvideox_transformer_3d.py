@@ -1,6 +1,8 @@
 # diffusers/models/transformers/cogvideox_transformer_3d.py -- v0.31.0
 import logging
 from typing import List, Literal, Optional, Tuple, Union
+import math
+import numbers
 
 import numpy as np
 from opensora.acceleration.communications import AlltoAll, GatherFowardSplitBackward, SplitFowardGatherBackward
@@ -13,8 +15,12 @@ import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
+
+from mindspore.common.initializer import initializer
 from mindspore.communication import get_group_size
+
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
+
 
 __all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B", "CogVideoX_5B_v1_5"]
 
@@ -162,6 +168,7 @@ class QKVAlltoALL(AlltoAll):
         return q, k, v
 
 
+'''
 class FP32LayerNorm(mint.nn.LayerNorm):
     def construct(self, input: Tensor) -> Tensor:
         dtype = input.dtype
@@ -169,6 +176,32 @@ class FP32LayerNorm(mint.nn.LayerNorm):
             input.to(ms.float32), self.normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps
         ).to(dtype)
         return y
+'''
+
+
+class FP32LayerNorm(nn.Cell):
+    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine: bool = True, dtype=ms.float32):
+        super().__init__()
+        if isinstance(normalized_shape, numbers.Integral):
+            normalized_shape = (normalized_shape,)
+        self.normalized_shape = tuple(normalized_shape)
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        if self.elementwise_affine:
+            self.weight = Parameter(initializer("ones", normalized_shape, dtype=dtype))
+            self.bias = Parameter(initializer("zeros", normalized_shape, dtype=dtype))
+        else:
+            self.weight = ops.ones(normalized_shape, dtype=dtype)
+            self.bias = ops.zeros(normalized_shape, dtype=dtype)
+
+    def construct(self, x: Tensor):
+        normalized_shape = x.shape[-1:]
+        # mint layer_norm fuses the operations in layer normorlization and it's faster than ops.LayerNorm
+        ori_dtype = x.dtype
+        x = mint.nn.functional.layer_norm(x.to(ms.float32), normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps).to(ori_dtype)
+
+        return x
+
 
 
 class ApproximateGELU(nn.Cell):
