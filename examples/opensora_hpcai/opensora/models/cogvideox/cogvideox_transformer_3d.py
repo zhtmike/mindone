@@ -1037,8 +1037,14 @@ class CogVideoXTransformer3DModel(nn.Cell):
             self.gather_forward_split_backward = GatherFowardSplitBackward(dim=1, grad_scale="up", group=sp_group)
 
         if use_recompute:
+            self.patch_embed.recompute()
+            self.time_embedding.recompute()
+
             for block in self.transformer_blocks:
                 block.recompute()
+
+            self.norm_out.recompute()
+            self.proj_out.recompute()
 
     @property
     def dtype(self):
@@ -1054,7 +1060,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
 
         # 1. Time embedding
         timesteps = timestep
-        t_emb = self.time_proj(timesteps)
+        t_emb = ops.stop_gradient(self.time_proj(timesteps))
 
         # timesteps does not contain any weights and will always return f32 tensors
         # but time_embedding might actually be running in fp16. so we need to cast here.
