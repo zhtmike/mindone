@@ -458,8 +458,8 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
 
         model_output = self.apply_model(x_t, t, text_embed, image_rotary_emb=image_rotary_emb)
 
-        loss = mean_flat((target - model_output) ** 2)
-        loss = loss.mean()
+        loss = mint.square(target - model_output)
+        loss = mint.mean(loss)
         return loss
 
     def _broadcast(self, x: Tensor) -> Tensor:
