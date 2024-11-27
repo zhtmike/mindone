@@ -1140,8 +1140,9 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 self.patch_size[1],
                 self.patch_size[2],
             )
-            output = (
-                output.permute(0, 4, 1, 2, 5, 3, 6).flatten(start_dim=5, end_dim=6).flatten(start_dim=3, end_dim=4)
+            output = mint.permute(output, (0, 4, 1, 2, 5, 3, 6))
+            output = output.reshape(
+                output.shape[0], output.shape[1], output.shape[2], output.shape[3] * output.shape[4], -1
             )  # n, c, t, h, w
         else:
             output = hidden_states.reshape(
@@ -1154,11 +1155,13 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 self.patch_size[1],
                 self.patch_size[2],
             )
-            output = (
-                output.permute(0, 4, 1, 5, 2, 6, 3, 7)
-                .flatten(start_dim=6, end_dim=7)
-                .flatten(start_dim=4, end_dim=5)
-                .flatten(start_dim=2, end_dim=3)
+            output = mint.permute(output, (0, 4, 1, 5, 2, 6, 3, 7))
+            output = output.reshape(
+                output.shape[0],
+                output.shape[1],
+                output.shape[2] * output.shape[3],
+                output.shape[4] * output.shape[5],
+                -1,
             )  # n, c, t, h, w
 
         return output
