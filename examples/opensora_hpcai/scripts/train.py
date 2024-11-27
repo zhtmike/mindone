@@ -300,6 +300,7 @@ def initialize_dataset(
                 apply_train_transforms=True,
                 target_size=(img_h, img_w),
                 video_backend=args.video_backend,
+                text_drop_prob=args.text_drop_prob,
                 model_config=model_config,
                 dtype=dtype,
                 output_columns=output_columns,

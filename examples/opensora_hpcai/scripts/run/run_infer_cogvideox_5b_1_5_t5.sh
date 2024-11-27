@@ -4,4 +4,6 @@ python scripts/infer_t5.py \
     --model_max_length 224 \
     --t5_model transformers \
     --dtype fp32 \
-    --mode 1
+    --mode 1 \
+    --require_mask False \
+    --predict_empty_text_embedding True

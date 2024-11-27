@@ -194,6 +194,33 @@ def main(args):
                     text_emb=text_emb[i].asnumpy().astype(np.float32),
                     # tokens=text_tokens[i].asnumpy(), #.astype(np.int32),
                 )
+
+        if args.predict_empty_text_embedding:
+            if args.t5_model == "integrated":
+                text_tokens, mask = text_encoder.get_text_tokens_and_mask([""], return_tensor=True)
+                if args.require_mask:
+                    text_emb = text_encoder(text_tokens, mask)
+                else:
+                    text_emb = text_encoder(text_tokens)
+            else:
+                encodings = tokenizer([""], padding="max_length", truncation=True, return_tensors="np")
+                text_tokens, mask = encodings.input_ids, encodings.attention_mask
+                text_tokens, mask = ms.Tensor(text_tokens), ms.Tensor(mask)
+                if args.require_mask:
+                    text_emb = text_encoder(text_tokens, mask)[0]
+                else:
+                    text_emb = text_encoder(text_tokens)[0]
+
+            fn = Path("empty_text").with_suffix(".npz")
+            npz_fp = os.path.join(output_dir, fn)
+
+            np.savez(
+                npz_fp,
+                mask=mask[0].asnumpy().astype(np.uint8),
+                text_emb=text_emb[0].asnumpy().astype(np.float32),
+                # tokens=text_tokens[i].asnumpy(), #.astype(np.int32),
+            )
+
         logger.info(f"Current step time cost: {time_cost:0.3f}s")
         logger.info(f"Done. Embeddings saved in {output_dir}")
 
@@ -315,6 +342,9 @@ def parse_args():
         "--t5_model", default="integrated", choices=["integrated", "transformers"], help="use which T5 model."
     )
     parser.add_argument("--require_mask", default=True, type=str2bool, help="add mask for text encoding")
+    parser.add_argument(
+        "--predict_empty_text_embedding", default=False, type=str2bool, help="predict empty text embedding"
+    )
 
     default_args = parser.parse_args()
     __dir__ = os.path.dirname(os.path.abspath(__file__))
