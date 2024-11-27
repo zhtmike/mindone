@@ -1060,7 +1060,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
 
         if self.enable_sequence_parallelism:
             sp_group = get_sequence_parallel_group()
-            logger.info(f"Initialize STDIT-v3 model with sequence parallel group `{sp_group}`.")
+            logger.info(f"Initialize CogVideoXTransformer3D model with sequence parallel group `{sp_group}`.")
             self.sp_size = get_group_size(sp_group)
             assert self.num_heads % self.sp_size == 0
             self.split_forward_gather_backward = SplitFowardGatherBackward(dim=1, grad_scale="down", group=sp_group)

@@ -123,6 +123,7 @@ class VideoDatasetRefactored(BaseDataset):
 
         if self._text_drop_prob > 0:
             empty_text_path = os.path.join(self._text_emb_folder, empty_text_file_name)
+            _logger.info(f"Using empty text embedding from {empty_text_path}")
             empty_text_data = np.load(empty_text_path)
             self._empty_text_emb = empty_text_data["text_emb"]
             self._empty_text_mask = empty_text_data["mask"].astype(np.uint8)
