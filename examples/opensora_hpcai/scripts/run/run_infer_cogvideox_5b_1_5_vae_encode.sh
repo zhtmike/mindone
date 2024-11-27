@@ -1,0 +1,12 @@
+python scripts/infer_vae.py \
+    --csv_path /path/to/video_caption.csv \
+    --video_folder /path/to/video \
+    --output_path /path/to/vae_cache \
+    --vae_type CogVideoX-VAE \
+    --image_size 768 1360 \
+    --vae_checkpoint models/CogVideoX-1.5-5b/vae/diffusion_pytorch_model.safetensors \
+    --dtype fp32 \
+    --mode 1 \
+    --max_frames 85 \
+    --num_parallel_workers 1 \
+    --transform_name crop_resize

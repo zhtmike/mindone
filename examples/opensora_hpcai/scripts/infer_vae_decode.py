@@ -17,7 +17,7 @@ mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
-from opensora.models.vae import CogVideoX_VAE
+from opensora.models.vae import AutoencoderKLCogVideoX, CogVideoX_VAE
 from opensora.models.vae.vae import SD_CONFIG, AutoencoderKL
 from opensora.utils.model_utils import _check_cfgs_in_parser
 
@@ -39,6 +39,20 @@ def init_env(args):
         device_id=device_id,
     )
     return device_id
+
+
+def cogvideox_vae_decode_video(x: ms.Tensor, vae: AutoencoderKLCogVideoX, scale_factor: float) -> ms.Tensor:
+    """
+    Args:
+        x: (b t c h w), denoised latent
+    Return:
+        y: (b f H W 3), batch of images, normalized to [0, 1]
+    """
+    y = ops.stop_gradient(vae.decode((x / scale_factor).to(vae.dtype)))
+    y = ops.clip_by_value((y + 1.0) / 2.0, clip_value_min=0.0, clip_value_max=1.0)
+    # (b 3 t h w) -> (b t h w 3)
+    y = ops.transpose(y, (0, 2, 3, 4, 1))
+    return y
 
 
 def main(args):
@@ -134,7 +148,10 @@ def main(args):
             z = np.load(lpath)
             z = ms.Tensor(z)
             logger.info(f"Decoding latent of shape {z.shape} from {lpath}")
-            vid = vae_decode_from_diffusion_output(z)
+            if args.vae_type == "CogVideoX-VAE":
+                vid = cogvideox_vae_decode_video(z, vae, args.sd_scale_factor).asnumpy()
+            else:
+                vid = vae_decode_from_diffusion_output(z)
 
         assert vid.shape[0] == 1
         fn = os.path.basename(lpath)[:-4]

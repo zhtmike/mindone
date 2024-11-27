@@ -128,6 +128,7 @@ def main(args):
         resize_by_max_value=args.resize_by_max_value,
         transform_name=args.transform_name,
         filter_data=args.filter_data,
+        max_frames=args.max_frames,
         dtype=np.float16 if args.dtype == "fp16" else np.float32,
     )
     dataloader, ds = create_dataloader(
@@ -152,6 +153,8 @@ def main(args):
         vae = CogVideoX_VAE(dtype=dtype_map[args.dtype])
         vae.load_from_checkpoint(args.vae_checkpoint)
         vae.set_train(False)
+        vae.enable_slicing()
+        vae.enable_tiling()
     else:
         VAE_Z_CH = SD_CONFIG["z_channels"]
         vae = AutoencoderKL(
@@ -410,6 +413,7 @@ def parse_args():
     parser.add_argument("--batch_size", default=1, type=int, help="batch size")
     parser.add_argument("--resize_by_max_value", default=False, type=str2bool, help="resize the image by max instead.")
     parser.add_argument("--num_parallel_workers", default=16, type=int, help="number of workers for dataloader")
+    parser.add_argument("--max_frames", type=int, help="max. number of frames to be encoded.")
 
     default_args = parser.parse_args()
     __dir__ = os.path.dirname(os.path.abspath(__file__))

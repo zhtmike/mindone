@@ -17,5 +17,5 @@ pyyaml
 tokenizers
 sentencepiece
 transformers
-pyav
+av
 mindcv=0.3.0

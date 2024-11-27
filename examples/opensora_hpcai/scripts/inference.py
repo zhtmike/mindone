@@ -508,6 +508,11 @@ def main(args):
             # prepare inputs
             inputs = {}
             # b c t h w
+            if latent_size[0] % latte_model.patch_size[0] != 0:
+                offset = latte_model.patch_size[0] - latent_size[0] % latte_model.patch_size[0]
+                latent_size[0] += offset
+                inputs["t_offset"] = offset
+
             z = np.random.randn(ns, VAE_Z_CH, *latent_size).astype(np.float32)
 
             if args.model_version != "v1":

@@ -14,7 +14,7 @@ vae_dtype: fp32
 sd_scale_factor: 0.7
 
 image_size: [ 768, 1360 ]
-num_frames: 77  # ..., 21, 29, ..., 77
+num_frames: 81
 enable_flash_attention: True
 model_max_length: 224
 dtype: bf16
