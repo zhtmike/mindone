@@ -28,7 +28,7 @@ scheduler: "constant"
 warmup_steps: 100
 train_batch_size: 64
 gradient_accumulation_steps: 1
-weight_decay: 0.01
+weight_decay: 0
 epochs: 360
 
 use_ema: True
@@ -37,7 +37,7 @@ ckpt_max_keep: 3
 init_loss_scale: 65536
 
 betas: [0.9, 0.999]
-optim_eps: 1.e-6
+optim_eps: 1.e-8
 
 # training process
 log_interval: 1

@@ -45,7 +45,7 @@ def parse_args():
         help="It can be a string for path to resume checkpoint, or a bool False for not resuming.(default=False)",
     )
     # training hyper-params
-    parser.add_argument("--optim", default="adamw", type=str, help="optimizer")
+    parser.add_argument("--optim", default="adamw_re", type=str, help="optimizer")
     parser.add_argument(
         "--betas",
         type=float,
