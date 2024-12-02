@@ -35,6 +35,7 @@ rescale_betas_zero_snr: True
 # ms
 mode: 1
 jit_level: O0
+fps: 16
 
 # other
 save_format: mp4
