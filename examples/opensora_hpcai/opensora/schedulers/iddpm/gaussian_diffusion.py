@@ -670,8 +670,17 @@ class GaussianDiffusion:
                 frames_mask=frames_mask,
             )
             sample = out["sample"]
-            _logger.info(
-                f"max: {sample.max().item()}, min: {sample.min().item()}, mean: {sample.mean().item()}, std: {sample.std().item()}"
+
+            is_finite = ops.isfinite(sample).all().item()
+            if not is_finite:
+                raise RuntimeError("NaN/Inf appeared in the sampling stage. Stop sampling.")
+
+            _logger.debug(
+                "max: %.3f, min: %.3f, mean: %.3f, std: %.3f",
+                sample.max().item(),
+                sample.min().item(),
+                sample.mean().item(),
+                sample.std().item(),
             )
             yield out
             img = out["sample"]
