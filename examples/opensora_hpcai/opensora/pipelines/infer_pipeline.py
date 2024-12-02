@@ -50,6 +50,7 @@ class InferPipeline:
         sampling: Literal["ddpm", "ddim", "rflow"] = "ddpm",
         micro_batch_size=None,
         diffusion_config: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ):
         super().__init__()
         self.model = model
@@ -426,8 +427,10 @@ class InferPipelineFiTLike(InferPipeline):
 
 
 class InferPipelineCogVideoX(InferPipeline):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, use_dynamic_cfg=False, **kwargs):
         super().__init__(*args, **kwargs)
+        self.use_dynamic_cfg = use_dynamic_cfg
+
         assert isinstance(self.vae, AutoencoderKLCogVideoX)
         self.vae.enable_slicing()
         self.vae.enable_tiling()
@@ -462,7 +465,7 @@ class InferPipelineCogVideoX(InferPipeline):
                 null_text_emb = inputs["null_text_emb"]
 
             y = ops.cat([text_emb, null_text_emb], axis=0)
-            x_in = ops.concat([x] * 2, axis=0)
+            x_in = ops.cat([x] * 2, axis=0)
             assert y.shape[0] == x_in.shape[0], "shape mismatch!"
         else:
             x_in = x
@@ -528,6 +531,9 @@ class InferPipelineCogVideoX(InferPipeline):
 
         if self.use_cfg:
             model_kwargs.update({"cfg_scale": self.guidance_rescale, "cfg_channel": self.guidance_channels})
+            if self.use_dynamic_cfg:
+                model_kwargs.update({"dynamic_cfg": True})
+
             latents = self.sampling_func(
                 self.model.construct_with_cfg,
                 z.shape,

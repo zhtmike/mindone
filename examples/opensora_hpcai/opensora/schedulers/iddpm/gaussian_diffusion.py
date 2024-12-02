@@ -5,6 +5,7 @@
 
 
 import logging
+import math
 from functools import partial
 from typing import Optional
 
@@ -646,8 +647,16 @@ class GaussianDiffusion:
 
             indices = tqdm(indices)
 
+        cfg_scale = model_kwargs.get("cfg_scale", None)
         for i in indices:
             t = ms.Tensor([i] * shape[0])
+
+            if cfg_scale and model_kwargs.get("dynamic_cfg", False):
+                # we follow https://github.com/huggingface/diffusers/issues/9641
+                model_kwargs["cfg_scale"] = 1 + (cfg_scale - 1) * (
+                    (1 - math.cos(math.pi * ((self.num_timesteps - i) / self.num_timesteps) ** 5.0)) / 2
+                )
+
             # with th.no_grad():
             out = self.ddim_sample(
                 model,

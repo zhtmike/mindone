@@ -392,6 +392,7 @@ def main(args):
         guidance_channels=args.guidance_channels,
         sampling=args.sampling,
         micro_batch_size=args.vae_micro_batch_size,
+        use_dynamic_cfg=args.dynamic_cfg,
         diffusion_config=dict(
             learn_sigma=args.learn_sigma,
             noise_schedule=args.noise_schedule,
@@ -669,6 +670,7 @@ def parse_args():
         type=int,
         help="How many channels to use for classifier-free diffusion. If None, use half of the latent channels",
     )
+    parser.add_argument("--dynamic_cfg", type=str2bool, default=False, help="Using dynamic CFG")
     parser.add_argument(
         "--frame_interval",
         default=1,
