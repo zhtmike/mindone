@@ -3,7 +3,6 @@
 ## Features
 
 - [x] CogVideoX v1.5 2B/5B inference
-    - [ ] Dynamic Condition-free Guidance (CFG)
     - [ ] Linear-quadratic t-schedule (new)
 - [x] CogVideoX v1.5 2B/5B SFT supporting 736P videos of 77 frames
 - [x] Memory efficiency optimization (new)
