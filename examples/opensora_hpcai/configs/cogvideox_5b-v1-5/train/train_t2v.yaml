@@ -29,6 +29,7 @@ num_latent_frames: 22  # (frames - 1) // 4 + 1
 num_parallel_workers: 1
 prefetch_size: 1
 max_rowsize: -1
+text_drop_prob: 0.1
 
 # precision
 dtype: bf16

@@ -81,6 +81,8 @@ class VideoDatasetRefactored(BaseDataset):
         tokenizer=None,
         video_backend: str = "cv2",
         model_config: Optional[Dict[str, Any]] = None,
+        text_drop_prob: float = 0.0,
+        empty_text_file_name: str = "empty_text.npz",
         dtype: np.dtype = np.float32,
         *,
         output_columns: List[str],
@@ -110,6 +112,7 @@ class VideoDatasetRefactored(BaseDataset):
         self._t_compress_func = (lambda x: x) if t_compress_func is None else t_compress_func
         self._pre_patchify = pre_patchify
         self._buckets = buckets
+        self._text_drop_prob = text_drop_prob
 
         self._init_model_args(model_config)
 
@@ -117,6 +120,13 @@ class VideoDatasetRefactored(BaseDataset):
         if self._buckets is not None:
             assert vae_latent_folder is None, "`vae_latent_folder` is not supported with bucketing"
             self.output_columns += ["bucket_id"]  # pass bucket id information to transformations
+
+        if self._text_drop_prob > 0:
+            empty_text_path = os.path.join(self._text_emb_folder, empty_text_file_name)
+            _logger.info(f"Using empty text embedding from {empty_text_path}")
+            empty_text_data = np.load(empty_text_path)
+            self._empty_text_emb = empty_text_data["text_emb"]
+            self._empty_text_mask = empty_text_data["mask"].astype(np.uint8)
 
         if self._pre_patchify:
             assert self._patch_size is not None and self._patch_size[0] == 1
@@ -233,9 +243,13 @@ class VideoDatasetRefactored(BaseDataset):
         num_frames = self._frames
 
         if self._text_emb_folder:
-            with np.load(text_emb_path) as td:
-                data["caption"] = td["text_emb"]
-                data["mask"] = td["mask"].astype(np.uint8)
+            if random.random() < self._text_drop_prob:
+                data["caption"] = self._empty_text_emb
+                data["mask"] = self._empty_text_mask
+            else:
+                with np.load(text_emb_path) as td:
+                    data["caption"] = td["text_emb"]
+                    data["mask"] = td["mask"].astype(np.uint8)
 
         if self._vae_latent_folder:
             # pick a resolution randomly if there are multi-resolution latents in vae folder

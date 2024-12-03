@@ -1,8 +1,7 @@
 # diffusers/models/transformers/cogvideox_transformer_3d.py -- v0.31.0
 import logging
-from typing import List, Literal, Optional, Tuple, Union
-import math
 import numbers
+from typing import List, Literal, Optional, Tuple, Union
 
 import numpy as np
 from opensora.acceleration.communications import AlltoAll, GatherFowardSplitBackward, SplitFowardGatherBackward
@@ -15,12 +14,9 @@ import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
-
 from mindspore.common.initializer import initializer
 from mindspore.communication import get_group_size
-
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
-
 
 __all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B", "CogVideoX_5B_v1_5"]
 
@@ -168,7 +164,7 @@ class QKVAlltoALL(AlltoAll):
         return q, k, v
 
 
-'''
+"""
 class FP32LayerNorm(mint.nn.LayerNorm):
     def construct(self, input: Tensor) -> Tensor:
         dtype = input.dtype
@@ -176,7 +172,7 @@ class FP32LayerNorm(mint.nn.LayerNorm):
             input.to(ms.float32), self.normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps
         ).to(dtype)
         return y
-'''
+"""
 
 
 class FP32LayerNorm(nn.Cell):
@@ -198,10 +194,11 @@ class FP32LayerNorm(nn.Cell):
         normalized_shape = x.shape[-1:]
         # mint layer_norm fuses the operations in layer normorlization and it's faster than ops.LayerNorm
         ori_dtype = x.dtype
-        x = mint.nn.functional.layer_norm(x.to(ms.float32), normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps).to(ori_dtype)
+        x = mint.nn.functional.layer_norm(
+            x.to(ms.float32), normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps
+        ).to(ori_dtype)
 
         return x
-
 
 
 class ApproximateGELU(nn.Cell):
@@ -913,11 +910,13 @@ class CogVideoXBlock(nn.Cell):
     def construct(
         self,
         hidden_states: Tensor,
-        encoder_hidden_states: Tensor,
         temb: Tensor,
+        text_seq_length: int,
         image_rotary_emb: Optional[Tensor] = None,
     ) -> Tensor:
-        text_seq_length = encoder_hidden_states.shape[1]
+        encoder_hidden_states, hidden_states = mint.split(
+            hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1
+        )
 
         # norm & modulate
         norm_hidden_states, norm_encoder_hidden_states, gate_msa, enc_gate_msa = self.norm1(
@@ -946,7 +945,8 @@ class CogVideoXBlock(nn.Cell):
         hidden_states = hidden_states + gate_ff * ff_output[:, text_seq_length:]
         encoder_hidden_states = encoder_hidden_states + enc_gate_ff * ff_output[:, :text_seq_length]
 
-        return hidden_states, encoder_hidden_states
+        hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
+        return hidden_states
 
 
 class CogVideoXTransformer3DModel(nn.Cell):
@@ -1063,21 +1063,15 @@ class CogVideoXTransformer3DModel(nn.Cell):
 
         if self.enable_sequence_parallelism:
             sp_group = get_sequence_parallel_group()
-            logger.info(f"Initialize STDIT-v3 model with sequence parallel group `{sp_group}`.")
+            logger.info(f"Initialize CogVideoXTransformer3D model with sequence parallel group `{sp_group}`.")
             self.sp_size = get_group_size(sp_group)
             assert self.num_heads % self.sp_size == 0
             self.split_forward_gather_backward = SplitFowardGatherBackward(dim=1, grad_scale="down", group=sp_group)
             self.gather_forward_split_backward = GatherFowardSplitBackward(dim=1, grad_scale="up", group=sp_group)
 
         if use_recompute:
-            self.patch_embed.recompute()
-            self.time_embedding.recompute()
-
             for block in self.transformer_blocks:
                 block.recompute()
-
-            self.norm_out.recompute()
-            self.proj_out.recompute()
 
     @property
     def dtype(self):
@@ -1115,15 +1109,14 @@ class CogVideoXTransformer3DModel(nn.Cell):
             hidden_states = self.split_forward_gather_backward(hidden_states)
             encoder_hidden_states = self.split_forward_gather_backward(encoder_hidden_states)
 
+        text_seq_length = encoder_hidden_states.shape[1]
+        hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
+
         # 3. Transformer blocks
         for block in self.transformer_blocks:
-            hidden_states, encoder_hidden_states = block(
-                hidden_states=hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                temb=emb,
-                image_rotary_emb=image_rotary_emb,
-            )
+            hidden_states = block(hidden_states, emb, text_seq_length, image_rotary_emb=image_rotary_emb)
 
+        hidden_states = hidden_states[:, text_seq_length:]
         hidden_states = self.norm_final(hidden_states)
 
         # 4. Final block
@@ -1144,8 +1137,9 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 self.patch_size[1],
                 self.patch_size[2],
             )
-            output = (
-                output.permute(0, 4, 1, 2, 5, 3, 6).flatten(start_dim=5, end_dim=6).flatten(start_dim=3, end_dim=4)
+            output = mint.permute(output, (0, 4, 1, 2, 5, 3, 6))
+            output = output.reshape(
+                output.shape[0], output.shape[1], output.shape[2], output.shape[3] * output.shape[4], -1
             )  # n, c, t, h, w
         else:
             output = hidden_states.reshape(
@@ -1158,11 +1152,13 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 self.patch_size[1],
                 self.patch_size[2],
             )
-            output = (
-                output.permute(0, 4, 1, 5, 2, 6, 3, 7)
-                .flatten(start_dim=6, end_dim=7)
-                .flatten(start_dim=4, end_dim=5)
-                .flatten(start_dim=2, end_dim=3)
+            output = mint.permute(output, (0, 4, 1, 5, 2, 6, 3, 7))
+            output = output.reshape(
+                output.shape[0],
+                output.shape[1],
+                output.shape[2] * output.shape[3],
+                output.shape[4] * output.shape[5],
+                -1,
             )  # n, c, t, h, w
 
         return output

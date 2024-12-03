@@ -189,6 +189,7 @@ def parse_train_args(parser):
     parser.add_argument(
         "--max_image_size", default=512, type=int, help="Max image size for patchified latent training."
     )
+    parser.add_argument("--text_drop_prob", default=0.0, type=float, help="text drop probability.")
 
     # dataloader params
     parser.add_argument("--dataset_sink_mode", default=False, type=str2bool, help="sink mode")
