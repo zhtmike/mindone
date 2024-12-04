@@ -484,6 +484,7 @@ def main(args):
             enable_flash_attention=args.enable_flash_attention,
             enable_sequence_parallelism=args.enable_sequence_parallelism,
             use_recompute=args.use_recompute,
+            num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
@@ -494,6 +495,7 @@ def main(args):
             enable_flash_attention=args.enable_flash_attention,
             enable_sequence_parallelism=args.enable_sequence_parallelism,
             use_recompute=args.use_recompute,
+            num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
@@ -504,6 +506,7 @@ def main(args):
             enable_flash_attention=args.enable_flash_attention,
             enable_sequence_parallelism=args.enable_sequence_parallelism,
             use_recompute=args.use_recompute,
+            num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
