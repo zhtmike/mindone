@@ -19,8 +19,6 @@ from mindspore.communication.management import get_group_size, get_rank, init
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
 from mindspore.train.callback import TimeMonitor
 
-from mindone.trainers import TrainOneStepWrapper
-
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
@@ -796,29 +794,17 @@ def main(args):
     # trainer (standalone and distributed)
     ema = EMA(latent_diffusion_with_loss.network, ema_decay=args.ema_decay, offloading=True) if args.use_ema else None
 
-    if args.use_parallel:
-        net_with_grads = prepare_train_network(
-            latent_diffusion_with_loss,
-            optimizer=optimizer,
-            scale_sense=loss_scaler,
-            drop_overflow_update=args.drop_overflow_update,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            clip_grad=args.clip_grad,
-            clip_norm=args.max_grad_norm,
-            ema=ema,
-            zero_stage=args.zero_stage,
-        )
-    else:
-        net_with_grads = TrainOneStepWrapper(
-            latent_diffusion_with_loss,
-            optimizer,
-            scale_sense=loss_scaler,
-            ema=ema,
-            drop_overflow_update=args.drop_overflow_update,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            clip_grad=args.clip_grad,
-            clip_norm=args.max_grad_norm,
-        )
+    net_with_grads = prepare_train_network(
+        latent_diffusion_with_loss,
+        optimizer=optimizer,
+        scale_sense=loss_scaler,
+        drop_overflow_update=args.drop_overflow_update,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        clip_grad=args.clip_grad,
+        clip_norm=args.max_grad_norm,
+        ema=ema,
+        zero_stage=args.zero_stage,
+    )
 
     # resume train net states
     if args.resume and resume_ckpt is not None:
