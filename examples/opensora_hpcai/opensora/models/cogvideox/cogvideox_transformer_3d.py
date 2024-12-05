@@ -981,7 +981,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         enable_flash_attention: bool = False,
         enable_sequence_parallelism: bool = False,
         use_recompute: bool = False,
-        : Optional[int] = None,
+        num_recompute_blocks: Optional[int] = None,
         rope_grid_type: Literal["linspace", "slice"] = "linspace",
         dtype: ms.Type = ms.float32,
     ) -> None:
