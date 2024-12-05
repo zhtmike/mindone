@@ -981,7 +981,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         enable_flash_attention: bool = False,
         enable_sequence_parallelism: bool = False,
         use_recompute: bool = False,
-        num_recompute_blocks=None,
+        num_recompute_blocks: Optional[int] = None,
         rope_grid_type: Literal["linspace", "slice"] = "linspace",
         dtype: ms.Type = ms.float32,
     ) -> None:
@@ -1108,8 +1108,8 @@ class CogVideoXTransformer3DModel(nn.Cell):
         hidden_states = hidden_states[:, text_seq_length:]
 
         if self.enable_sequence_parallelism:
-            # assert hidden_states.shape[1] % self.sp_size == 0
-            # assert encoder_hidden_states.shape[1] % self.sp_size == 0
+            assert hidden_states.shape[1] % self.sp_size == 0
+            assert encoder_hidden_states.shape[1] % self.sp_size == 0
             hidden_states = self.split_forward_gather_backward(hidden_states)
             encoder_hidden_states = self.split_forward_gather_backward(encoder_hidden_states)
 
