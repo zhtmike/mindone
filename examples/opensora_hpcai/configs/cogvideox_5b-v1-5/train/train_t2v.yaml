@@ -57,7 +57,7 @@ weight_decay: 1.e-4
 betas: [0.9, 0.95]
 
 epochs: 10000
-ckpt_save_interval: 20
+ckpt_save_interval: 50
 ckpt_max_keep: 3
 
 mask_ratios:
