@@ -546,7 +546,9 @@ def main(args):
 
     # sequence parallel check
     if args.enable_sequence_parallelism:
-        if args.num_frames % args.vae_micro_batch_size != 0 or args.num_frames % args.vae_micro_frame_size != 0:
+        if not train_with_vae_latent and (
+            args.num_frames % args.vae_micro_batch_size != 0 or args.num_frames % args.vae_micro_frame_size != 0
+        ):
             raise ValueError(
                 f"number of frames `{args.num_frames}` must be divisible by "
                 f"VAE micro batch size `{args.vae_micro_batch_size}` and VAE micro frame size `{args.vae_micro_frame_size}`."
@@ -560,7 +562,7 @@ def main(args):
                 f"number of heads `{latte_model.num_heads}` must be divisble and less than the sequence_parallel_shards `{args.sequence_parallel_shards}`."
             )
 
-        if args.num_frames % args.sequence_parallel_shards != 0:
+        if not train_with_vae_latent and args.num_frames % args.sequence_parallel_shards != 0:
             logger.warning(
                 f"To avoid extra computation cost, number of frames `{args.num_frames}` "
                 f"should be divisible by the number of SP shards `{args.sequence_parallel_shards}`."
