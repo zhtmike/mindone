@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 from opensora.acceleration.parallel_states import set_sequence_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIO_MAP, ASPECT_RATIOS, get_image_size, get_num_frames
 from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_v1_5
-from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT_XL_2
+from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT3_XL_2_DSP, STDiT_XL_2
 from opensora.models.text_encoder.t5 import get_text_encoder_and_tokenizer
 from opensora.models.vae import CogVideoX_VAE
 from opensora.models.vae.vae import SD_CONFIG, OpenSoraVAE_V1_2, VideoAutoencoderKL
@@ -260,7 +260,10 @@ def main(args):
         model_name = "STDiT3"
         model_extra_args["qk_norm"] = True
         logger.info(f"{model_name} init")
-        latte_model = STDiT3_XL_2(**model_extra_args)
+        if args.dsp:
+            latte_model = STDiT3_XL_2_DSP(**model_extra_args)
+        else:
+            latte_model = STDiT3_XL_2(**model_extra_args)
     elif args.model_version == "CogVideoX-2B":
         model_name = "CogVideoX-2B"
         logger.info(f"{model_name} init")
@@ -716,6 +719,7 @@ def parse_args():
         type=str2bool,
         help="whether to enable sequence parallelism. Default is False",
     )
+    parser.add_argument("--dsp", default=False, type=str2bool, help="Use DSP instead of SP in sequence parallel.")
     parser.add_argument(
         "--dtype",
         default="fp32",

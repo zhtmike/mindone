@@ -30,7 +30,7 @@ from opensora.acceleration.parallel_states import create_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIOS, get_image_size
 from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_v1_5
 from opensora.models.layers.operation_selector import set_dynamic_mode
-from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT_XL_2
+from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT3_XL_2_DSP, STDiT_XL_2
 from opensora.models.vae import CogVideoX_VAE
 from opensora.models.vae.vae import SD_CONFIG, OpenSoraVAE_V1_2, VideoAutoencoderKL
 from opensora.pipelines import (
@@ -477,7 +477,10 @@ def main(args):
         model_name = "STDiT3"
         model_extra_args["qk_norm"] = True
         model_extra_args["freeze_y_embedder"] = args.freeze_y_embedder
-        latte_model = STDiT3_XL_2(**model_extra_args)
+        if args.dsp:
+            latte_model = STDiT3_XL_2_DSP(**model_extra_args)
+        else:
+            latte_model = STDiT3_XL_2(**model_extra_args)
     elif args.model_version == "CogVideoX-2B":
         model_name = "CogVideoX-2B"
         logger.info(f"{model_name} init")
@@ -542,6 +545,28 @@ def main(args):
             raise ValueError(msg)
         else:
             logger.warning(msg)
+
+    # sequence parallel check
+    if args.enable_sequence_parallelism:
+        if args.num_frames % args.vae_micro_batch_size != 0 or args.num_frames % args.vae_micro_frame_size != 0:
+            raise ValueError(
+                f"number of frames `{args.num_frames}` must be divisible by "
+                f"VAE micro batch size `{args.vae_micro_batch_size}` and VAE micro frame size `{args.vae_micro_frame_size}`."
+            )
+
+        if (
+            latte_model.num_heads % args.sequence_parallel_shards != 0
+            or latte_model.num_heads < args.sequence_parallel_shards
+        ):
+            raise ValueError(
+                f"number of heads `{latte_model.num_heads}` must be divisble and less than the sequence_parallel_shards `{args.sequence_parallel_shards}`."
+            )
+
+        if args.num_frames % args.sequence_parallel_shards != 0:
+            logger.warning(
+                f"To avoid extra computation cost, number of frames `{args.num_frames}` "
+                f"should be divisible by the number of SP shards `{args.sequence_parallel_shards}`."
+            )
 
     # 2.3 ldm with loss
     logger.info(f"Train with vae latent cache: {train_with_vae_latent}")
