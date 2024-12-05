@@ -981,7 +981,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         enable_flash_attention: bool = False,
         enable_sequence_parallelism: bool = False,
         use_recompute: bool = False,
-        num_recompute_blocks: Optional[int] = None,
+        : Optional[int] = None,
         rope_grid_type: Literal["linspace", "slice"] = "linspace",
         dtype: ms.Type = ms.float32,
     ) -> None:
@@ -1071,7 +1071,10 @@ class CogVideoXTransformer3DModel(nn.Cell):
             self.gather_forward_split_backward = GatherFowardSplitBackward(dim=1, grad_scale="up", group=sp_group)
 
         if use_recompute:
-            assert num_recompute_blocks <= len(self.transformer_blocks), f"recompute blocks must be smaller the transformer blocks {len(self.transformer_blocks)}"
+            if num_recompute_blocks is None:
+                num_recompute_blocks = len(self.transformer_blocks)
+            else:
+                assert num_recompute_blocks <= len(self.transformer_blocks), f"recompute blocks must be smaller the transformer blocks {len(self.transformer_blocks)}"
             for i, block in enumerate(self.transformer_blocks):
                 # recompute the first N blocks
                 if i < num_recompute_blocks:
