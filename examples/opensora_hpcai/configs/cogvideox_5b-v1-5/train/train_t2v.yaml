@@ -35,6 +35,7 @@ text_drop_prob: 0.1
 dtype: bf16
 loss_scaler_type: static
 init_loss_scale: 1
+native_precision: True
 
 # mindspore params, refer to https://www.mindspore.cn/docs/zh-CN/r2.4.0/api_python/mindspore/mindspore.set_context.html
 mode: 0

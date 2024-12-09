@@ -43,7 +43,7 @@ from opensora.utils.amp import auto_mixed_precision
 from opensora.utils.callbacks import EMAEvalSwapCallback, PerfRecorderCallback
 from opensora.utils.ema import EMA, save_ema_ckpts
 from opensora.utils.metrics import BucketLoss
-from opensora.utils.model_utils import WHITELIST_OPS, Model
+from opensora.utils.model_utils import COGVIDEOX_WHITELIST_OPS, WHITELIST_OPS, Model
 from opensora.utils.resume import flush_from_cache, get_resume_ckpt, get_resume_states, resume_train_net, save_train_net
 
 from mindone.trainers.callback import EvalSaveCallback, OverflowMonitor, ProfilerCallbackEpoch, StopAtStepCallback
@@ -488,7 +488,7 @@ def main(args):
             use_recompute=args.use_recompute,
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
-            dtype=dtype_map[args.dtype],
+            dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B":
         model_name = "CogVideoX-5B"
@@ -499,7 +499,7 @@ def main(args):
             use_recompute=args.use_recompute,
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
-            dtype=dtype_map[args.dtype],
+            dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B-v1.5":
         model_name = "CogVideoX-5B-v1.5"
@@ -510,21 +510,29 @@ def main(args):
             use_recompute=args.use_recompute,
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
-            dtype=dtype_map[args.dtype],
+            dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     else:
         raise ValueError(f"Unknown model version: {args.model_version}")
     logger.info(f"{model_name} input size: {latent_size if args.bucket_config is None else 'Variable'}")
 
     # mixed precision
-    if args.dtype in ["fp16", "bf16"] and "CogVideoX" not in args.model_version:
-        if not args.global_bf16:
+    if args.dtype in ["fp16", "bf16"]:
+        if "CogVideoX" in args.model_version and not args.native_precision:
             latte_model = auto_mixed_precision(
                 latte_model,
                 amp_level=args.amp_level,
                 dtype=dtype_map[args.dtype],
-                custom_fp32_cells=WHITELIST_OPS,
+                custom_fp32_cells=COGVIDEOX_WHITELIST_OPS,
             )
+        else:
+            if not args.global_bf16:
+                latte_model = auto_mixed_precision(
+                    latte_model,
+                    amp_level=args.amp_level,
+                    dtype=dtype_map[args.dtype],
+                    custom_fp32_cells=WHITELIST_OPS,
+                )
     # load checkpoint
     if len(args.pretrained_model_path) > 0:
         logger.info(f"Loading ckpt {args.pretrained_model_path}...")
