@@ -7,11 +7,8 @@ msrun --worker_num=8 --local_worker_num=8 --log_dir=$output_dir scripts/train.py
     --text_embed_folder datasets/mixkit-100videos/t5_224 \
     --vae_latent_folder datasets/mixkit-100videos/vae_768_1360 \
     --use_parallel True \
-    --zero_stage 2 \
-    --num_frames 85 \
-    --num_latent_frames 22 \
     --enable_sequence_parallelism True \
     --sequence_parallel_shards 8 \
     --optim came \
     --betas 0.9 0.95 0.99 \
-    --optim_eps 1e-8 1e-8 \
+    --optim_eps 1e-8 1e-8
