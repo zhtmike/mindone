@@ -12,6 +12,7 @@ import numpy as np
 from opensora.models.layers.operation_selector import get_split_op
 
 import mindspore as ms
+import mindspore.mint as mint
 from mindspore import Tensor, ops
 from mindspore.communication import get_rank
 
@@ -146,7 +147,7 @@ class GaussianDiffusion:
         log_variance = _extract_into_tensor(self.log_one_minus_alphas_cumprod, t, x_start.shape)
         return mean, variance, log_variance
 
-    def q_sample(self, x_start, t, noise=None):
+    def q_sample(self, x_start: Tensor, t: Tensor, noise: Optional[Tensor] = None) -> Tensor:
         """
         Diffuse the data for a given number of diffusion steps.
         In other words, sample from q(x_t | x_0).
@@ -156,15 +157,15 @@ class GaussianDiffusion:
         :return: A noisy version of x_start.
         """
         if noise is None:
-            noise = self._broadcast(ops.randn_like(x_start))
+            noise = self._broadcast(mint.randn_like(x_start))
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
             + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def get_v(self, x_start, t, noise=None):
+    def get_v(self, x_start: Tensor, t: Tensor, noise: Optional[Tensor] = None) -> Tensor:
         if noise is None:
-            noise = self._broadcast(ops.randn_like(x_start))
+            noise = self._broadcast(mint.randn_like(x_start))
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * noise
             - _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * x_start

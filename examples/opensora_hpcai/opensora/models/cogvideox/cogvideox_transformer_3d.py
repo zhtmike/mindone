@@ -101,7 +101,7 @@ def get_3d_sincos_pos_embed(
     pos_embed_spatial = mint.unsqueeze(pos_embed_spatial, 0)
     pos_embed_spatial = mint.repeat_interleave(pos_embed_spatial, temporal_size, dim=0)  # [T, H*W, D // 4 * 3]
 
-    pos_embed_temporal = pos_embed_temporal[:, np.newaxis, :]
+    pos_embed_temporal = pos_embed_temporal[:, None, :]
     pos_embed_temporal = mint.repeat_interleave(
         pos_embed_temporal, spatial_size[0] * spatial_size[1], dim=1
     )  # [T, H*W, D // 4]
