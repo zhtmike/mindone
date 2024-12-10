@@ -22,6 +22,7 @@ use_recompute: True
 # data
 image_size: [ 480, 720 ]
 num_frames: 49
+num_latent_frames: 13  # (frames - 1) // 4 + 1
 num_parallel_workers: 2
 prefetch_size: 4
 max_rowsize: -1
