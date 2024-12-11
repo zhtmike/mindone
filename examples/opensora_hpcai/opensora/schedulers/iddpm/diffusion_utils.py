@@ -5,15 +5,16 @@
 
 import enum
 import math
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
 import mindspore as ms
+import mindspore.mint as mint
 from mindspore import Tensor, ops
 
 
-def _extract_into_tensor(a, t, x_shape):
+def _extract_into_tensor(a: Tensor, t: Tensor, x_shape: Tuple[int, ...]) -> Tensor:
     """
     Extract values from a 1-D numpy array for a batch of indices.
     :param a: the 1-D numpy array.
@@ -23,7 +24,7 @@ def _extract_into_tensor(a, t, x_shape):
     :return: a tensor of shape [batch_size, 1, ...] where the shape has K dims.
     """
     b = t.shape[0]
-    out = ops.GatherD()(a, -1, t)
+    out = mint.gather(a, -1, t)
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
 

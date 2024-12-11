@@ -12,6 +12,7 @@ import numpy as np
 from opensora.models.layers.operation_selector import get_split_op
 
 import mindspore as ms
+import mindspore.mint as mint
 from mindspore import Tensor, ops
 from mindspore.communication import get_rank
 
@@ -146,7 +147,7 @@ class GaussianDiffusion:
         log_variance = _extract_into_tensor(self.log_one_minus_alphas_cumprod, t, x_start.shape)
         return mean, variance, log_variance
 
-    def q_sample(self, x_start, t, noise=None):
+    def q_sample(self, x_start: Tensor, t: Tensor, noise: Optional[Tensor] = None) -> Tensor:
         """
         Diffuse the data for a given number of diffusion steps.
         In other words, sample from q(x_t | x_0).
@@ -156,15 +157,15 @@ class GaussianDiffusion:
         :return: A noisy version of x_start.
         """
         if noise is None:
-            noise = self._broadcast(ops.randn_like(x_start))
+            noise = self._broadcast(mint.randn_like(x_start))
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
             + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def get_v(self, x_start, t, noise=None):
+    def get_v(self, x_start: Tensor, t: Tensor, noise: Optional[Tensor] = None) -> Tensor:
         if noise is None:
-            noise = self._broadcast(ops.randn_like(x_start))
+            noise = self._broadcast(mint.randn_like(x_start))
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * noise
             - _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * x_start
@@ -355,7 +356,7 @@ class GaussianDiffusion:
             # x_noise: add noise to x values
             x0 = x.copy()
             x_noise = x0 * _extract_into_tensor(self.sqrt_alphas_cumprod, t, x.shape) + self._broadcast(
-                ops.randn_like(x)
+                mint.randn_like(x)
             ) * _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
 
             # active noise addition
@@ -375,7 +376,7 @@ class GaussianDiffusion:
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
         )
-        noise = self._broadcast(ops.randn_like(x))
+        noise = self._broadcast(mint.randn_like(x))
         nonzero_mask = (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))  # no noise when t == 0
         if cond_fn is not None:
             out["mean"] = self.condition_mean(cond_fn, out, x, t, model_kwargs=model_kwargs)
@@ -452,7 +453,7 @@ class GaussianDiffusion:
         if noise is not None:
             img = noise
         else:
-            img = self._broadcast(ops.randn(*shape))
+            img = self._broadcast(mint.randn(*shape))
         indices = list(range(self.num_timesteps))[::-1]
 
         if progress:
@@ -502,7 +503,7 @@ class GaussianDiffusion:
             # x_noise: add noise to x values
             x0 = x.copy()
             x_noise = x0 * _extract_into_tensor(self.sqrt_alphas_cumprod, t, x.shape) + self._broadcast(
-                ops.randn_like(x)
+                mint.randn_like(x)
             ) * _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x.shape)
 
             # active noise addition
@@ -536,7 +537,7 @@ class GaussianDiffusion:
         alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t, x.shape)
         sigma = eta * ops.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar)) * ops.sqrt(1 - alpha_bar / alpha_bar_prev)
         # Equation 12.
-        noise = self._broadcast(ops.randn_like(x))
+        noise = self._broadcast(mint.randn_like(x))
         mean_pred = out["pred_xstart"] * ops.sqrt(alpha_bar_prev) + ops.sqrt(1 - alpha_bar_prev - sigma**2) * eps
         nonzero_mask = (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))  # no noise when t == 0
         sample = mean_pred + nonzero_mask * sigma * noise
@@ -637,7 +638,7 @@ class GaussianDiffusion:
         if noise is not None:
             img = noise
         else:
-            img = self._broadcast(ops.randn(*shape))
+            img = self._broadcast(mint.randn(*shape))
         indices = list(range(self.num_timesteps))[::-1]
 
         if progress:
