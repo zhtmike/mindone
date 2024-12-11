@@ -7,4 +7,4 @@ python scripts/infer_vae_decode.py \
     --dtype fp32 \
     --mode 1 \
     --save_format mp4 \
-    --fps 16
+    --fps 8

@@ -26,8 +26,8 @@ use_recompute: True
 image_size: [ 768, 1360 ]
 num_frames: 85
 num_latent_frames: 22  # (frames - 1) // 4 + 1
-num_parallel_workers: 1
-prefetch_size: 1
+num_parallel_workers: 2
+prefetch_size: 4
 max_rowsize: -1
 text_drop_prob: 0.1
 
@@ -43,8 +43,8 @@ jit_level: "O1"
 
 # training hyper-params
 scheduler: "constant"
-start_learning_rate: 2.e-5
-end_learning_rate: 2.e-5
+start_learning_rate: 1.e-4
+end_learning_rate: 1.e-4
 warmup_steps: 1000
 
 batch_size: 1
@@ -56,6 +56,7 @@ optim: "adamw_re"
 optim_eps: 1.e-8
 weight_decay: 1.e-4
 betas: [0.9, 0.95]
+zero_stage: 2
 
 epochs: 10000
 ckpt_save_interval: 50

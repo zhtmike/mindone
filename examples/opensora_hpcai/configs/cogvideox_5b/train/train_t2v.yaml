@@ -24,6 +24,7 @@ use_recompute: True
 # data
 image_size: [ 480, 720 ]
 num_frames: 49
+num_latent_frames: 13  # (frames - 1) // 4 + 1
 num_parallel_workers: 2
 prefetch_size: 4
 max_rowsize: -1
@@ -36,13 +37,13 @@ init_loss_scale: 1
 native_precision: True
 
 # mindspore params, refer to https://www.mindspore.cn/docs/zh-CN/r2.4.0/api_python/mindspore/mindspore.set_context.html
-mode: 1
-jit_level: "O0"
+mode: 0
+jit_level: "O1"
 
 # training hyper-params
 scheduler: "constant"
-start_learning_rate: 2.e-5
-end_learning_rate: 2.e-5
+start_learning_rate: 1.e-4
+end_learning_rate: 1.e-4
 warmup_steps: 1000
 
 batch_size: 1
@@ -54,9 +55,10 @@ optim: "adamw_re"
 optim_eps: 1.e-8
 weight_decay: 1.e-4
 betas: [0.9, 0.95]
+zero_stage: 2
 
 epochs: 10000
-ckpt_save_interval: 20
+ckpt_save_interval: 50
 ckpt_max_keep: 3
 
 mask_ratios:

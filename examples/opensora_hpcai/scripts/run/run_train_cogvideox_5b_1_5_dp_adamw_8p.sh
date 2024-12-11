@@ -6,7 +6,4 @@ msrun --worker_num=8 --local_worker_num=8 --log_dir=$output_dir scripts/train.py
     --video_folder datasets/mixkit-100videos/mixkit \
     --text_embed_folder datasets/mixkit-100videos/t5_224 \
     --vae_latent_folder datasets/mixkit-100videos/vae_768_1360 \
-    --use_parallel True \
-    --zero_stage 2 \
-    --num_frames 85 \
-    --num_latent_frames 22 \
+    --use_parallel True

@@ -487,10 +487,10 @@ class InferPipelineCogVideoX(InferPipeline):
         return (crop_top, crop_left), (crop_top + resize_height, crop_left + resize_width)
 
     def prepare_rotary_positional_embeddings(self, height: int, width: int, num_frames: int) -> np.ndarray:
-        grid_height = height // self.model.patch_size[1]
-        grid_width = width // self.model.patch_size[2]
-        base_size_width = self.model.sample_width // self.model.patch_size[2]
-        base_size_height = self.model.sample_height // self.model.patch_size[1]
+        grid_height = height // self.model.patch_size[2]
+        grid_width = width // self.model.patch_size[1]
+        base_size_width = self.model.sample_width // self.model.patch_size[1]
+        base_size_height = self.model.sample_height // self.model.patch_size[2]
         base_num_frames = (num_frames + self.model.patch_size[0] - 1) // self.model.patch_size[0]
 
         grid_crops_coords = self.get_resize_crop_region_for_grid(
