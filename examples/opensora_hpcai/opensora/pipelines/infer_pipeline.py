@@ -445,6 +445,15 @@ class InferPipelineCogVideoX(InferPipeline):
         y = ops.transpose(y, (0, 2, 3, 4, 1))
         return y
 
+    def vae_encode(self, x: Tensor) -> Tensor:
+        """
+        Image encoding with spatial vae
+        Args:
+            x: (b c t h w), image (t=1) or video
+        """
+        y = ops.stop_gradient(self.vae.encode(x.to(self.vae.dtype)))
+        return y
+
     def data_prepare(self, inputs):
         x = inputs["noise"]
 
