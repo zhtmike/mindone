@@ -25,7 +25,7 @@ def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
     cos, sin = freqs_cis.chunk(2, axis=1)  # [B, 2, S, D]
 
     x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
-    x_rotated = ops.stack([-x_imag, x_real], axis=-1).flatten(start_dim=3)
+    x_rotated = mint.stack([-x_imag, x_real], dim=-1).flatten(start_dim=3)
 
     out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
     return out
