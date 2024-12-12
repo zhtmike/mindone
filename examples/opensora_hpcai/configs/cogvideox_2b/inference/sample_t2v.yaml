@@ -14,7 +14,7 @@ image_size: [ 480, 720 ]
 num_frames: 49
 enable_flash_attention: True
 model_max_length: 226
-dtype: fp16
+dtype: fp32
 batch_size: 1
 
 # sampling

@@ -15,7 +15,7 @@ rescale_betas_zero_snr: True
 
 vae_type: "CogVideoX-VAE"
 vae_checkpoint: "models/CogVideoX-5b/vae/diffusion_pytorch_model.safetensors"
-vae_dtype: fp16
+vae_dtype: fp32
 sd_scale_factor: 0.7
 
 enable_flash_attention: True

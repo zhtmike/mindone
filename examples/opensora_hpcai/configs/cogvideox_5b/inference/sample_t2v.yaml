@@ -9,7 +9,7 @@ t5_dtype: bf16
 
 vae_type: "CogVideoX-VAE"
 vae_checkpoint: "models/CogVideoX-5b/vae/diffusion_pytorch_model.safetensors"
-vae_dtype: fp16
+vae_dtype: fp32
 sd_scale_factor: 0.7
 
 image_size: [ 480, 720 ]
