@@ -20,7 +20,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
 from opensora.acceleration.parallel_states import set_sequence_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIO_MAP, ASPECT_RATIOS, get_image_size, get_num_frames
-from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_I2V, CogVideoX_5B_v1_5
+from opensora.models.cogvideox import (
+    CogVideoX_2B,
+    CogVideoX_5B,
+    CogVideoX_5B_I2V,
+    CogVideoX_5B_v1_5,
+    CogVideoX_5B_v1_5_I2V,
+)
 from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT3_XL_2_DSP, STDiT_XL_2
 from opensora.models.text_encoder.t5 import get_text_encoder_and_tokenizer
 from opensora.models.vae import CogVideoX_VAE
@@ -300,6 +306,15 @@ def main(args):
             max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
+    elif args.model_version == "CogVideoX-5B-v1.5-I2V":
+        model_name = "CogVideoX-5B-v1.5-I2V"
+        logger.info(f"{model_name} init")
+        latte_model = CogVideoX_5B_v1_5_I2V(
+            enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
+            max_text_seq_length=args.model_max_length,
+            dtype=dtype_map[args.dtype],
+        )
     else:
         raise ValueError(f"Unknown model version: {args.model_version}")
 
@@ -429,6 +444,7 @@ def main(args):
         pipeline_ = InferPipelineFiTLike
     elif "CogVideoX" in args.model_version:
         pipeline_ = InferPipelineCogVideoX
+        pipeline_kwargs.update(dict(encode_scale_factor=args.sd_encode_scale_factor))
     else:
         pipeline_ = InferPipeline
 
@@ -646,6 +662,9 @@ def parse_args():
     )
     parser.add_argument(
         "--sd_scale_factor", type=float, default=0.18215, help="VAE scale factor of Stable Diffusion model."
+    )
+    parser.add_argument(
+        "--sd_encode_scale_factor", type=float, default=None, help="VAE scale factor for encoding (I2V)."
     )
     parser.add_argument(
         "--vae_type",

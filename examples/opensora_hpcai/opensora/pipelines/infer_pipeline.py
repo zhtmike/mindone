@@ -426,11 +426,13 @@ class InferPipelineFiTLike(InferPipeline):
 
 
 class InferPipelineCogVideoX(InferPipeline):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, encode_scale_factor: Optional[float] = None, **kwargs):
         super().__init__(*args, **kwargs)
         assert isinstance(self.vae, AutoencoderKLCogVideoX)
         self.vae.enable_slicing()
         self.vae.enable_tiling()
+
+        self.encode_scale_factor = self.scale_factor if encode_scale_factor is None else encode_scale_factor
 
     def vae_decode_video(self, x: Tensor) -> Tensor:
         """
@@ -453,7 +455,7 @@ class InferPipelineCogVideoX(InferPipeline):
         """
         y = self.vae.encode(x.to(self.vae.dtype))
         y = self.vae.sample(y)
-        y = ops.stop_gradient(y * self.scale_factor)
+        y = ops.stop_gradient(y * self.encode_scale_factor)
         return y
 
     def data_prepare(self, inputs):
@@ -536,7 +538,12 @@ class InferPipelineCogVideoX(InferPipeline):
         else:
             image_rotary_emb = None
 
-        model_kwargs = dict(y=y, image_rotary_emb=image_rotary_emb)
+        if self.model.ofs_embedding is not None:
+            ofs = Tensor(np.full((z.shape[0],), 2.0, dtype=np.float32))
+        else:
+            ofs = None
+
+        model_kwargs = dict(y=y, image_rotary_emb=image_rotary_emb, ofs=ofs)
 
         if additional_kwargs is not None:
             model_kwargs.update(additional_kwargs)

@@ -18,7 +18,14 @@ from mindspore.common.initializer import initializer
 from mindspore.communication import get_group_size
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
-__all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B", "CogVideoX_5B_I2V", "CogVideoX_5B_v1_5"]
+__all__ = [
+    "CogVideoXTransformer3DModel",
+    "CogVideoX_2B",
+    "CogVideoX_5B",
+    "CogVideoX_5B_I2V",
+    "CogVideoX_5B_v1_5",
+    "CogVideoX_5B_v1_5_I2V",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -978,11 +985,12 @@ class CogVideoXTransformer3DModel(nn.Cell):
         use_rotary_positional_embeddings: bool = False,
         use_learned_positional_embeddings: bool = False,
         patch_bias: bool = True,
+        ofs_embed_dim: Optional[int] = None,
+        rope_grid_type: Literal["linspace", "slice"] = "linspace",
         enable_flash_attention: bool = False,
         enable_sequence_parallelism: bool = False,
         use_recompute: bool = False,
         num_recompute_blocks: Optional[int] = None,
-        rope_grid_type: Literal["linspace", "slice"] = "linspace",
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
@@ -1029,6 +1037,13 @@ class CogVideoXTransformer3DModel(nn.Cell):
         # 2. Time embeddings
         self.time_proj = Timesteps(inner_dim, flip_sin_to_cos, freq_shift)
         self.time_embedding = TimestepEmbedding(inner_dim, time_embed_dim, timestep_activation_fn, dtype=dtype)
+
+        if ofs_embed_dim is not None:
+            self.ofs_proj = Timesteps(ofs_embed_dim, flip_sin_to_cos, freq_shift)
+            self.ofs_embedding = TimestepEmbedding(ofs_embed_dim, ofs_embed_dim, timestep_activation_fn, dtype=dtype)
+        else:
+            self.ofs_proj = None
+            self.ofs_embedding = None
 
         # 3. Define spatio-temporal transformers blocks
         self.transformer_blocks = nn.CellList(
@@ -1087,7 +1102,13 @@ class CogVideoXTransformer3DModel(nn.Cell):
         return self._dtype
 
     def construct(
-        self, x: Tensor, timestep: Tensor, y: Tensor, image_rotary_emb: Optional[Tensor] = None, **kwargs
+        self,
+        x: Tensor,
+        timestep: Tensor,
+        y: Tensor,
+        image_rotary_emb: Optional[Tensor] = None,
+        ofs: Optional[Tensor] = None,
+        **kwargs,
     ) -> Tensor:
         hidden_states = ops.transpose(x, (0, 2, 1, 3, 4)).to(self.dtype)  # n, t, c, h, w
         encoder_hidden_states = y.to(self.dtype)
@@ -1103,6 +1124,12 @@ class CogVideoXTransformer3DModel(nn.Cell):
         # there might be better ways to encapsulate this.
         t_emb = t_emb.to(dtype=hidden_states.dtype)
         emb = self.time_embedding(t_emb)
+
+        if self.ofs_embedding is not None:
+            ofs_emb = self.ofs_proj(ofs)
+            ofs_emb = ofs_emb.to(dtype=hidden_states.dtype)
+            ofs_emb = self.ofs_embedding(ofs_emb)
+            emb = emb + ofs_emb
 
         # 2. Patch embedding
         hidden_states = self.patch_embed(encoder_hidden_states, hidden_states)
@@ -1178,12 +1205,13 @@ class CogVideoXTransformer3DModel(nn.Cell):
         timestep: Tensor,
         y: Tensor,
         image_rotary_emb: Optional[Tensor] = None,
+        ofs: Optional[Tensor] = None,
         cfg_scale: Union[float, Tensor] = 6.0,
         **kwargs,
     ) -> Tensor:
         x = mint.chunk(x, 2, 0)[0]
         x = mint.tile(x, (2, 1, 1, 1, 1))
-        x = self.construct(x, timestep, y, image_rotary_emb=image_rotary_emb, **kwargs)
+        x = self.construct(x, timestep, y, image_rotary_emb=image_rotary_emb, ofs=ofs, **kwargs)
         pred_cond, pred_uncond = mint.chunk(x, 2, 0)
         pred = pred_uncond + cfg_scale * (pred_cond - pred_uncond)
         pred = mint.tile(pred, (2, 1, 1, 1, 1))
@@ -1254,6 +1282,27 @@ def CogVideoX_5B_v1_5(from_pretrained: Optional[str] = None, **kwargs) -> CogVid
         sample_frames=81,
         patch_size=(2, 2, 2),
         patch_bias=False,
+        rope_grid_type="slice",
+        **kwargs,
+    )
+
+    if from_pretrained is not None:
+        model.load_from_checkpoint(from_pretrained)
+    return model
+
+
+def CogVideoX_5B_v1_5_I2V(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
+    model = CogVideoXTransformer3DModel(
+        num_attention_heads=48,
+        in_channels=32,
+        num_layers=42,
+        use_rotary_positional_embeddings=True,
+        sample_width=300,
+        sample_height=300,
+        sample_frames=81,
+        patch_size=(2, 2, 2),
+        patch_bias=False,
+        ofs_embed_dim=512,
         rope_grid_type="slice",
         **kwargs,
     )
