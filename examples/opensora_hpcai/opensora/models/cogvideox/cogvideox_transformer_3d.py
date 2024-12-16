@@ -18,7 +18,7 @@ from mindspore.common.initializer import initializer
 from mindspore.communication import get_group_size
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
-__all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B", "CogVideoX_5B_v1_5"]
+__all__ = ["CogVideoXTransformer3DModel", "CogVideoX_2B", "CogVideoX_5B", "CogVideoX_5B_I2V", "CogVideoX_5B_v1_5"]
 
 logger = logging.getLogger(__name__)
 
@@ -715,7 +715,7 @@ class CogVideoXPatchEmbed(nn.Cell):
         if use_positional_embeddings or use_learned_positional_embeddings:
             pos_embedding = self._get_positional_embeddings(sample_height, sample_width, sample_frames)
             if use_learned_positional_embeddings:
-                self.pos_embedding = Parameter(pos_embedding, requires_grad=True)
+                self.pos_embedding = Parameter(pos_embedding.to(dtype), requires_grad=True)
             else:
                 self.pos_embedding = pos_embedding
 
@@ -1074,7 +1074,9 @@ class CogVideoXTransformer3DModel(nn.Cell):
             if num_recompute_blocks is None:
                 num_recompute_blocks = len(self.transformer_blocks)
             else:
-                assert num_recompute_blocks <= len(self.transformer_blocks), f"recompute blocks must be smaller the transformer blocks {len(self.transformer_blocks)}"
+                assert num_recompute_blocks <= len(
+                    self.transformer_blocks
+                ), f"recompute blocks must be smaller the transformer blocks {len(self.transformer_blocks)}"
             for i, block in enumerate(self.transformer_blocks):
                 # recompute the first N blocks
                 if i < num_recompute_blocks:
@@ -1220,6 +1222,21 @@ def CogVideoX_2B(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTr
 def CogVideoX_5B(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
     model = CogVideoXTransformer3DModel(
         num_attention_heads=48, num_layers=42, use_rotary_positional_embeddings=True, **kwargs
+    )
+
+    if from_pretrained is not None:
+        model.load_from_checkpoint(from_pretrained)
+    return model
+
+
+def CogVideoX_5B_I2V(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
+    model = CogVideoXTransformer3DModel(
+        num_attention_heads=48,
+        in_channels=32,
+        num_layers=42,
+        use_rotary_positional_embeddings=True,
+        use_learned_positional_embeddings=True,
+        **kwargs,
     )
 
     if from_pretrained is not None:

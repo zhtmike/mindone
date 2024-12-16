@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
 from opensora.acceleration.parallel_states import set_sequence_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIO_MAP, ASPECT_RATIOS, get_image_size, get_num_frames
-from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_v1_5
+from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_I2V, CogVideoX_5B_v1_5
 from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT3_XL_2_DSP, STDiT_XL_2
 from opensora.models.text_encoder.t5 import get_text_encoder_and_tokenizer
 from opensora.models.vae import CogVideoX_VAE
@@ -282,6 +282,15 @@ def main(args):
             max_text_seq_length=args.model_max_length,
             dtype=dtype_map[args.dtype],
         )
+    elif args.model_version == "CogVideoX-5B-I2V":
+        model_name = "CogVideoX-5B-I2V"
+        logger.info(f"{model_name} init")
+        latte_model = CogVideoX_5B_I2V(
+            enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
+            max_text_seq_length=args.model_max_length,
+            dtype=dtype_map[args.dtype],
+        )
     elif args.model_version == "CogVideoX-5B-v1.5":
         model_name = "CogVideoX-5B-v1.5"
         logger.info(f"{model_name} init")
@@ -518,9 +527,14 @@ def main(args):
 
             z = np.random.randn(ns, VAE_Z_CH, *latent_size).astype(np.float32)
 
-            if args.model_version != "v1":
+            if args.model_version != "v1" and "CogVideoX" not in args.model_version:
                 z, frames_mask = apply_mask_strategy(z, references, frames_mask_strategy, loop_i, align)
                 frames_mask = Tensor(frames_mask, dtype=ms.float32)
+            elif "CogVideoX" in args.model_version:
+                image_latent = references[0][0][None]
+                image_latent = np.tile(image_latent, (ns, 1, 1, 1, 1))
+                image_latent = np.pad(image_latent, ((0, 0), (0, 0), (0, latent_size[0] - 1), (0, 0), (0, 0)))
+                inputs["image_latent"] = Tensor(image_latent, dtype=ms.float32)
 
             z = ms.Tensor(z, dtype=ms.float32)
             inputs["noise"] = z

@@ -445,6 +445,17 @@ class InferPipelineCogVideoX(InferPipeline):
         y = ops.transpose(y, (0, 2, 3, 4, 1))
         return y
 
+    def vae_encode(self, x: Tensor) -> Tensor:
+        """
+        Image encoding with spatial vae
+        Args:
+            x: (b c t h w), image (t=1) or video
+        """
+        y = self.vae.encode(x.to(self.vae.dtype))
+        y = self.vae.sample(y)
+        y = ops.stop_gradient(y * self.scale_factor)
+        return y
+
     def data_prepare(self, inputs):
         x = inputs["noise"]
 
@@ -462,13 +473,17 @@ class InferPipelineCogVideoX(InferPipeline):
                 null_text_emb = inputs["null_text_emb"]
 
             y = ops.cat([text_emb, null_text_emb], axis=0)
-            x_in = ops.concat([x] * 2, axis=0)
+            x_in = ops.cat([x] * 2, axis=0)
             assert y.shape[0] == x_in.shape[0], "shape mismatch!"
         else:
             x_in = x
             y = text_emb
 
-        return x_in, y
+        image_latent = inputs.get("image_latent", None)
+        if image_latent is not None and self.use_cfg:
+            image_latent = ops.cat([image_latent, image_latent], axis=0)
+
+        return x_in, y, image_latent
 
     def get_resize_crop_region_for_grid(self, src, tgt_width, tgt_height):
         tw = tgt_width
@@ -513,7 +528,7 @@ class InferPipelineCogVideoX(InferPipeline):
         additional_kwargs: Optional[dict] = None,
         **kwargs,
     ) -> Tuple[Union[Tensor, None], Tensor]:
-        z, y = self.data_prepare(inputs)
+        z, y, image_latent = self.data_prepare(inputs)
 
         if self.model.use_rotary_positional_embeddings:
             image_rotary_emb = self.prepare_rotary_positional_embeddings(z.shape[-2], z.shape[-1], z.shape[-3])
@@ -535,6 +550,7 @@ class InferPipelineCogVideoX(InferPipeline):
                 clip_denoised=False,
                 model_kwargs=model_kwargs,
                 progress=True,
+                image_latent=image_latent,
             )
             latents, _ = latents.chunk(2, axis=0)
         else:
@@ -545,6 +561,7 @@ class InferPipelineCogVideoX(InferPipeline):
                 clip_denoised=False,
                 model_kwargs=model_kwargs,
                 progress=True,
+                image_latent=image_latent,
             )
 
         t_offset = inputs.get("t_offset", 0)
