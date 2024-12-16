@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 from args_train import parse_args
 from opensora.acceleration.parallel_states import create_parallel_group
 from opensora.datasets.aspect import ASPECT_RATIOS, get_image_size
-from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_v1_5
+from opensora.models.cogvideox import CogVideoX_2B, CogVideoX_5B, CogVideoX_5B_I2V, CogVideoX_5B_v1_5
 from opensora.models.layers.operation_selector import set_dynamic_mode
 from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT3_XL_2_DSP, STDiT_XL_2
 from opensora.models.vae import CogVideoX_VAE
@@ -494,6 +494,17 @@ def main(args):
         model_name = "CogVideoX-5B"
         logger.info(f"{model_name} init")
         latte_model = CogVideoX_5B(
+            enable_flash_attention=args.enable_flash_attention,
+            enable_sequence_parallelism=args.enable_sequence_parallelism,
+            use_recompute=args.use_recompute,
+            num_recompute_blocks=args.num_recompute_blocks,
+            max_text_seq_length=args.model_max_length,
+            dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
+        )
+    elif args.model_version == "CogVideoX-5B-I2V":
+        model_name = "CogVideoX-5B-I2V"
+        logger.info(f"{model_name} init")
+        latte_model = CogVideoX_5B_I2V(
             enable_flash_attention=args.enable_flash_attention,
             enable_sequence_parallelism=args.enable_sequence_parallelism,
             use_recompute=args.use_recompute,

@@ -1,0 +1,52 @@
+model_version: CogVideoX-5B-I2V
+ckpt_path:
+  - "models/CogVideoX-5b-I2V/transformer/diffusion_pytorch_model-00001-of-00003.safetensors"
+  - "models/CogVideoX-5b-I2V/transformer/diffusion_pytorch_model-00002-of-00003.safetensors"
+  - "models/CogVideoX-5b-I2V/transformer/diffusion_pytorch_model-00003-of-00003.safetensors"
+
+t5_model: transformers
+t5_model_dir: "models/t5-v1_1-xxl/"
+t5_dtype: bf16
+
+vae_type: "CogVideoX-VAE"
+vae_checkpoint: "models/CogVideoX-5b-I2V/vae/diffusion_pytorch_model.safetensors"
+vae_dtype: fp32
+sd_scale_factor: 0.7
+
+image_size: [ 480, 720 ]
+num_frames: 49
+enable_flash_attention: True
+model_max_length: 226
+dtype: bf16
+batch_size: 1
+
+# sampling
+sampling_steps: 50
+guidance_scale: 6.0
+seed: 42
+sampling: ddim
+learn_sigma: False
+noise_schedule: quad
+v_pred: True
+beta_start: 0.00085
+beta_end: 0.012
+snr_shift_scale: 1.0
+rescale_betas_zero_snr: True
+
+# ms
+mode: 1
+jit_level: O0
+fps: 8
+
+# other
+save_format: mp4
+
+captions:
+  - "An astronaut hatching from an egg, on the surface of the moon, the darkness and depth of space realised in the background. High quality, ultrarealistic detail and breath-taking movie-like camera shot."
+
+reference_path:
+  - "assets/astronaut.jpg"
+
+# useless but necessary
+mask_strategy:
+  - "0, 0, 0, 0, 1, 0"

@@ -183,7 +183,16 @@ class GaussianDiffusion:
         posterior_log_variance_clipped = _extract_into_tensor(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def p_mean_variance(self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None):
+    def p_mean_variance(
+        self,
+        model,
+        x,
+        t,
+        clip_denoised=True,
+        denoised_fn=None,
+        model_kwargs=None,
+        image_latent: Optional[Tensor] = None,
+    ):
         """
         Apply the model to get p(x_{t-1} | x_t), as well as a prediction of
         the initial x, x_0.
@@ -208,7 +217,12 @@ class GaussianDiffusion:
 
         B, C, F = x.shape[:3]
 
-        model_output = model(x, t, **model_kwargs)
+        if image_latent is not None:
+            x_in = ops.cat([x, image_latent], axis=1)
+        else:
+            x_in = x
+
+        model_output = model(x_in, t, **model_kwargs)
         if isinstance(model_output, tuple):
             model_output, extra = model_output
         else:
@@ -488,6 +502,7 @@ class GaussianDiffusion:
         model_kwargs=None,
         eta=0.0,
         frames_mask: Optional[np.ndarray] = None,
+        image_latent: Optional[Tensor] = None,
     ):
         """
         Sample x_{t-1} from the model using DDIM.
@@ -521,6 +536,7 @@ class GaussianDiffusion:
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
+            image_latent=image_latent,
         )
         if cond_fn is not None:
             out = self.condition_score(cond_fn, out, x, t, model_kwargs=model_kwargs)
@@ -595,6 +611,7 @@ class GaussianDiffusion:
         progress=False,
         eta=0.0,
         frames_mask: Optional[np.ndarray] = None,
+        image_latent: Optional[Tensor] = None,
     ):
         """
         Generate samples from the model using DDIM.
@@ -612,6 +629,7 @@ class GaussianDiffusion:
             progress=progress,
             eta=eta,
             frames_mask=frames_mask,
+            image_latent=image_latent,
         ):
             final = sample
         return final["sample"]
@@ -628,6 +646,7 @@ class GaussianDiffusion:
         progress=False,
         eta=0.0,
         frames_mask: Optional[np.ndarray] = None,
+        image_latent: Optional[Tensor] = None,
     ):
         """
         Use DDIM to sample from the model and yield intermediate samples from
@@ -659,6 +678,7 @@ class GaussianDiffusion:
                 model_kwargs=model_kwargs,
                 eta=eta,
                 frames_mask=frames_mask,
+                image_latent=image_latent,
             )
             sample = out["sample"]
 
