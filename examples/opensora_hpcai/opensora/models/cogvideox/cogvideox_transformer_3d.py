@@ -1,6 +1,5 @@
 # diffusers/models/transformers/cogvideox_transformer_3d.py -- v0.31.0
 import logging
-import numbers
 from typing import List, Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -14,7 +13,6 @@ import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
-from mindspore.common.initializer import initializer
 from mindspore.communication import get_group_size
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
@@ -76,7 +74,7 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim: int, pos: Tensor) -> Tensor:
     omega = 1.0 / 10000**omega  # (D/2,)
 
     pos = pos.reshape(-1)  # (M,)
-    out = ops.outer(pos, omega)  # (M, D/2), outer product
+    out = mint.outer(pos, omega)  # (M, D/2), outer product
 
     emb_sin = mint.sin(out)  # (M, D/2)
     emb_cos = mint.cos(out)  # (M, D/2)
@@ -114,10 +112,10 @@ def get_3d_sincos_pos_embed(
     pos_embed_temporal = get_1d_sincos_pos_embed_from_grid(embed_dim_temporal, grid_t)
 
     # 3. Concat
-    pos_embed_spatial = ops.unsqueeze(pos_embed_spatial, 0)
+    pos_embed_spatial = mint.unsqueeze(pos_embed_spatial, 0)
     pos_embed_spatial = mint.repeat_interleave(pos_embed_spatial, temporal_size, dim=0)  # [T, H*W, D // 4 * 3]
 
-    pos_embed_temporal = pos_embed_temporal[:, np.newaxis, :]
+    pos_embed_temporal = pos_embed_temporal[:, None, :]
     pos_embed_temporal = mint.repeat_interleave(
         pos_embed_temporal, spatial_size[0] * spatial_size[1], dim=1
     )  # [T, H*W, D // 4]
@@ -159,7 +157,6 @@ def get_timestep_embedding(
     return emb
 
 
-"""
 class FP32LayerNorm(mint.nn.LayerNorm):
     def construct(self, input: Tensor) -> Tensor:
         dtype = input.dtype
@@ -167,33 +164,6 @@ class FP32LayerNorm(mint.nn.LayerNorm):
             input.to(ms.float32), self.normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps
         ).to(dtype)
         return y
-"""
-
-
-class FP32LayerNorm(nn.Cell):
-    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine: bool = True, dtype=ms.float32):
-        super().__init__()
-        if isinstance(normalized_shape, numbers.Integral):
-            normalized_shape = (normalized_shape,)
-        self.normalized_shape = tuple(normalized_shape)
-        self.eps = eps
-        self.elementwise_affine = elementwise_affine
-        if self.elementwise_affine:
-            self.weight = Parameter(initializer("ones", normalized_shape, dtype=dtype))
-            self.bias = Parameter(initializer("zeros", normalized_shape, dtype=dtype))
-        else:
-            self.weight = ops.ones(normalized_shape, dtype=dtype)
-            self.bias = ops.zeros(normalized_shape, dtype=dtype)
-
-    def construct(self, x: Tensor):
-        normalized_shape = x.shape[-1:]
-        # mint layer_norm fuses the operations in layer normorlization and it's faster than ops.LayerNorm
-        ori_dtype = x.dtype
-        x = mint.nn.functional.layer_norm(
-            x.to(ms.float32), normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps
-        ).to(ori_dtype)
-
-        return x
 
 
 class ApproximateGELU(nn.Cell):
@@ -1106,7 +1076,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         ofs: Optional[Tensor] = None,
         **kwargs,
     ) -> Tensor:
-        hidden_states = ops.transpose(x, (0, 2, 1, 3, 4)).to(self.dtype)  # n, t, c, h, w
+        hidden_states = mint.permute(x, (0, 2, 1, 3, 4)).to(self.dtype)  # n, t, c, h, w
         encoder_hidden_states = y.to(self.dtype)
 
         batch_size, num_frames, _, height, width = hidden_states.shape
