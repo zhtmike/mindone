@@ -17,15 +17,14 @@ from mindone.models.utils import normal_, zeros_
 from ..text_encoders import TextProjector
 from .activation import ACT2FN
 from .block import (
-    ContextParallelLlamaAttention,
-    ContextParallelLlamaFlashAttention,
-    FusedTensorParallelLlamaMLP,
     LinearPatchEmbed3D,
     LlamaAttention,
     LlamaFlashAttention,
     LlamaMLP,
     LlamaRMSNorm,
     PatchEmbed3D,
+    TensorParallelLlamaAttention,
+    TensorParallelLlamaFlashAttention,
     TensorParallelLlamaMLP,
     TimestepEmbedder,
 )
@@ -39,9 +38,9 @@ Llama_ATTENTION_CLASSES = {
     "flash_attention": LlamaFlashAttention,
 }
 
-CONTEXT_PARALLEL_Llama_ATTENTION_CLASSES = {
-    "eager": ContextParallelLlamaAttention,
-    "flash_attention": ContextParallelLlamaFlashAttention,
+TensorParallel_Llama_ATTENTION_CLASSES = {
+    "eager": TensorParallelLlamaAttention,
+    "flash_attention": TensorParallelLlamaFlashAttention,
 }
 
 
@@ -146,55 +145,50 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         attention_bias: bool = False,
         hidden_act: str = "silu",
         attn_implementation: Literal["eager", "flash_attention"] = "eager",
-        fused_tensor_parallel: bool = True,
+        fused_with_sequence_parallel: bool = True,
         group: str = GlobalComm.WORLD_COMM_GROUP,
         dtype: mstype.Type = mstype.float32,
     ) -> None:
         super().__init__()
 
-        # 3.1.6 Context Parallelism
-        self.self_attn = CONTEXT_PARALLEL_Llama_ATTENTION_CLASSES[attn_implementation](
+        # 3.1.6 Tensor/Context Parallelism
+        self.self_attn = TensorParallel_Llama_ATTENTION_CLASSES[attn_implementation](
             hidden_size=hidden_size,
             num_attention_heads=num_attention_heads,
             num_key_value_heads=num_key_value_heads,
             attention_dropout=attention_dropout,
             attention_bias=attention_bias,
+            fused_with_sequence_parallel=fused_with_sequence_parallel,
+            group=group,
             dtype=dtype,
         )
 
-        self.cross_attn = Llama_ATTENTION_CLASSES[attn_implementation](
+        self.cross_attn = TensorParallel_Llama_ATTENTION_CLASSES[attn_implementation](
             hidden_size=hidden_size,
             num_attention_heads=num_attention_heads,
             num_key_value_heads=num_key_value_heads,
             attention_dropout=attention_dropout,
             attention_bias=attention_bias,
+            fused_with_sequence_parallel=fused_with_sequence_parallel,
+            group=group,
             dtype=dtype,
         )
 
         # 3.1.6 Tensor Parallelism
-        if fused_tensor_parallel:
-            self.mlp = FusedTensorParallelLlamaMLP(
-                intermediate_size=intermediate_size,
-                hidden_size=hidden_size,
-                hidden_act=hidden_act,
-                dim=1,
-                group=group,
-                dtype=dtype,
-            )
-        else:
-            self.mlp = TensorParallelLlamaMLP(
-                intermediate_size=intermediate_size,
-                hidden_size=hidden_size,
-                hidden_act=hidden_act,
-                group=group,
-                dtype=dtype,
-            )
+        self.mlp = TensorParallelLlamaMLP(
+            intermediate_size=intermediate_size,
+            hidden_size=hidden_size,
+            hidden_act=hidden_act,
+            fused_with_sequence_parallel=fused_with_sequence_parallel,
+            group=group,
+            dtype=dtype,
+        )
 
         self.scale_shift_table = Parameter(Tensor(np.random.randn(1, 6, hidden_size) / hidden_size**0.5, dtype=dtype))
         self.input_layernorm = LlamaRMSNorm(hidden_size, eps=rms_norm_eps, dtype=dtype)
         self.post_attention_layernorm = LlamaRMSNorm(hidden_size, eps=rms_norm_eps, dtype=dtype)
 
-        if not fused_tensor_parallel:
+        if not fused_with_sequence_parallel:
             self.split_forward_gather_backward = SplitForwardGatherBackward(dim=1, grad_scale="down", group=group)
             self.gather_forward_split_backward = GatherForwardSplitBackward(dim=1, grad_scale="up", group=group)
         else:
@@ -223,13 +217,17 @@ class ModelParallelLlamaDecoderLayer(nn.Cell):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
         hidden_states = t2i_modulate(hidden_states, shift_msa, scale_msa)
+        hidden_states = self.gather_forward_split_backward(hidden_states)
         hidden_states = self.self_attn(hidden_states)
+        hidden_states = self.split_forward_gather_backward(hidden_states)
         hidden_states = gate_msa * hidden_states
         hidden_states = residual + hidden_states
 
         # 3.1.3 Cross Attention
         residual = hidden_states
+        hidden_states = self.gather_forward_split_backward(hidden_states)
         hidden_states = self.cross_attn(hidden_states, encoder_hidden_states=encoder_hidden_states)
+        hidden_states = self.split_forward_gather_backward(hidden_states)
         hidden_states = residual + hidden_states
 
         # Fully Connected
@@ -291,7 +289,7 @@ class LlamaModel(nn.Cell):
         recompute_every_nth_block: Optional[int] = None,
         use_linear_patch_embedder: bool = True,
         model_parallelism: bool = False,
-        fused_tensor_parallel: bool = True,
+        fused_with_sequence_parallel: bool = True,
         post_init_weight: bool = True,
         dtype: mstype.Type = mstype.float32,
     ) -> None:
@@ -321,7 +319,7 @@ class LlamaModel(nn.Cell):
                         attention_bias=attention_bias,
                         hidden_act=hidden_act,
                         attn_implementation=attn_implementation,
-                        fused_tensor_parallel=fused_tensor_parallel,
+                        fused_with_sequence_parallel=fused_with_sequence_parallel,
                         group=mp_group,
                         dtype=dtype,
                     )
@@ -534,12 +532,14 @@ class LlamaModel(nn.Cell):
         param_dict = target.parameters_dict()
 
         # filter tensor-parallel block
-        names = ["gate_proj", "up_proj", "down_proj"]
+        names = ["gate_proj", "up_proj", "down_proj", "q_proj", "k_proj", "v_proj", "o_proj"]
         param_dict = {k: v for k, v in param_dict.items() if not any([name in k for name in names])}
         load_param_into_net(self, param_dict)
 
         # load tensor-parallel block
         for layer, target_layer in zip(self.layers, target.layers):
+            layer.self_attn.load_weight_from_non_parallel_cell(target_layer.self_attn)
+            layer.cross_attn.load_weight_from_non_parallel_cell(target_layer.cross_attn)
             layer.mlp.load_weight_from_non_parallel_cell(target_layer.mlp)
 
 

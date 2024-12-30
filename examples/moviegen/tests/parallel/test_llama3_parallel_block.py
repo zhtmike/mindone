@@ -1,7 +1,8 @@
 import argparse
+from typing import Literal
 
 import numpy as np
-from mg.models.llama.block import LlamaMLP, TensorParallelLlamaMLP
+from mg.models.llama.block import LlamaAttention, LlamaMLP, TensorParallelLlamaAttention, TensorParallelLlamaMLP
 from mg.parallel import create_parallel_group
 from utils import gather_or_reduce_parallel_gradient
 
@@ -29,30 +30,33 @@ def get_sample_data(dtype: ms.Type = ms.float32) -> Tensor:
     return x
 
 
-def get_block_config():
-    config = dict(intermediate_size=8192, hidden_size=3072, hidden_act="silu")
+def get_block_config(block_type: Literal["mlp", "attention"] = "mlp"):
+    if block_type == "mlp":
+        config = dict(intermediate_size=8192, hidden_size=3072, hidden_act="silu")
+    else:
+        config = dict(hidden_size=3072, num_attention_heads=24, num_key_value_heads=24, attention_bias=True)
     return config
 
 
-def run_block(mode: int = 0, dtype: ms.Type = ms.float32):
-    ms.set_context(mode=mode)
-    init()
-
+def run_block(block_type: Literal["mlp", "attention"] = "mlp", dtype: ms.Type = ms.float32):
     # prepare data
     set_random_seed(1024)
     data = get_sample_data(dtype=dtype)
 
-    # prepare group
-    create_parallel_group(model_parallel_shards=get_group_size())
-
     # non parallel block
     set_random_seed(1024)
-    non_parallel_block_cfg = get_block_config()
-    non_parallel_block = LlamaMLP(**non_parallel_block_cfg, dtype=dtype)
+    non_parallel_block_cfg = get_block_config(block_type=block_type)
+    if block_type == "mlp":
+        non_parallel_block = LlamaMLP(**non_parallel_block_cfg, dtype=dtype)
+    else:
+        non_parallel_block = LlamaAttention(**non_parallel_block_cfg, dtype=dtype)
 
     # parallel block
-    parallel_block_cfg = get_block_config()
-    parallel_block = TensorParallelLlamaMLP(**parallel_block_cfg, dtype=dtype)
+    parallel_block_cfg = get_block_config(block_type=block_type)
+    if block_type == "mlp":
+        parallel_block = TensorParallelLlamaMLP(**parallel_block_cfg, dtype=dtype)
+    else:
+        parallel_block = TensorParallelLlamaAttention(**parallel_block_cfg, dtype=dtype)
 
     # load weight
     parallel_block.load_weight_from_non_parallel_cell(non_parallel_block)
@@ -104,4 +108,10 @@ if __name__ == "__main__":
         "--mode", default=0, type=int, choices=[0, 1], help="Mode to test. (0: Graph Mode; 1: Pynative mode)"
     )
     args = parser.parse_args()
-    run_block(mode=args.mode)
+    ms.set_context(mode=args.mode)
+    init()
+    create_parallel_group(model_parallel_shards=get_group_size())
+    print("MLP layer:")
+    run_block("mlp")
+    print("Attention layer:")
+    run_block("attention")

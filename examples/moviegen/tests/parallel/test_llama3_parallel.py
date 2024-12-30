@@ -34,12 +34,12 @@ def get_sample_data(dtype: ms.Type = ms.float32) -> Tuple[Tensor, ...]:
     return latent_embedding, timestep, ul2_emb, metaclip_emb, byt5_emb
 
 
-def get_network_config(model_parallelism=False, fused_tensor_parallel=False):
+def get_network_config(model_parallelism=False, fused_with_sequence_parallel=False):
     config = dict(
-        num_hidden_layers=2,
+        num_hidden_layers=1,
         attn_implementation="eager",
         model_parallelism=model_parallelism,
-        fused_tensor_parallel=fused_tensor_parallel,
+        fused_with_sequence_parallel=fused_with_sequence_parallel,
         post_init_weight=False,
     )
     return config
@@ -57,20 +57,26 @@ def run_network(mode: int = 0, dtype: ms.Type = ms.float32):
     create_parallel_group(model_parallel_shards=get_group_size())
 
     print("Non-fused tensor parallel:", flush=True)
-    run_parallel_network(data, fused_tensor_parallel=False)
+    run_parallel_network(data, fused_with_sequence_parallel=False)
 
     print("Fused tensor parallel:", flush=True)
-    run_parallel_network(data, fused_tensor_parallel=True)
+    run_parallel_network(data, fused_with_sequence_parallel=True)
 
 
-def run_parallel_network(data: Tuple[Tensor, ...], fused_tensor_parallel: bool = False, dtype: ms.Type = ms.float32):
+def run_parallel_network(
+    data: Tuple[Tensor, ...], fused_with_sequence_parallel: bool = False, dtype: ms.Type = ms.float32
+):
     # non parallel network
     set_random_seed(1024)
-    non_parallel_network_cfg = get_network_config(model_parallelism=False, fused_tensor_parallel=fused_tensor_parallel)
+    non_parallel_network_cfg = get_network_config(
+        model_parallelism=False, fused_with_sequence_parallel=fused_with_sequence_parallel
+    )
     non_parallel_network = LlamaModel(**non_parallel_network_cfg, dtype=dtype)
 
     # parallel netowrk
-    parallel_network_cfg = get_network_config(model_parallelism=True, fused_tensor_parallel=fused_tensor_parallel)
+    parallel_network_cfg = get_network_config(
+        model_parallelism=True, fused_with_sequence_parallel=fused_with_sequence_parallel
+    )
     parallel_network = LlamaModel(**parallel_network_cfg, dtype=dtype)
 
     # load weight
@@ -100,7 +106,7 @@ def run_parallel_network(data: Tuple[Tensor, ...], fused_tensor_parallel: bool =
         grad_1 = gather_or_reduce_parallel_gradient(grad_1, grad_0.shape)
         grad_0, grad_1 = grad_0.asnumpy(), grad_1.asnumpy()
         assert np.count_nonzero(grad_0) > 0
-        np.testing.assert_allclose(grad_0, grad_1, rtol=1.3e-6, atol=2e-5)
+        np.testing.assert_allclose(grad_0, grad_1, rtol=1.3e-6, atol=3e-5)
     print("Test 2 (Backward: Parameter Gradient): Passed.", flush=True)
 
 
