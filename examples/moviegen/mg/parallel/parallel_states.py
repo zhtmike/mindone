@@ -70,12 +70,13 @@ def create_parallel_group(tensor_parallel_shards: int = 1, context_parallel_shar
     tp_rank_id_pairs = rank_ids.transpose(0, 2, 1).reshape(-1, tensor_parallel_shards)
     cp_rank_id_pairs = rank_ids.reshape(-1, context_parallel_shards)
 
-    # identiy which group the current group belongs to
+    # identiy which group the current id belongs to
     my_rank_id = get_rank()
     my_dp_group_id = np.where(my_rank_id == dp_rank_id_pairs)[0].squeeze().item()
     my_tp_group_id = np.where(my_rank_id == tp_rank_id_pairs)[0].squeeze().item()
     my_cp_group_id = np.where(my_rank_id == cp_rank_id_pairs)[0].squeeze().item()
 
+    # create the communication group for the current id
     my_dp_group_name = f"dp_group_{my_dp_group_id}"
     _create_group(my_dp_group_name, dp_rank_id_pairs[my_dp_group_id].tolist())
     set_data_parallel_group(my_dp_group_name)
