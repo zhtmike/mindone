@@ -1,4 +1,5 @@
-from typing import Optional
+import logging
+from typing import List, Optional
 
 import numpy as np
 
@@ -13,6 +14,8 @@ __all__ = [
     "get_context_parallel_group",
     "create_parallel_group",
 ]
+
+_logger = logging.getLogger()
 
 
 _GLOBAL_PARALLEL_GROUPS = dict()
@@ -74,13 +77,18 @@ def create_parallel_group(tensor_parallel_shards: int = 1, context_parallel_shar
     my_cp_group_id = np.where(my_rank_id == cp_rank_id_pairs)[0].squeeze().item()
 
     my_dp_group_name = f"dp_group_{my_dp_group_id}"
-    create_group(my_dp_group_name, dp_rank_id_pairs[my_dp_group_id].tolist())
+    _create_group(my_dp_group_name, dp_rank_id_pairs[my_dp_group_id].tolist())
     set_data_parallel_group(my_dp_group_name)
 
     my_tp_group_name = f"tp_group_{my_tp_group_id}"
-    create_group(my_tp_group_name, tp_rank_id_pairs[my_tp_group_id].tolist())
+    _create_group(my_tp_group_name, tp_rank_id_pairs[my_tp_group_id].tolist())
     set_tensor_parallel_group(my_dp_group_name)
 
     my_cp_group_name = f"cp_group_{my_tp_group_id}"
-    create_group(my_cp_group_name, cp_rank_id_pairs[my_cp_group_id].tolist())
+    _create_group(my_cp_group_name, cp_rank_id_pairs[my_cp_group_id].tolist())
     set_context_parallel_group(my_cp_group_name)
+
+
+def _create_group(group: str, rank_ids: List[int]) -> None:
+    _logger.info(f"create group `{group}` with rank ids `{rank_ids}`.")
+    return create_group(group, rank_ids)
