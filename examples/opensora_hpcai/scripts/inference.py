@@ -546,7 +546,7 @@ def main(args):
             if args.model_version != "v1" and "CogVideoX" not in args.model_version:
                 z, frames_mask = apply_mask_strategy(z, references, frames_mask_strategy, loop_i, align)
                 frames_mask = Tensor(frames_mask, dtype=ms.float32)
-            elif "CogVideoX" in args.model_version:
+            elif "CogVideoX" in args.model_version and len(references[0]) > 0:
                 image_latent = references[0][0][None]
                 image_latent = np.tile(image_latent, (ns, 1, 1, 1, 1))
                 image_latent = np.pad(image_latent, ((0, 0), (0, 0), (0, latent_size[0] - 1), (0, 0), (0, 0)))
