@@ -1,38 +1,86 @@
 from typing import Optional
 
+import numpy as np
+
 from mindspore.communication import create_group, get_group_size, get_rank
 
-__all__ = ["set_model_parallel_group", "get_model_parallel_group", "create_parallel_group"]
+__all__ = [
+    "set_data_parallel_group",
+    "get_data_parallel_group",
+    "set_tensor_parallel_group",
+    "get_tensor_parallel_group",
+    "set_context_parallel_group",
+    "get_context_parallel_group",
+    "create_parallel_group",
+]
 
 
 _GLOBAL_PARALLEL_GROUPS = dict()
 
 
-def set_model_parallel_group(group: str) -> None:
-    _GLOBAL_PARALLEL_GROUPS["model"] = group
+def set_data_parallel_group(group: str) -> None:
+    _GLOBAL_PARALLEL_GROUPS["data"] = group
 
 
-def get_model_parallel_group() -> Optional[str]:
-    return _GLOBAL_PARALLEL_GROUPS.get("model", None)
+def get_data_parallel_group() -> Optional[str]:
+    return _GLOBAL_PARALLEL_GROUPS.get("data", None)
 
 
-def create_parallel_group(model_parallel_shards: int = 1) -> None:
-    if model_parallel_shards <= 1:
-        raise ValueError(
-            f"`model_parallel_shards` must be larger than 1 to enable model parallel, but get `{model_parallel_shards}`."
-        )
+def set_tensor_parallel_group(group: str) -> None:
+    _GLOBAL_PARALLEL_GROUPS["tensor"] = group
 
+
+def get_tensor_parallel_group() -> Optional[str]:
+    return _GLOBAL_PARALLEL_GROUPS.get("tensor", None)
+
+
+def set_context_parallel_group(group: str) -> None:
+    _GLOBAL_PARALLEL_GROUPS["context"] = group
+
+
+def get_context_parallel_group() -> Optional[str]:
+    return _GLOBAL_PARALLEL_GROUPS.get("context", None)
+
+
+def create_parallel_group(tensor_parallel_shards: int = 1, context_parallel_shards: int = 1) -> None:
     device_num = get_group_size()
-    if device_num % model_parallel_shards != 0:
+    if device_num % tensor_parallel_shards != 0:
         raise ValueError(
-            f"Total number of devices ({device_num}) must be divisible by the number of model parallel shards ({model_parallel_shards})."
+            f"Total number of devices ({device_num}) must be divisible by the number of tensor parallel shards ({tensor_parallel_shards})."
         )
 
-    rank_id = get_rank()
+    if device_num % context_parallel_shards != 0:
+        raise ValueError(
+            f"Total number of devices ({device_num}) must be divisible by the number of context parallel shards ({context_parallel_shards})."
+        )
 
-    if model_parallel_shards > 1:
-        mp_group_id = rank_id // model_parallel_shards
-        mp_group_rank_ids = list(range(mp_group_id * model_parallel_shards, (mp_group_id + 1) * model_parallel_shards))
-        mp_group_name = f"mp_group_{mp_group_id}"
-        create_group(mp_group_name, mp_group_rank_ids)
-        set_model_parallel_group(mp_group_name)
+    data_parallel_shards = device_num // tensor_parallel_shards // context_parallel_shards
+    if data_parallel_shards < 1:
+        raise ValueError(
+            f"tensor parallel shards ({tensor_parallel_shards}) and context parallel shards ({context_parallel_shards}) "
+            f"must be less than the total number of devices ({device_num})."
+        )
+
+    # create id mesh
+    rank_ids = np.arange(device_num).reshape((data_parallel_shards, tensor_parallel_shards, context_parallel_shards))
+    dp_rank_id_pairs = rank_ids.swapaxes(0, 2).reshape(-1, data_parallel_shards)
+    tp_rank_id_pairs = rank_ids.swapaxes(1, 2).reshape(-1, tensor_parallel_shards)
+    cp_rank_id_pairs = rank_ids.reshape(-1, context_parallel_shards)
+
+    # identiy which group the current group belongs to
+    my_rank_id = get_rank()
+    my_dp_group_id = np.where(my_rank_id == dp_rank_id_pairs)[0].squeeze().item()
+    my_tp_group_id = np.where(my_rank_id == tp_rank_id_pairs)[0].squeeze().item()
+    my_cp_group_id = np.where(my_rank_id == cp_rank_id_pairs)[0].squeeze().item()
+
+    my_dp_group_name = f"dp_group_{my_dp_group_id}"
+    create_group(my_dp_group_name, dp_rank_id_pairs[my_dp_group_id])
+    set_data_parallel_group(my_dp_group_name)
+
+    my_tp_group_name = f"tp_group_{my_tp_group_id}"
+    create_group(my_tp_group_name, tp_rank_id_pairs[my_tp_group_id])
+    set_tensor_parallel_group(my_dp_group_name)
+
+    my_cp_group_name = f"cp_group_{my_tp_group_id}"
+    create_group(my_cp_group_name, cp_rank_id_pairs[my_cp_group_id])
+    set_context_parallel_group(my_cp_group_name)
