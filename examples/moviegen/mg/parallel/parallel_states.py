@@ -90,5 +90,5 @@ def create_parallel_group(tensor_parallel_shards: int = 1, context_parallel_shar
 
 
 def _create_group(group: str, rank_ids: List[int]) -> None:
-    _logger.info(f"create group `{group}` with rank ids `{rank_ids}`.")
+    _logger.info(f"create group `{group}` with rank ids {rank_ids}.")
     return create_group(group, rank_ids)
