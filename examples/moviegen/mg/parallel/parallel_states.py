@@ -66,8 +66,8 @@ def create_parallel_group(tensor_parallel_shards: int = 1, context_parallel_shar
 
     # create id mesh
     rank_ids = np.arange(device_num).reshape((data_parallel_shards, tensor_parallel_shards, context_parallel_shards))
-    dp_rank_id_pairs = rank_ids.transpose(2, 1, 0).reshape(-1, data_parallel_shards)
-    tp_rank_id_pairs = rank_ids.swapaxes(1, 2).reshape(-1, tensor_parallel_shards)
+    dp_rank_id_pairs = rank_ids.transpose(1, 2, 0).reshape(-1, data_parallel_shards)
+    tp_rank_id_pairs = rank_ids.transpose(0, 2, 1).reshape(-1, tensor_parallel_shards)
     cp_rank_id_pairs = rank_ids.reshape(-1, context_parallel_shards)
 
     # identiy which group the current group belongs to
