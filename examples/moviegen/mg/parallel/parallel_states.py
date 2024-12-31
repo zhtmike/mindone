@@ -74,13 +74,13 @@ def create_parallel_group(tensor_parallel_shards: int = 1, context_parallel_shar
     my_cp_group_id = np.where(my_rank_id == cp_rank_id_pairs)[0].squeeze().item()
 
     my_dp_group_name = f"dp_group_{my_dp_group_id}"
-    create_group(my_dp_group_name, dp_rank_id_pairs[my_dp_group_id])
+    create_group(my_dp_group_name, dp_rank_id_pairs[my_dp_group_id].tolist())
     set_data_parallel_group(my_dp_group_name)
 
     my_tp_group_name = f"tp_group_{my_tp_group_id}"
-    create_group(my_tp_group_name, tp_rank_id_pairs[my_tp_group_id])
+    create_group(my_tp_group_name, tp_rank_id_pairs[my_tp_group_id].tolist())
     set_tensor_parallel_group(my_dp_group_name)
 
     my_cp_group_name = f"cp_group_{my_tp_group_id}"
-    create_group(my_cp_group_name, cp_rank_id_pairs[my_cp_group_id])
+    create_group(my_cp_group_name, cp_rank_id_pairs[my_cp_group_id].tolist())
     set_context_parallel_group(my_cp_group_name)
