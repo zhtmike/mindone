@@ -445,7 +445,7 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
     def compute_loss(
         self, x: Tensor, text_embed: Tensor, *args, image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None, **kwargs
     ) -> Tensor:
-        t = self._broadcast(ops.randint(0, self.diffusion.num_timesteps, (x.shape[0],), dtype=ms.int64))
+        t = self._broadcast(ops.randint(0, self.diffusion.num_timesteps, (x.shape[0],), dtype=ms.int32))
         noise = self._broadcast(ops.randn(*x.shape))
         x = x.to(ms.float32)
         x_t = self.diffusion.q_sample(x, t, noise=noise)
