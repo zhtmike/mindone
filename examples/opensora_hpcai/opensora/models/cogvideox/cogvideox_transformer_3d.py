@@ -152,25 +152,6 @@ def get_timestep_embedding(
     return emb
 
 
-class QKVAlltoALL(AlltoAll):
-    def construct(
-        self, q: Tensor, k: Tensor, v: Tensor, split_pad: Union[int, Tensor] = 0, concat_pad: Union[int, Tensor] = 0
-    ) -> Tuple[Tensor, Tensor, Tensor]:
-        x = mint.cat([q, k, v], dim=0)
-
-        if split_pad > 0:
-            padding = (len(x.shape) - self.split_dim - 1) * (0, 0) + (0, split_pad)
-            x = F.pad(x, padding)
-
-        x = self.alltoall(x)
-
-        if concat_pad > 0:
-            x = x.narrow(self.concat_dim, 0, x.shape[self.concat_dim] - concat_pad)
-
-        q, k, v = x.chunk(3, axis=0)
-        return q, k, v
-
-
 """
 class FP32LayerNorm(mint.nn.LayerNorm):
     def construct(self, input: Tensor) -> Tensor:
@@ -402,7 +383,7 @@ class SequenceParallelAttention(nn.Cell):
 
         self.sp_group = get_sequence_parallel_group()
         self.sp_size = get_group_size(self.sp_group)
-        self.alltoall = QKVAlltoALL(split_dim=1, concat_dim=2, group=self.sp_group)
+        self.alltoall = AlltoAll(split_dim=1, concat_dim=2, group=self.sp_group)
         self.alltoall_back = AlltoAll(split_dim=2, concat_dim=1, group=self.sp_group)
 
     def construct(
@@ -586,16 +567,22 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
         head_dim = inner_dim // self.heads
 
         query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        query = self.alltoall(query)
+
         key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = self.alltoall(key)
+
         value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = self.alltoall(value)
 
         encoder_query = encoder_query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
-        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
-        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_query = self.alltoall(encoder_query)
 
-        # b, h, sub_n, d -> b, sub_h, n, d
-        query, key, value = self.alltoall(query, key, value)
-        encoder_query, encoder_key, encoder_value = self.alltoall(encoder_query, encoder_key, encoder_value)
+        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_key = self.alltoall(encoder_key)
+
+        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_value = self.alltoall(encoder_value)
 
         text_seq_length = encoder_query.shape[2]
 
