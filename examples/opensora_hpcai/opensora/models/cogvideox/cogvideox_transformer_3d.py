@@ -344,8 +344,8 @@ class Attention(nn.Cell):
         hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
         hidden_states = self.to_out(hidden_states)
 
-        encoder_hidden_states, hidden_states = hidden_states.split(
-            [text_seq_length, hidden_states.shape[1] - text_seq_length], axis=1
+        encoder_hidden_states, hidden_states = mint.split(
+            hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1
         )
         return hidden_states, encoder_hidden_states
 
@@ -440,8 +440,8 @@ class SequenceParallelAttention(nn.Cell):
 
         hidden_states = scaled_dot_product_attention(query, key, value)
 
-        encoder_hidden_states, hidden_states = hidden_states.split(
-            [text_seq_length, hidden_states.shape[2] - text_seq_length], axis=2
+        encoder_hidden_states, hidden_states = mint.split(
+            hidden_states, (text_seq_length, hidden_states.shape[2] - text_seq_length), dim=2
         )
         # b, sub_h, n, d -> b, h, sub_n, d
         encoder_hidden_states = self.alltoall_back(encoder_hidden_states)
@@ -520,8 +520,8 @@ class FlashAttention(Attention):
         hidden_states = hidden_states.reshape(batch_size, -1, self.heads * head_dim)
         hidden_states = self.to_out(hidden_states)
 
-        encoder_hidden_states, hidden_states = hidden_states.split(
-            [text_seq_length, hidden_states.shape[1] - text_seq_length], axis=1
+        encoder_hidden_states, hidden_states = mint.split(
+            hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1
         )
         return hidden_states, encoder_hidden_states
 
@@ -615,8 +615,8 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
         # Reshape back for sequence parallel
         hidden_states = mint.permute(hidden_states, (0, 2, 1, 3))
 
-        encoder_hidden_states, hidden_states = hidden_states.split(
-            [text_seq_length, hidden_states.shape[2] - text_seq_length], axis=2
+        encoder_hidden_states, hidden_states = mint.split(
+            hidden_states, (text_seq_length, hidden_states.shape[2] - text_seq_length), dim=2
         )
         # b, sub_h, n, d -> b, h, sub_n, d
         encoder_hidden_states = self.alltoall_back(encoder_hidden_states)
@@ -724,7 +724,6 @@ class CogVideoXPatchEmbed(nn.Cell):
         post_patch_height = sample_height // self.patch_size[1]
         post_patch_width = sample_width // self.patch_size[2]
         post_time_compression_frames = (sample_frames - 1) // self.temporal_compression_ratio + 1
-        num_patches = post_patch_height * post_patch_width * post_time_compression_frames
 
         pos_embedding = get_3d_sincos_pos_embed(
             self.embed_dim,
@@ -734,8 +733,8 @@ class CogVideoXPatchEmbed(nn.Cell):
             self.temporal_interpolation_scale,
         )
         pos_embedding = pos_embedding.flatten(start_dim=0, end_dim=1)
-        joint_pos_embedding = mint.zeros((1, self.max_text_seq_length + num_patches, self.embed_dim))
-        joint_pos_embedding[:, self.max_text_seq_length :] = pos_embedding
+        joint_pos_embedding = mint.zeros((1, self.max_text_seq_length, self.embed_dim))
+        joint_pos_embedding = mint.cat([joint_pos_embedding, pos_embedding], dim=1)
         return joint_pos_embedding
 
     def construct(self, text_embeds: Tensor, image_embeds: Tensor) -> Tensor:
@@ -942,9 +941,12 @@ class CogVideoXBlock(nn.Cell):
         # feed-forward
         norm_hidden_states = mint.cat([norm_encoder_hidden_states, norm_hidden_states], dim=1)
         ff_output = self.ff(norm_hidden_states)
+        ff_encoder_output, ff_output = mint.split(
+            ff_output, (text_seq_length, ff_output.shape[1] - text_seq_length), dim=1
+        )
 
-        hidden_states = hidden_states + gate_ff * ff_output[:, text_seq_length:]
-        encoder_hidden_states = encoder_hidden_states + enc_gate_ff * ff_output[:, :text_seq_length]
+        hidden_states = hidden_states + gate_ff * ff_output
+        encoder_hidden_states = encoder_hidden_states + enc_gate_ff * ff_encoder_output
 
         hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
         return hidden_states
@@ -1130,8 +1132,9 @@ class CogVideoXTransformer3DModel(nn.Cell):
         hidden_states = self.embedding_dropout(hidden_states)
 
         text_seq_length = encoder_hidden_states.shape[1]
-        encoder_hidden_states = hidden_states[:, :text_seq_length]
-        hidden_states = hidden_states[:, text_seq_length:]
+        encoder_hidden_states, hidden_states = mint.split(
+            hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1
+        )
 
         if self.enable_sequence_parallelism:
             assert hidden_states.shape[1] % self.sp_size == 0
@@ -1146,7 +1149,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         for block in self.transformer_blocks:
             hidden_states = block(hidden_states, emb, text_seq_length, image_rotary_emb=image_rotary_emb)
 
-        hidden_states = hidden_states[:, text_seq_length:]
+        _, hidden_states = mint.split(hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1)
         hidden_states = self.norm_final(hidden_states)
 
         # 4. Final block
