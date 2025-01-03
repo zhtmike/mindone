@@ -30,7 +30,14 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
+def apply_rotary_emb(x: Tensor, freqs_cis: Tensor, text_seq_length: int) -> Tensor:
+    x_text, x_image = mint.split(x, (text_seq_length, x.shape[2] - text_seq_length), dim=2)
+    x_image = _apply_rotary_emb(x_image, freqs_cis)
+    x = mint.cat([x_text, x_image], dim=2)
+    return x
+
+
+def _apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
     cos, sin = freqs_cis.chunk(2, axis=1)  # [B, 2, S, D]
 
     x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
@@ -329,8 +336,8 @@ class Attention(nn.Cell):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query[:, :, text_seq_length:] = apply_rotary_emb(query[:, :, text_seq_length:], image_rotary_emb)
-            key[:, :, text_seq_length:] = apply_rotary_emb(key[:, :, text_seq_length:], image_rotary_emb)
+            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
+            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
 
         hidden_states = scaled_dot_product_attention(query, key, value)
 
@@ -428,8 +435,8 @@ class SequenceParallelAttention(nn.Cell):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query[:, :, text_seq_length:] = apply_rotary_emb(query[:, :, text_seq_length:], image_rotary_emb)
-            key[:, :, text_seq_length:] = apply_rotary_emb(key[:, :, text_seq_length:], image_rotary_emb)
+            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
+            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
 
         hidden_states = scaled_dot_product_attention(query, key, value)
 
@@ -500,8 +507,8 @@ class FlashAttention(Attention):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query[:, :, text_seq_length:] = apply_rotary_emb(query[:, :, text_seq_length:], image_rotary_emb)
-            key[:, :, text_seq_length:] = apply_rotary_emb(key[:, :, text_seq_length:], image_rotary_emb)
+            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
+            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
 
         # Reshape to the expected shape for Flash Attention
         query = mint.permute(query, (0, 2, 1, 3))
@@ -595,8 +602,8 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query[:, :, text_seq_length:] = apply_rotary_emb(query[:, :, text_seq_length:], image_rotary_emb)
-            key[:, :, text_seq_length:] = apply_rotary_emb(key[:, :, text_seq_length:], image_rotary_emb)
+            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
+            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
 
         # Reshape to the expected shape for Flash Attention
         query = mint.permute(query, (0, 2, 1, 3))
