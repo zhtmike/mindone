@@ -454,7 +454,7 @@ class FlashAttention(Attention):
             eps=eps,
             dtype=dtype,
         )
-        self.flash_attention = FlashAttentionScore(heads, scale_value=dim_head**-0.5, input_layout="BSND")
+        self.flash_attention = FlashAttentionScore(heads, scale_value=dim_head**-0.5, input_layout="BNSD")
 
     def construct(
         self,
@@ -486,14 +486,9 @@ class FlashAttention(Attention):
             query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
             key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
 
-        # Reshape to the expected shape for Flash Attention
-        query = mint.permute(query, (0, 2, 1, 3))
-        key = mint.permute(key, (0, 2, 1, 3))
-        value = mint.permute(value, (0, 2, 1, 3))
-
         _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
 
-        hidden_states = hidden_states.reshape(batch_size, -1, self.heads * head_dim)
+        hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
         hidden_states = self.to_out(hidden_states)
 
         encoder_hidden_states, hidden_states = mint.split(
@@ -581,15 +576,7 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
             query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
             key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
 
-        # Reshape to the expected shape for Flash Attention
-        query = mint.permute(query, (0, 2, 1, 3))
-        key = mint.permute(key, (0, 2, 1, 3))
-        value = mint.permute(value, (0, 2, 1, 3))
-
         _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
-
-        # Reshape back for sequence parallel
-        hidden_states = mint.permute(hidden_states, (0, 2, 1, 3))
 
         encoder_hidden_states, hidden_states = mint.split(
             hidden_states, (text_seq_length, hidden_states.shape[2] - text_seq_length), dim=2
