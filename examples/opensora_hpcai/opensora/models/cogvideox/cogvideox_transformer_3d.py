@@ -522,7 +522,7 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
             dtype=dtype,
         )
         self.flash_attention = FlashAttentionScore(
-            heads // self.sp_size, scale_value=dim_head**-0.5, input_layout="BSND"
+            heads // self.sp_size, scale_value=dim_head**-0.5, input_layout="BNSD"
         )
 
     def construct(
