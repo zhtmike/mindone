@@ -49,7 +49,7 @@ def _apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
 
 def scaled_dot_product_attention(query: Tensor, key: Tensor, value: Tensor) -> Tensor:
     dtype = query.dtype
-    scale_factor = 1 / mint.sqrt(Tensor(query.shape[-1]))
+    scale_factor = 1 / mint.sqrt(Tensor(query.shape[-1], dtype=ms.float32))
     attn_weight = query @ key.swapaxes(-2, -1) * scale_factor.to(query.dtype)
     attn_weight = F.softmax(attn_weight.to(ms.float32), dim=-1).to(dtype)
     return attn_weight @ value
