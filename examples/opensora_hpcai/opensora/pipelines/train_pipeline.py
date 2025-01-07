@@ -9,6 +9,7 @@ except ImportError:
 import numpy as np
 
 import mindspore as ms
+import mindspore.mint.nn.functional as F
 from mindspore import Tensor, _no_grad, jit_class, mint, nn, ops
 from mindspore.communication import get_rank
 
@@ -77,6 +78,7 @@ class DiffusionWithLoss(nn.Cell):
         cond_stage_trainable: bool = False,
         text_emb_cached: bool = True,
         video_emb_cached: bool = False,
+        image_emb_cached: bool = False,
     ):
         super().__init__()
         self.network = network
@@ -89,6 +91,7 @@ class DiffusionWithLoss(nn.Cell):
 
         self.text_emb_cached = text_emb_cached
         self.video_emb_cached = video_emb_cached
+        self.image_emb_cached = image_emb_cached
 
         if self.text_emb_cached:
             self.text_encoder = None
@@ -129,7 +132,8 @@ class DiffusionWithLoss(nn.Cell):
         width: Optional[Tensor] = None,
         fps: Optional[Tensor] = None,
         ar: Optional[Tensor] = None,
-        image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None,
+        image_rotary_emb: Optional[Tensor] = None,
+        image: Optional[Tensor] = None,
     ):
         """
         Video diffusion model forward and loss computation for training
@@ -153,9 +157,14 @@ class DiffusionWithLoss(nn.Cell):
             # 1. get image/video latents z using vae
             # (b f c h w) -> (b c f h w)
             x = ops.transpose(x, (0, 2, 1, 3, 4))
+            if image is not None:
+                image = ops.transpose(image, (0, 2, 1, 3, 4))
 
             if not self.video_emb_cached:
                 x = self.get_latents(x)
+
+            if not self.image_emb_cached and image is not None:
+                image = self.get_latents(image)
 
             # 2. get conditions
             if not self.text_emb_cached:
@@ -173,6 +182,7 @@ class DiffusionWithLoss(nn.Cell):
             fps=fps,
             ar=ar,
             image_rotary_emb=image_rotary_emb,
+            image=image,
         )
 
         return loss
@@ -443,19 +453,36 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         return y
 
     def compute_loss(
-        self, x: Tensor, text_embed: Tensor, *args, image_rotary_emb: Optional[Tuple[Tensor, Tensor]] = None, **kwargs
+        self,
+        x: Tensor,
+        text_embed: Tensor,
+        *args,
+        image_rotary_emb: Optional[Tensor] = None,
+        image: Optional[Tensor] = None,
+        **kwargs,
     ) -> Tensor:
         t = self._broadcast(ops.randint(0, self.diffusion.num_timesteps, (x.shape[0],), dtype=ms.int32))
         noise = self._broadcast(ops.randn(*x.shape))
         x = x.to(ms.float32)
+        if image is not None:
+            image = image.to(ms.float32)
+
         x_t = self.diffusion.q_sample(x, t, noise=noise)
+        if image is not None:
+            image = F.pad(image, (0, 0, 0, 0, 0, x_t.shape[2] - 1))
+            x_t = mint.cat([x_t, image], dim=1)
 
         if self.predict_v:
             target = self.diffusion.get_v(x, t, noise=noise)
         else:
             target = noise
 
-        model_output = self.apply_model(x_t, t, text_embed, image_rotary_emb=image_rotary_emb)
+        if self.network.ofs_embedding is not None:
+            ofs = mint.full((x.shape[0],), 2.0, dtype=ms.float32)
+        else:
+            ofs = None
+
+        model_output = self.apply_model(x_t, t, text_embed, image_rotary_emb=image_rotary_emb, ofs=ofs)
 
         loss = mint.square(target - model_output)
         loss = mint.mean(loss)

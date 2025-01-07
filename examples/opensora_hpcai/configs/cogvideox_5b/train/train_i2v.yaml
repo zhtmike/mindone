@@ -1,8 +1,9 @@
 # model
-model_version: CogVideoX-5B
+model_version: CogVideoX-5B-I2V
 pretrained_model_path:
-  - "models/CogVideoX-5b/transformer/diffusion_pytorch_model-00001-of-00002.safetensors"
-  - "models/CogVideoX-5b/transformer/diffusion_pytorch_model-00002-of-00002.safetensors"
+  - "models/CogVideoX-5b-I2V/transformer/diffusion_pytorch_model-00001-of-00003.safetensors"
+  - "models/CogVideoX-5b-I2V/transformer/diffusion_pytorch_model-00002-of-00003.safetensors"
+  - "models/CogVideoX-5b-I2V/transformer/diffusion_pytorch_model-00003-of-00003.safetensors"
 
 model_max_length: 226
 
@@ -15,7 +16,7 @@ snr_shift_scale: 1.0
 rescale_betas_zero_snr: True
 
 vae_type: "CogVideoX-VAE"
-vae_checkpoint: "models/CogVideoX-5b/vae/diffusion_pytorch_model.safetensors"
+vae_checkpoint: "models/CogVideoX-5b-I2V/vae/diffusion_pytorch_model.safetensors"
 vae_dtype: fp32
 sd_scale_factor: 0.7
 
@@ -30,6 +31,7 @@ num_parallel_workers: 2
 prefetch_size: 4
 max_rowsize: -1
 text_drop_prob: 0.1
+image_to_video: True
 
 # precision
 dtype: bf16

@@ -42,6 +42,7 @@ def parse_train_args(parser):
     parser.add_argument("--video_folder", required=True, type=str, help="root dir for the video data")
     parser.add_argument("--text_embed_folder", type=str, help="root dir for the text embeding data")
     parser.add_argument("--vae_latent_folder", type=str, help="root dir for the vae latent data")
+    parser.add_argument("--vae_image_latent_folder", type=str, help="root dir for the vae image latent data")
     parser.add_argument("--filter_data", default=False, type=str2bool, help="Filter non-existing videos.")
     parser.add_argument("--output_path", default="output/", type=str, help="output directory to save training results")
     parser.add_argument(
@@ -73,6 +74,7 @@ def parse_train_args(parser):
         choices=["conv3d", "conv2d", "linear"],
         help="patchify_conv3d_replace, conv2d - equivalent conv2d to replace conv3d patchify, linear - equivalent linear layer to replace conv3d patchify  ",
     )
+    parser.add_argument("--image_to_video", type=str2bool, default=False, help="train image2video in cogvideox")
     parser.add_argument(
         "--manual_pad",
         type=str2bool,
@@ -290,6 +292,9 @@ def parse_train_args(parser):
     )
     parser.add_argument(
         "--sd_scale_factor", type=float, default=0.18215, help="VAE scale factor of Stable Diffusion model."
+    )
+    parser.add_argument(
+        "--sd_encode_scale_factor", type=float, default=None, help="VAE scale factor for encoding (I2V)."
     )
     parser.add_argument("--image_size", type=int, nargs="+", help="the image size used to initiate model")
     parser.add_argument("--resolution", type=str, help=f"Supported video resolutions: {list(ASPECT_RATIOS.keys())}")

@@ -249,6 +249,8 @@ def main(args):
                             video_latent_std = np.concatenate(video_latent_std, axis=0)
                     else:
                         frame_data = np.transpose(frame_data, (0, 2, 1, 3, 4))
+                        if args.save_first_frame:
+                            frame_data = frame_data[:, :, :1]
                         video_latent_mean, video_latent_std = vae.encode_with_moments_output(
                             ms.Tensor(frame_data, dtype_map[args.dtype])
                         )
@@ -414,6 +416,7 @@ def parse_args():
     parser.add_argument("--resize_by_max_value", default=False, type=str2bool, help="resize the image by max instead.")
     parser.add_argument("--num_parallel_workers", default=16, type=int, help="number of workers for dataloader")
     parser.add_argument("--max_frames", type=int, help="max. number of frames to be encoded.")
+    parser.add_argument("--save_first_frame", default=False, type=str2bool, help="inference the first frame only.")
 
     default_args = parser.parse_args()
     __dir__ = os.path.dirname(os.path.abspath(__file__))

@@ -65,8 +65,10 @@ class VideoDatasetRefactored(BaseDataset):
         video_folder: str,
         text_emb_folder: Optional[str] = None,
         vae_latent_folder: Optional[str] = None,
+        vae_image_latent_folder: Optional[str] = None,
         vae_downsample_rate: float = 8.0,
         vae_scale_factor: float = 0.18215,
+        vae_encode_scale_factor: Optional[float] = None,
         sample_n_frames: int = 16,
         sample_n_latent_frames: Optional[int] = None,
         sample_stride: int = 1,
@@ -83,6 +85,7 @@ class VideoDatasetRefactored(BaseDataset):
         model_config: Optional[Dict[str, Any]] = None,
         text_drop_prob: float = 0.0,
         empty_text_file_name: str = "empty_text.npz",
+        image_to_video: bool = False,
         dtype: np.dtype = np.float32,
         *,
         output_columns: List[str],
@@ -95,7 +98,9 @@ class VideoDatasetRefactored(BaseDataset):
                 "Text embedding during training is not supported, please provide `text_emb_folder`."
             )
 
-        self._data = self._read_data(video_folder, csv_path, text_emb_folder, vae_latent_folder, filter_data)
+        self._data = self._read_data(
+            video_folder, csv_path, text_emb_folder, vae_latent_folder, vae_image_latent_folder, filter_data
+        )
         self._frames = (
             sample_n_latent_frames
             if sample_n_latent_frames is not None and vae_latent_folder is not None
@@ -107,12 +112,16 @@ class VideoDatasetRefactored(BaseDataset):
         self._vae_latent_folder = vae_latent_folder
         self._vae_downsample_rate = vae_downsample_rate
         self._vae_scale_factor = vae_scale_factor
+        self._vae_encode_scale_factor = (
+            self._vae_scale_factor if vae_encode_scale_factor is None else vae_encode_scale_factor
+        )
         self._fmask_gen = frames_mask_generator
         self._dtype = dtype
         self._t_compress_func = (lambda x: x) if t_compress_func is None else t_compress_func
         self._pre_patchify = pre_patchify
         self._buckets = buckets
         self._text_drop_prob = text_drop_prob
+        self._image_to_video = image_to_video
 
         self._init_model_args(model_config)
 
@@ -184,6 +193,7 @@ class VideoDatasetRefactored(BaseDataset):
         csv_path: str,
         text_emb_folder: Optional[str] = None,
         vae_latent_folder: Optional[str] = None,
+        vae_image_latent_folder: Optional[str] = None,
         filter_data: bool = False,
     ) -> List[dict]:
         def _filter_data(sample_):
@@ -207,6 +217,10 @@ class VideoDatasetRefactored(BaseDataset):
                         sample["text_emb"] = os.path.join(text_emb_folder, Path(item["video"]).with_suffix(".npz"))
                     if vae_latent_folder:
                         sample["vae_latent"] = os.path.join(vae_latent_folder, Path(item["video"]).with_suffix(".npz"))
+                    if vae_image_latent_folder:
+                        sample["vae_image_latent"] = os.path.join(
+                            vae_image_latent_folder, Path(item["video"]).with_suffix(".npz")
+                        )
                     data.append(sample)
             except KeyError as e:
                 _logger.error(f"CSV file requires `video` (file paths) column, but got {list(item.keys())}")
@@ -392,6 +406,23 @@ class VideoDatasetRefactored(BaseDataset):
                 t = self._t_compress_func(t)
                 h, w = h // self._vae_downsample_rate, w // self._vae_downsample_rate
             data["image_rotary_emb"] = self._prepare_rotary_positional_embeddings(int(h), int(w), t)
+
+        if self._image_to_video:
+            # for cogvideo-x
+            if self.apply_train_transforms:
+                data["image"] = data["video"][:1]
+            else:
+                vae_image_latent_path = self._data[idx]["vae_image_latent"]
+                vae_image_latent_data = np.load(vae_image_latent_path)
+                latent_image_mean, latent_image_std = (
+                    vae_image_latent_data["latent_mean"],
+                    vae_image_latent_data["latent_std"],
+                )
+                vae_image_latent = np.random.normal(
+                    loc=latent_image_mean, scale=latent_image_std, size=latent_image_mean.shape
+                )
+                image = vae_image_latent * self._vae_encode_scale_factor
+                data["image"] = image
 
         final_outputs = tuple(data.pop(c) for c in self.output_columns)
         del data

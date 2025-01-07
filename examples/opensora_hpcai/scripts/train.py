@@ -202,6 +202,7 @@ def initialize_dataset(
     video_folder,
     text_embed_folder,
     vae_latent_folder,
+    vae_image_latent_folder,
     train_with_vae_latent,
     batch_size,
     img_h,
@@ -269,8 +270,10 @@ def initialize_dataset(
         output_columns = ["video", "caption", "mask", "frames_mask", "num_frames", "height", "width", "fps", "ar"]
         if args.pre_patchify:
             output_columns.extend(["spatial_pos", "spatial_mask", "temporal_pos", "temporal_mask"])
-        elif getattr(latte_model, "use_rotary_positional_embeddings", False):
+        if getattr(latte_model, "use_rotary_positional_embeddings", False):
             output_columns.extend(["image_rotary_emb"])
+        if args.image_to_video:
+            output_columns.extend(["image"])
 
         dtype = np.float16 if args.vae_dtype == "fp16" else np.float32
 
@@ -292,7 +295,9 @@ def initialize_dataset(
                 video_folder=video_folder,
                 text_emb_folder=text_embed_folder,
                 vae_latent_folder=vae_latent_folder,
+                vae_image_latent_folder=vae_image_latent_folder,
                 vae_scale_factor=args.sd_scale_factor,
+                vae_encode_scale_factor=args.sd_encode_scale_factor,
                 sample_n_frames=args.num_frames,
                 sample_n_latent_frames=args.num_latent_frames,
                 sample_stride=args.frame_stride,
@@ -306,6 +311,7 @@ def initialize_dataset(
                 target_size=(img_h, img_w),
                 video_backend=args.video_backend,
                 text_drop_prob=args.text_drop_prob,
+                image_to_video=args.image_to_video,
                 model_config=model_config,
                 dtype=dtype,
                 output_columns=output_columns,
@@ -621,6 +627,7 @@ def main(args):
         cond_stage_trainable=False,
         text_emb_cached=True,
         video_emb_cached=train_with_vae_latent,
+        image_emb_cached=train_with_vae_latent,
     )
     if args.noise_scheduler.lower() == "ddpm":
         if args.validate:
@@ -682,6 +689,7 @@ def main(args):
         args.video_folder,
         args.text_embed_folder,
         args.vae_latent_folder,
+        args.vae_image_latent_folder,
         train_with_vae_latent,
         args.batch_size,
         img_h,
