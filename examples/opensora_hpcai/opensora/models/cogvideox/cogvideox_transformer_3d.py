@@ -413,16 +413,22 @@ class SequenceParallelAttention(nn.Cell):
         head_dim = inner_dim // self.heads
 
         query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        query = self.alltoall(query)
+
         key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = self.alltoall(key)
+
         value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = self.alltoall(value)
 
         encoder_query = encoder_query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
-        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
-        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_query = self.alltoall(encoder_query)
 
-        # b, h, sub_n, d -> b, sub_h, n, d
-        query, key, value = self.alltoall(query, key, value)
-        encoder_query, encoder_key, encoder_value = self.alltoall(encoder_query, encoder_key, encoder_value)
+        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_key = self.alltoall(encoder_key)
+
+        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_value = self.alltoall(encoder_value)
 
         text_seq_length = encoder_query.shape[2]
 
