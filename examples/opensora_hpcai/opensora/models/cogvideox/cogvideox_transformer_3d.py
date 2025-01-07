@@ -29,14 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 def apply_rotary_emb(x: Tensor, freqs_cis: Tensor, text_seq_length: int) -> Tensor:
-    x_text, x_image = mint.split(x, (text_seq_length, x.shape[1] - text_seq_length), dim=1)
+    x_text, x_image = mint.split(x, (text_seq_length, x.shape[2] - text_seq_length), dim=2)
     x_image = _apply_rotary_emb(x_image, freqs_cis)
-    x = mint.cat([x_text, x_image], dim=1)
+    x = mint.cat([x_text, x_image], dim=2)
     return x
 
 
 def _apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
-    cos, sin = mint.chunk(freqs_cis, 2, dim=2)  # [B, S, 2, D]
+    cos, sin = freqs_cis.chunk(2, axis=1)  # [B, 2, S, D]
 
     x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
     x_rotated = ops.stack([-x_imag, x_real], axis=-1).flatten(start_dim=3)
@@ -46,16 +46,11 @@ def _apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
 
 
 def scaled_dot_product_attention(query: Tensor, key: Tensor, value: Tensor) -> Tensor:
-    query = query.swapaxes(1, 2)
-    key = key.swapaxes(1, 2)
-    value = value.swapaxes(1, 2)
     dtype = query.dtype
     scale_factor = 1 / mint.sqrt(Tensor(query.shape[-1], dtype=ms.float32))
     attn_weight = query @ key.swapaxes(-2, -1) * scale_factor.to(query.dtype)
     attn_weight = F.softmax(attn_weight.to(ms.float32), dim=-1).to(dtype)
-    output = attn_weight @ value
-    output = output.swapaxes(1, 2)
-    return output
+    return attn_weight @ value
 
 
 def get_2d_sincos_pos_embed_from_grid(embed_dim: int, grid: Tensor) -> Tensor:
@@ -302,9 +297,9 @@ class Attention(nn.Cell):
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
 
-        query = query.reshape(batch_size, -1, self.heads, head_dim)
-        key = key.reshape(batch_size, -1, self.heads, head_dim)
-        value = value.reshape(batch_size, -1, self.heads, head_dim)
+        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
 
         query = self.norm_q(query)
         key = self.norm_k(key)
@@ -316,7 +311,7 @@ class Attention(nn.Cell):
 
         hidden_states = scaled_dot_product_attention(query, key, value)
 
-        hidden_states = hidden_states.reshape(batch_size, -1, self.heads * head_dim)
+        hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
         hidden_states = self.to_out(hidden_states)
 
         encoder_hidden_states, hidden_states = mint.split(
@@ -365,8 +360,8 @@ class SequenceParallelAttention(nn.Cell):
 
         self.sp_group = get_sequence_parallel_group()
         self.sp_size = get_group_size(self.sp_group)
-        self.alltoall = AlltoAll(split_dim=2, concat_dim=1, group=self.sp_group)
-        self.alltoall_back = AlltoAll(split_dim=1, concat_dim=2, group=self.sp_group)
+        self.alltoall = AlltoAll(split_dim=1, concat_dim=2, group=self.sp_group)
+        self.alltoall_back = AlltoAll(split_dim=2, concat_dim=1, group=self.sp_group)
 
     def construct(
         self,
@@ -387,29 +382,29 @@ class SequenceParallelAttention(nn.Cell):
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
 
-        query = query.reshape(batch_size, -1, self.heads, head_dim)
+        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         query = self.alltoall(query)
 
-        key = key.reshape(batch_size, -1, self.heads, head_dim)
+        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         key = self.alltoall(key)
 
-        value = value.reshape(batch_size, -1, self.heads, head_dim)
+        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         value = self.alltoall(value)
 
-        encoder_query = encoder_query.reshape(batch_size, -1, self.heads, head_dim)
+        encoder_query = encoder_query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_query = self.alltoall(encoder_query)
 
-        encoder_key = encoder_key.reshape(batch_size, -1, self.heads, head_dim)
+        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_key = self.alltoall(encoder_key)
 
-        encoder_value = encoder_value.reshape(batch_size, -1, self.heads, head_dim)
+        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_value = self.alltoall(encoder_value)
 
-        text_seq_length = encoder_query.shape[1]
+        text_seq_length = encoder_query.shape[2]
 
-        query = mint.cat([encoder_query, query], dim=1)
-        key = mint.cat([encoder_key, key], dim=1)
-        value = mint.cat([encoder_value, value], dim=1)
+        query = mint.cat([encoder_query, query], dim=2)
+        key = mint.cat([encoder_key, key], dim=2)
+        value = mint.cat([encoder_value, value], dim=2)
 
         query = self.norm_q(query)
         key = self.norm_k(key)
@@ -422,13 +417,13 @@ class SequenceParallelAttention(nn.Cell):
         hidden_states = scaled_dot_product_attention(query, key, value)
 
         encoder_hidden_states, hidden_states = mint.split(
-            hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1
+            hidden_states, (text_seq_length, hidden_states.shape[2] - text_seq_length), dim=2
         )
-        # b, n, sub_h, d -> b, sub_n, h, d
+        # b, sub_h, n, d -> b, h, sub_n, d
         encoder_hidden_states = self.alltoall_back(encoder_hidden_states)
         hidden_states = self.alltoall_back(hidden_states)
-        hidden_states = hidden_states.reshape(batch_size, -1, self.heads * head_dim)
-        encoder_hidden_states = encoder_hidden_states.reshape(batch_size, -1, self.heads * head_dim)
+        hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
+        encoder_hidden_states = encoder_hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
 
         hidden_states = self.to_out(hidden_states)
         encoder_hidden_states = self.to_out(encoder_hidden_states)
@@ -459,7 +454,7 @@ class FlashAttention(Attention):
             eps=eps,
             dtype=dtype,
         )
-        self.flash_attention = FlashAttentionScore(heads, scale_value=dim_head**-0.5, input_layout="BSND")
+        self.flash_attention = FlashAttentionScore(heads, scale_value=dim_head**-0.5, input_layout="BNSD")
 
     def construct(
         self,
@@ -479,9 +474,9 @@ class FlashAttention(Attention):
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
 
-        query = query.reshape(batch_size, -1, self.heads, head_dim)
-        key = key.reshape(batch_size, -1, self.heads, head_dim)
-        value = value.reshape(batch_size, -1, self.heads, head_dim)
+        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
 
         query = self.norm_q(query)
         key = self.norm_k(key)
@@ -493,7 +488,7 @@ class FlashAttention(Attention):
 
         _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
 
-        hidden_states = hidden_states.reshape(batch_size, -1, self.heads * head_dim)
+        hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
         hidden_states = self.to_out(hidden_states)
 
         encoder_hidden_states, hidden_states = mint.split(
@@ -549,29 +544,29 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
 
-        query = query.reshape(batch_size, -1, self.heads, head_dim)
+        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         query = self.alltoall(query)
 
-        key = key.reshape(batch_size, -1, self.heads, head_dim)
+        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         key = self.alltoall(key)
 
-        value = value.reshape(batch_size, -1, self.heads, head_dim)
+        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         value = self.alltoall(value)
 
-        encoder_query = encoder_query.reshape(batch_size, -1, self.heads, head_dim)
+        encoder_query = encoder_query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_query = self.alltoall(encoder_query)
 
-        encoder_key = encoder_key.reshape(batch_size, -1, self.heads, head_dim)
+        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_key = self.alltoall(encoder_key)
 
-        encoder_value = encoder_value.reshape(batch_size, -1, self.heads, head_dim)
+        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_value = self.alltoall(encoder_value)
 
-        text_seq_length = encoder_query.shape[1]
+        text_seq_length = encoder_query.shape[2]
 
-        query = mint.cat([encoder_query, query], dim=1)
-        key = mint.cat([encoder_key, key], dim=1)
-        value = mint.cat([encoder_value, value], dim=1)
+        query = mint.cat([encoder_query, query], dim=2)
+        key = mint.cat([encoder_key, key], dim=2)
+        value = mint.cat([encoder_value, value], dim=2)
 
         query = self.norm_q(query)
         key = self.norm_k(key)
@@ -586,12 +581,12 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
         encoder_hidden_states, hidden_states = mint.split(
             hidden_states, (text_seq_length, hidden_states.shape[2] - text_seq_length), dim=2
         )
-        # b, n, sub_h, d -> b, sub_n, h, d
+        # b, sub_h, n, d -> b, h, sub_n, d
         encoder_hidden_states = self.alltoall_back(encoder_hidden_states)
         hidden_states = self.alltoall_back(hidden_states)
 
-        hidden_states = hidden_states.reshape(batch_size, -1, self.heads * head_dim)
-        encoder_hidden_states = encoder_hidden_states.reshape(batch_size, -1, self.heads * head_dim)
+        hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
+        encoder_hidden_states = encoder_hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
 
         hidden_states = self.to_out(hidden_states)
         encoder_hidden_states = self.to_out(encoder_hidden_states)
@@ -713,7 +708,7 @@ class CogVideoXPatchEmbed(nn.Cell):
         if self.patch_size[0] == 1:
             image_embeds = image_embeds.reshape(-1, channels, height, width)
             image_embeds = self.proj(image_embeds)
-            image_embeds = image_embeds.reshape(batch_size, num_frames, *image_embeds.shape[1:])
+            image_embeds = image_embeds.view(batch_size, num_frames, *image_embeds.shape[1:])
             image_embeds = image_embeds.flatten(start_dim=3).swapaxes(
                 2, 3
             )  # [batch, num_frames, height x width, channels]

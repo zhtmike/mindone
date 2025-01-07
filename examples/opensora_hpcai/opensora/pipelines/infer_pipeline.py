@@ -522,7 +522,7 @@ class InferPipelineCogVideoX(InferPipeline):
             max_size=(base_size_height, base_size_width),
         )
 
-        return np.stack([freqs_cos, freqs_sin], axis=1)[None]
+        return np.stack([freqs_cos, freqs_sin])[None]
 
     def __call__(
         self,

@@ -464,7 +464,7 @@ class VideoDatasetRefactored(BaseDataset):
             max_size=(base_size_height, base_size_width),
         )
 
-        return np.stack([freqs_cos, freqs_sin], axis=1)
+        return np.stack([freqs_cos, freqs_sin])
 
     def _get_resize_crop_region_for_grid(self, src, tgt_width, tgt_height):
         tw = tgt_width
