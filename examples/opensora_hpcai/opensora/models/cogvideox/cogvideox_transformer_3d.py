@@ -695,7 +695,7 @@ class CogVideoXPatchEmbed(nn.Cell):
             self.spatial_interpolation_scale,
             self.temporal_interpolation_scale,
         )
-        pos_embedding = pos_embedding.flatten(start_dim=0, end_dim=1)
+        pos_embedding = pos_embedding.flatten(start_dim=0, end_dim=1)[None]
         joint_pos_embedding = mint.zeros((1, self.max_text_seq_length, self.embed_dim))
         joint_pos_embedding = mint.cat([joint_pos_embedding, pos_embedding], dim=1)
         return joint_pos_embedding
