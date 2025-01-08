@@ -201,6 +201,9 @@ def main(args):
             logger.info(f"cur psnr: {psnr_cur[-1]:.4f}, mean psnr:{mean_psnr/num_samples:.4f}")
             logger.info(f"cur ssim: {ssim_cur[-1]:.4f}, mean ssim:{mean_ssim/num_samples:.4f}")
 
+            logger.info(f"cur psnr: {psnr_cur[-1]:.4f}, mean psnr:{mean_psnr/num_samples:.4f}")
+            logger.info(f"cur ssim: {ssim_cur[-1]:.4f}, mean ssim:{mean_ssim/num_samples:.4f}")
+
             if args.eval_loss:
                 recon_loss = np.abs((x - recons).asnumpy())
                 lpips_loss = lpips_loss_fn(x, recons).asnumpy()
