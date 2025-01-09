@@ -286,10 +286,18 @@ class VideoDatasetRefactored(BaseDataset):
             if len(latent_mean) < self._min_length:
                 raise ValueError(f"Video is too short: {data['video']}")
 
-            start_pos = random.randint(0, len(latent_mean) - self._min_length)
-            batch_index = np.linspace(start_pos, start_pos + self._min_length - 1, num_frames, dtype=int)
+            if self._image_to_video:
+                # we should avoid random shuffle since the image cache is fixed to be the first frame of the original video
+                if latent_mean.shape[0] != self._min_length:
+                    raise ValueError(
+                        f"The cached latent video frame length `{latent_mean.shape[0]}` should be exactly match "
+                        f"with the number of latent training frames `{self._min_length}` for I2V training"
+                    )
+            else:
+                start_pos = random.randint(0, len(latent_mean) - self._min_length)
+                batch_index = np.linspace(start_pos, start_pos + self._min_length - 1, num_frames, dtype=int)
+                latent_mean, latent_std = latent_mean[batch_index], latent_std[batch_index]
 
-            latent_mean, latent_std = latent_mean[batch_index], latent_std[batch_index]
             vae_latent = np.random.normal(loc=latent_mean, scale=latent_std, size=latent_mean.shape)
             video = vae_latent * self._vae_scale_factor
 
