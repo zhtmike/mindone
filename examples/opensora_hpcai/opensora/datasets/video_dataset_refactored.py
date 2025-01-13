@@ -392,7 +392,7 @@ class VideoDatasetRefactored(BaseDataset):
             clip = np.stack(clip, axis=0)
 
             # transpose and norm, clip-wise
-            clip = np.transpose(clip, (0, 3, 1, 2))
+            clip = np.transpose(clip, (3, 0, 1, 2))
             clip = np.divide(clip, 127.5, dtype=np.float32)  # faster
             clip = np.subtract(clip, 1.0, dtype=np.float32)
 
@@ -409,7 +409,7 @@ class VideoDatasetRefactored(BaseDataset):
 
         if self._use_rotary_positional_embeddings:
             # for cogvideo-x
-            t, _, h, w = data["video"].shape
+            _, t, h, w = data["video"].shape
             if self._vae_latent_folder is None:
                 t = self._t_compress_func(t)
                 h, w = h // self._vae_downsample_rate, w // self._vae_downsample_rate
@@ -418,7 +418,7 @@ class VideoDatasetRefactored(BaseDataset):
         if self._image_to_video:
             # for cogvideo-x
             if self.apply_train_transforms:
-                data["image"] = data["video"][:1]
+                data["image"] = data["video"][:, :1]
             else:
                 vae_image_latent_path = self._data[idx]["vae_image_latent"]
                 vae_image_latent_data = np.load(vae_image_latent_path)

@@ -75,6 +75,7 @@ class DiffusionWithLoss(nn.Cell):
         vae: nn.Cell = None,
         text_encoder: nn.Cell = None,
         scale_factor: float = 0.18215,
+        image_scale_factor: Optional[float] = None,
         cond_stage_trainable: bool = False,
         text_emb_cached: bool = True,
         video_emb_cached: bool = False,
@@ -87,6 +88,7 @@ class DiffusionWithLoss(nn.Cell):
         self.text_encoder = text_encoder
 
         self.scale_factor = scale_factor
+        self.image_scale_factor = self.scale_factor if image_scale_factor is None else image_scale_factor
         self.cond_stage_trainable = cond_stage_trainable
 
         self.text_emb_cached = text_emb_cached
@@ -101,6 +103,9 @@ class DiffusionWithLoss(nn.Cell):
 
         if self.cond_stage_trainable and self.text_encoder:
             self.text_encoder.set_train(True)
+
+        for param in self.vae.trainable_params():
+            param.requires_grad = False
 
         self.split = get_split_op()
 
@@ -153,24 +158,20 @@ class DiffusionWithLoss(nn.Cell):
         """
         print("x shape: ", x.shape)
 
-        with no_grad():
-            # 1. get image/video latents z using vae
-            # (b f c h w) -> (b c f h w)
-            x = ops.transpose(x, (0, 2, 1, 3, 4))
-            if image is not None:
-                image = ops.transpose(image, (0, 2, 1, 3, 4))
+        # 1. get image/video latents z using vae
+        # (b c f h w)
+        if not self.video_emb_cached:
+            x = self.get_latents(x)
 
-            if not self.video_emb_cached:
-                x = self.get_latents(x)
+        if not self.image_emb_cached and image is not None:
+            image = self.get_latents(image)
 
-            if not self.image_emb_cached and image is not None:
-                image = self.get_latents(image)
+        # 2. get conditions
+        if not self.text_emb_cached:
+            text_embed = self.get_condition_embeddings(text_tokens)
+        else:
+            text_embed = text_tokens  # dataset returns text embeddings instead of text tokens
 
-            # 2. get conditions
-            if not self.text_emb_cached:
-                text_embed = self.get_condition_embeddings(text_tokens)
-            else:
-                text_embed = text_tokens  # dataset returns text embeddings instead of text tokens
         loss = self.compute_loss(
             x,
             text_embed,
@@ -438,6 +439,11 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         super().__init__(*args, **kwargs)
         self.predict_v = self.diffusion.model_mean_type == ModelMeanType.VELOCITY
 
+        if self.vae is not None:
+            assert isinstance(self.vae, AutoencoderKLCogVideoX)
+            self.vae.enable_slicing()
+            self.vae.enable_tiling()
+
         self.sp_group = get_sequence_parallel_group()
         if self.sp_group is not None:
             logging.info(
@@ -446,10 +452,15 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
             self.broadcast = ops.Broadcast(0, group=self.sp_group)
 
     def get_latents(self, x: Tensor) -> Tensor:
-        assert isinstance(self.vae, AutoencoderKLCogVideoX)
         y = self.vae.encode(x.to(self.vae.dtype))
         y = self.vae.sample(y)
         y = ops.stop_gradient(y * self.scale_factor)
+        return y
+
+    def get_image_latents(self, x: Tensor) -> Tensor:
+        y = self.vae.encode(x.to(self.vae.dtype))
+        y = self.vae.sample(y)
+        y = ops.stop_gradient(y * self.image_scale_factor)
         return y
 
     def compute_loss(

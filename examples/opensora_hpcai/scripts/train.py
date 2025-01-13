@@ -624,10 +624,11 @@ def main(args):
     latent_diffusion_eval, metrics = None, {}
     pipeline_kwargs = dict(
         scale_factor=args.sd_scale_factor,
+        image_scale_factor=args.sd_encode_scale_factor,
         cond_stage_trainable=False,
         text_emb_cached=True,
-        video_emb_cached=train_with_vae_latent,
-        image_emb_cached=train_with_vae_latent,
+        video_emb_cached=train_with_vae_latent or args.custom_train,
+        image_emb_cached=train_with_vae_latent or args.custom_train,
     )
     if args.noise_scheduler.lower() == "ddpm":
         if args.validate:
@@ -1018,6 +1019,9 @@ def main(args):
 
             start_time_s = time.time()
             for step, data in enumerate(ds_iter, 1):
+                data[0] = latent_diffusion_with_loss.get_latents(data[0])
+                if args.image_to_video:
+                    data[-1] = latent_diffusion_with_loss.get_image_latents(data[-1])
                 loss, overflow, scaling_sens = net_with_grads(*data)
                 global_step += 1
                 step_time = time.time() - start_time_s

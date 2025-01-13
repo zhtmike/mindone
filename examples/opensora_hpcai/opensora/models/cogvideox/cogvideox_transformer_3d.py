@@ -28,20 +28,30 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def apply_rotary_emb(x: Tensor, freqs_cis: Tensor, text_seq_length: int) -> Tensor:
+def apply_rotary_emb(x: Tensor, freqs_cis: Tensor, text_seq_length: int, internal_ops: bool = False) -> Tensor:
     x_text, x_image = mint.split(x, (text_seq_length, x.shape[2] - text_seq_length), dim=2)
-    x_image = _apply_rotary_emb(x_image, freqs_cis)
+    if internal_ops:
+        x_image = _apply_rotary_emb_internal(x_image, freqs_cis)
+    else:
+        x_image = _apply_rotary_emb(x_image, freqs_cis)
     x = mint.cat([x_text, x_image], dim=2)
     return x
 
 
 def _apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
-    cos, sin = freqs_cis.chunk(2, axis=1)  # [B, 2, S, D]
+    dtype = x.dtype
+    x = x.to(ms.float32)
+    cos, sin = mint.chunk(freqs_cis, 2, dim=1).reshape(*x.shape[:-1], -1, 2)  # [B, 1, S, D // 2, 2]
+    x_real, x_imag = x.unbind(-1)  # [B, H, S, D // 2]
+    x_rotated = mint.stack([-x_imag, x_real], axis=-1)
+    x_rotated = mint.flatten(x_rotated, 3)
+    out = (x * cos + x_rotated * sin).to(dtype)
+    return out
 
-    x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
-    x_rotated = ops.stack([-x_imag, x_real], axis=-1).flatten(start_dim=3)
 
-    out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+def _apply_rotary_emb_internal(x: Tensor, freqs_cis: Tensor) -> Tensor:
+    cos, sin = mint.chunk(freqs_cis, 2, dim=1)  # [B, 1, S, D]
+    out = ops.rotary_position_embedding(x, cos, sin, 0)
     return out
 
 
@@ -102,7 +112,7 @@ def get_3d_sincos_pos_embed(
     grid_h = mint.arange(spatial_size[1], dtype=ms.float32) / spatial_interpolation_scale
     grid_w = mint.arange(spatial_size[0], dtype=ms.float32) / spatial_interpolation_scale
     grid = ops.meshgrid(grid_w, grid_h)  # here w goes first
-    grid = ops.stack(grid, axis=0)
+    grid = mint.stack(grid, axis=0)
 
     grid = grid.reshape([2, 1, spatial_size[1], spatial_size[0]])
     pos_embed_spatial = get_2d_sincos_pos_embed_from_grid(embed_dim_spatial, grid)
@@ -115,7 +125,7 @@ def get_3d_sincos_pos_embed(
     pos_embed_spatial = mint.unsqueeze(pos_embed_spatial, 0)
     pos_embed_spatial = mint.repeat_interleave(pos_embed_spatial, temporal_size, dim=0)  # [T, H*W, D // 4 * 3]
 
-    pos_embed_temporal = pos_embed_temporal[:, None, :]
+    pos_embed_temporal = mint.unsqueeze(pos_embed_temporal, 1)
     pos_embed_temporal = mint.repeat_interleave(
         pos_embed_temporal, spatial_size[0] * spatial_size[1], dim=1
     )  # [T, H*W, D // 4]
@@ -139,7 +149,7 @@ def get_timestep_embedding(
     exponent = exponent / (half_dim - downscale_freq_shift)
 
     emb = mint.exp(exponent)
-    emb = timesteps[:, None].float() * emb[None, :]
+    emb = mint.unsqueeze(timesteps, 1).to(ms.float32) * mint.unsqueeze(emb, 0)
 
     # scale embeddings
     emb = scale * emb
@@ -155,15 +165,6 @@ def get_timestep_embedding(
     if embedding_dim % 2 == 1:
         emb = F.pad(emb, (0, 1, 0, 0))
     return emb
-
-
-class FP32LayerNorm(mint.nn.LayerNorm):
-    def construct(self, input: Tensor) -> Tensor:
-        dtype = input.dtype
-        y = ops.layer_norm(
-            input.to(ms.float32), self.normalized_shape, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps
-        ).to(dtype)
-        return y
 
 
 class ApproximateGELU(nn.Cell):
@@ -205,15 +206,12 @@ class AdaLayerNorm(nn.Cell):
         super().__init__()
 
         output_dim = output_dim or embedding_dim * 2
-        self.silu = nn.SiLU()
         self.linear = mint.nn.Linear(embedding_dim, output_dim, dtype=dtype)
-        self.norm = FP32LayerNorm(output_dim // 2, norm_eps, norm_elementwise_affine, dtype=dtype)
+        self.norm = mint.nn.LayerNorm(output_dim // 2, norm_eps, norm_elementwise_affine, dtype=dtype)
 
     def construct(self, x: Tensor, temb: Tensor) -> Tensor:
-        temb = self.linear(self.silu(temb))
-        shift, scale = temb.chunk(2, axis=1)
-        shift = shift[:, None, :]
-        scale = scale[:, None, :]
+        temb = mint.unsqueeze(self.linear(F.silu(temb)), dim=1)
+        shift, scale = mint.chunk(temb, 2, dim=2)
         x = self.norm(x) * (1 + scale) + shift
         return x
 
@@ -230,15 +228,15 @@ class CogVideoXLayerNormZero(nn.Cell):
     ) -> None:
         super().__init__()
 
-        self.silu = nn.SiLU()
         self.linear = mint.nn.Linear(conditioning_dim, 6 * embedding_dim, bias=bias, dtype=dtype)
-        self.norm = FP32LayerNorm(embedding_dim, eps=eps, elementwise_affine=elementwise_affine, dtype=dtype)
+        self.norm = mint.nn.LayerNorm(embedding_dim, eps=eps, elementwise_affine=elementwise_affine, dtype=dtype)
 
     def construct(self, hidden_states: Tensor, encoder_hidden_states: Tensor, temb: Tensor) -> Tuple[Tensor, Tensor]:
-        shift, scale, gate, enc_shift, enc_scale, enc_gate = self.linear(self.silu(temb)).chunk(6, axis=1)
-        hidden_states = self.norm(hidden_states) * (1 + scale)[:, None, :] + shift[:, None, :]
-        encoder_hidden_states = self.norm(encoder_hidden_states) * (1 + enc_scale)[:, None, :] + enc_shift[:, None, :]
-        return hidden_states, encoder_hidden_states, gate[:, None, :], enc_gate[:, None, :]
+        temb = mint.unsqueeze(self.linear(F.silu(temb)), dim=1)
+        shift, scale, gate, enc_shift, enc_scale, enc_gate = mint.chunk(temb, 6, dim=2)
+        hidden_states = self.norm(hidden_states) * (1 + scale) + shift
+        encoder_hidden_states = self.norm(encoder_hidden_states) * (1 + enc_scale) + enc_shift
+        return hidden_states, encoder_hidden_states, gate, enc_gate
 
 
 class Attention(nn.Cell):
@@ -263,11 +261,11 @@ class Attention(nn.Cell):
         self.heads = heads
 
         if qk_norm is None:
-            self.norm_q = nn.Identity()
-            self.norm_k = nn.Identity()
+            self.norm_q = mint.nn.Identity()
+            self.norm_k = mint.nn.Identity()
         elif qk_norm == "layer_norm":
-            self.norm_q = FP32LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
-            self.norm_k = FP32LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
+            self.norm_q = mint.nn.LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
+            self.norm_k = mint.nn.LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
         else:
             raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None,'layer_norm'")
 
@@ -278,6 +276,8 @@ class Attention(nn.Cell):
         self.to_out = nn.SequentialCell(
             [mint.nn.Linear(inner_dim, out_dim, bias=out_bias, dtype=dtype), mint.nn.Dropout(p=dropout)]
         )
+
+        self.rope_internal = ms.get_context("mode") == 0
 
     def construct(
         self,
@@ -297,17 +297,17 @@ class Attention(nn.Cell):
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
 
-        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
-        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
-        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        query = query.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = key.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = value.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
 
         query = self.norm_q(query)
         key = self.norm_k(key)
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
-            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
+            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
+            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
 
         hidden_states = scaled_dot_product_attention(query, key, value)
 
@@ -342,11 +342,11 @@ class SequenceParallelAttention(nn.Cell):
         self.heads = heads
 
         if qk_norm is None:
-            self.norm_q = nn.Identity()
-            self.norm_k = nn.Identity()
+            self.norm_q = mint.nn.Identity()
+            self.norm_k = mint.nn.Identity()
         elif qk_norm == "layer_norm":
-            self.norm_q = FP32LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
-            self.norm_k = FP32LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
+            self.norm_q = mint.nn.LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
+            self.norm_k = mint.nn.LayerNorm(dim_head, eps=eps, elementwise_affine=True, dtype=dtype)
         else:
             raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None,'layer_norm'")
 
@@ -362,6 +362,8 @@ class SequenceParallelAttention(nn.Cell):
         self.sp_size = get_group_size(self.sp_group)
         self.alltoall = AlltoAll(split_dim=1, concat_dim=2, group=self.sp_group)
         self.alltoall_back = AlltoAll(split_dim=2, concat_dim=1, group=self.sp_group)
+
+        self.rope_internal = ms.get_context("mode") == 0
 
     def construct(
         self,
@@ -382,22 +384,22 @@ class SequenceParallelAttention(nn.Cell):
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
 
-        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        query = query.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         query = self.alltoall(query)
 
-        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = key.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         key = self.alltoall(key)
 
-        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = value.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         value = self.alltoall(value)
 
-        encoder_query = encoder_query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_query = encoder_query.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_query = self.alltoall(encoder_query)
 
-        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_key = encoder_key.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_key = self.alltoall(encoder_key)
 
-        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_value = encoder_value.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_value = self.alltoall(encoder_value)
 
         text_seq_length = encoder_query.shape[2]
@@ -411,8 +413,8 @@ class SequenceParallelAttention(nn.Cell):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
-            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
+            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
+            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
 
         hidden_states = scaled_dot_product_attention(query, key, value)
 
@@ -474,17 +476,17 @@ class FlashAttention(Attention):
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
 
-        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
-        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
-        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        query = query.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = key.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = value.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
 
         query = self.norm_q(query)
         key = self.norm_k(key)
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
-            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
+            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
+            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
 
         _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
 
@@ -544,22 +546,22 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
 
-        query = query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        query = query.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         query = self.alltoall(query)
 
-        key = key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        key = key.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         key = self.alltoall(key)
 
-        value = value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        value = value.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         value = self.alltoall(value)
 
-        encoder_query = encoder_query.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_query = encoder_query.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_query = self.alltoall(encoder_query)
 
-        encoder_key = encoder_key.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_key = encoder_key.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_key = self.alltoall(encoder_key)
 
-        encoder_value = encoder_value.view(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
+        encoder_value = encoder_value.reshape(batch_size, -1, self.heads, head_dim).swapaxes(1, 2)
         encoder_value = self.alltoall(encoder_value)
 
         text_seq_length = encoder_query.shape[2]
@@ -573,8 +575,8 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length)
-            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length)
+            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
+            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
 
         _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
 
@@ -703,41 +705,33 @@ class CogVideoXPatchEmbed(nn.Cell):
     def construct(self, text_embeds: Tensor, image_embeds: Tensor) -> Tensor:
         text_embeds = self.text_proj(text_embeds)
 
-        batch_size, num_frames, channels, height, width = image_embeds.shape
+        batch_size, channels, num_frames, height, width = image_embeds.shape
 
         if self.patch_size[0] == 1:
+            image_embeds = image_embeds.swapaxes(1, 2)
             image_embeds = image_embeds.reshape(-1, channels, height, width)
             image_embeds = self.proj(image_embeds)
-            image_embeds = image_embeds.view(batch_size, num_frames, *image_embeds.shape[1:])
-            image_embeds = image_embeds.flatten(start_dim=3).swapaxes(
-                2, 3
-            )  # [batch, num_frames, height x width, channels]
-            image_embeds = image_embeds.flatten(
-                start_dim=1, end_dim=2
-            )  # [batch, num_frames x height x width, channels]
+            image_embeds = image_embeds.reshape(batch_size, num_frames, *image_embeds.shape[1:])
+            image_embeds = image_embeds.permute(0, 1, 3, 4, 2)
+            # [batch, num_frames x height x width, channels]
+            image_embeds = image_embeds.flatten(start_dim=1, end_dim=3)
         else:
             assert num_frames % self.patch_size[0] == 0
-            image_embeds = image_embeds.permute(0, 1, 3, 4, 2)
             image_embeds = image_embeds.reshape(
                 batch_size,
+                channels,
                 num_frames // self.patch_size[0],
                 self.patch_size[0],
                 height // self.patch_size[1],
                 self.patch_size[1],
                 width // self.patch_size[2],
                 self.patch_size[2],
-                channels,
             )
-            image_embeds = (
-                image_embeds.permute(0, 1, 3, 5, 7, 2, 4, 6)
-                .flatten(start_dim=4, end_dim=7)
-                .flatten(start_dim=1, end_dim=3)
-            )
+            image_embeds = image_embeds.permute(0, 2, 4, 6, 1, 3, 5, 7)
             image_embeds = self.proj(image_embeds)
 
-        embeds = mint.cat(
-            [text_embeds, image_embeds], dim=1
-        ).contiguous()  # [batch, seq_length + num_frames x height x width, channels]
+        # [batch, seq_length + num_frames x height x width, channels]
+        embeds = mint.cat([text_embeds, image_embeds], dim=1)
 
         if self.use_positional_embeddings or self.use_learned_positional_embeddings:
             if self.use_learned_positional_embeddings and (self.sample_width != width or self.sample_height != height):
@@ -797,7 +791,7 @@ class TimestepEmbedding(nn.Cell):
         self.linear_1 = mint.nn.Linear(in_channels, time_embed_dim, sample_proj_bias, dtype=dtype)
 
         if act_fn == "silu":
-            self.act = nn.SiLU()
+            self.act = F.silu
         else:
             raise ValueError(f"Unknown activation function `{act_fn}`.")
 
@@ -812,6 +806,7 @@ class TimestepEmbedding(nn.Cell):
 
 
 class CogVideoXBlock(nn.Cell):
+    @ms.lazy_inline
     def __init__(
         self,
         dim: int,
@@ -872,14 +867,12 @@ class CogVideoXBlock(nn.Cell):
 
     def construct(
         self,
+        encoder_hidden_states: Tensor,
         hidden_states: Tensor,
         temb: Tensor,
-        text_seq_length: int,
         image_rotary_emb: Optional[Tensor] = None,
-    ) -> Tensor:
-        encoder_hidden_states, hidden_states = mint.split(
-            hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1
-        )
+    ) -> Tuple[Tensor, Tensor]:
+        text_seq_length = encoder_hidden_states.shape[1]
 
         # norm & modulate
         norm_hidden_states, norm_encoder_hidden_states, gate_msa, enc_gate_msa = self.norm1(
@@ -911,8 +904,7 @@ class CogVideoXBlock(nn.Cell):
         hidden_states = hidden_states + gate_ff * ff_output
         encoder_hidden_states = encoder_hidden_states + enc_gate_ff * ff_encoder_output
 
-        hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
-        return hidden_states
+        return encoder_hidden_states, hidden_states
 
 
 class CogVideoXTransformer3DModel(nn.Cell):
@@ -1024,7 +1016,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 for _ in range(num_layers)
             ]
         )
-        self.norm_final = FP32LayerNorm(inner_dim, norm_eps, norm_elementwise_affine, dtype=dtype)
+        self.norm_final = mint.nn.LayerNorm(inner_dim, norm_eps, norm_elementwise_affine, dtype=dtype)
 
         # 4. Output blocks
         self.norm_out = AdaLayerNorm(
@@ -1048,6 +1040,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
             if num_recompute_blocks is None:
                 num_recompute_blocks = len(self.transformer_blocks)
             else:
+                logger.warning("custom recompute number may not work with lazy inline.")
                 assert num_recompute_blocks <= len(
                     self.transformer_blocks
                 ), f"recompute blocks must be smaller the transformer blocks {len(self.transformer_blocks)}"
@@ -1069,10 +1062,10 @@ class CogVideoXTransformer3DModel(nn.Cell):
         ofs: Optional[Tensor] = None,
         **kwargs,
     ) -> Tensor:
-        hidden_states = mint.permute(x, (0, 2, 1, 3, 4)).to(self.dtype)  # n, t, c, h, w
+        hidden_states = x.to(self.dtype)  # n, c, t, h, w
         encoder_hidden_states = y.to(self.dtype)
 
-        batch_size, num_frames, _, height, width = hidden_states.shape
+        batch_size, _, num_frames, height, width = hidden_states.shape
 
         # 1. Time embedding
         timesteps = timestep
@@ -1105,14 +1098,12 @@ class CogVideoXTransformer3DModel(nn.Cell):
             hidden_states = self.split_forward_gather_backward(hidden_states)
             encoder_hidden_states = self.split_forward_gather_backward(encoder_hidden_states)
 
-        text_seq_length = encoder_hidden_states.shape[1]
-        hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
-
         # 3. Transformer blocks
         for block in self.transformer_blocks:
-            hidden_states = block(hidden_states, emb, text_seq_length, image_rotary_emb=image_rotary_emb)
+            encoder_hidden_states, hidden_states = block(
+                encoder_hidden_states, hidden_states, emb, image_rotary_emb=image_rotary_emb
+            )
 
-        _, hidden_states = mint.split(hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1)
         hidden_states = self.norm_final(hidden_states)
 
         # 4. Final block
@@ -1169,10 +1160,10 @@ class CogVideoXTransformer3DModel(nn.Cell):
         cfg_scale: Union[float, Tensor] = 6.0,
         **kwargs,
     ) -> Tensor:
-        x = mint.chunk(x, 2, 0)[0]
+        x = mint.chunk(x, 2, dim=0)[0]
         x = mint.tile(x, (2, 1, 1, 1, 1))
         x = self.construct(x, timestep, y, image_rotary_emb=image_rotary_emb, ofs=ofs, **kwargs)
-        pred_cond, pred_uncond = mint.chunk(x, 2, 0)
+        pred_cond, pred_uncond = mint.chunk(x, 2, dim=0)
         pred = pred_uncond + cfg_scale * (pred_cond - pred_uncond)
         pred = mint.tile(pred, (2, 1, 1, 1, 1))
         return pred

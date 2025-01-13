@@ -6,7 +6,6 @@ from mindspore import context, nn
 from mindspore.nn import GroupNorm, SiLU  # GELU
 from mindspore.train.callback import _CallbackManager
 
-from ..models.cogvideox.cogvideox_transformer_3d import FP32LayerNorm
 from ..models.layers.blocks import Attention, LayerNorm, LlamaRMSNorm, PositionEmbedding2D, SinusoidalEmbedding
 from ..models.text_encoder.flan_t5_large.t5 import T5LayerNorm
 
@@ -23,7 +22,7 @@ WHITELIST_OPS = [
     T5LayerNorm,
 ]
 
-COGVIDEOX_WHITELIST_OPS = [FP32LayerNorm]
+COGVIDEOX_WHITELIST_OPS = []
 
 logger = logging.getLogger(__name__)
 
