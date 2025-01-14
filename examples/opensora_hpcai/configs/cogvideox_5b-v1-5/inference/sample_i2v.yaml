@@ -39,6 +39,7 @@ jit_level: O0
 
 # other
 save_format: mp4
+save_latent: True
 fps: 8
 
 captions:
