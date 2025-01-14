@@ -104,8 +104,9 @@ class DiffusionWithLoss(nn.Cell):
         if self.cond_stage_trainable and self.text_encoder:
             self.text_encoder.set_train(True)
 
-        for param in self.vae.trainable_params():
-            param.requires_grad = False
+        if self.vae is not None:
+            for param in self.vae.trainable_params():
+                param.requires_grad = False
 
         self.split = get_split_op()
 
@@ -441,8 +442,8 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
 
         if self.vae is not None:
             assert isinstance(self.vae, AutoencoderKLCogVideoX)
-            self.vae.enable_slicing()
-            self.vae.enable_tiling()
+            # self.vae.enable_slicing()
+            # self.vae.enable_tiling()
 
         self.sp_group = get_sequence_parallel_group()
         if self.sp_group is not None:

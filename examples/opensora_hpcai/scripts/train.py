@@ -552,13 +552,14 @@ def main(args):
 
     # mixed precision
     if args.dtype in ["fp16", "bf16"]:
-        if "CogVideoX" in args.model_version and not args.native_precision:
-            latte_model = auto_mixed_precision(
-                latte_model,
-                amp_level=args.amp_level,
-                dtype=dtype_map[args.dtype],
-                custom_fp32_cells=COGVIDEOX_WHITELIST_OPS,
-            )
+        if "CogVideoX" in args.model_version:
+            if not args.native_precision:
+                latte_model = auto_mixed_precision(
+                    latte_model,
+                    amp_level=args.amp_level,
+                    dtype=dtype_map[args.dtype],
+                    custom_fp32_cells=COGVIDEOX_WHITELIST_OPS,
+                )
         else:
             if not args.global_bf16:
                 latte_model = auto_mixed_precision(

@@ -11,7 +11,6 @@ import mindspore as ms
 import mindspore.mint as mint
 import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
-import mindspore.ops as ops
 from mindspore import Parameter, Tensor
 
 __all__ = ["AutoencoderKLCogVideoX", "CogVideoX_VAE"]
@@ -34,22 +33,6 @@ def get_activation(act_fn: str) -> nn.Cell:
         return ACTIVATION_FUNCTIONS[act_fn]()
     else:
         raise ValueError(f"Unsupported activation function: {act_fn}")
-
-
-class FP32GroupNorm(mint.nn.GroupNorm):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.weight = self.gamma.clone()
-        self.bias = self.beta.clone()
-        del self.gamma
-        del self.beta
-
-    def construct(self, input: Tensor) -> Tensor:
-        dtype = input.dtype
-        y = ops.group_norm(
-            input.to(ms.float32), self.num_groups, self.weight.to(ms.float32), self.bias.to(ms.float32), self.eps
-        ).to(dtype)
-        return y
 
 
 class CogVideoXSafeConv3d(nn.Conv3d):
@@ -159,7 +142,9 @@ class CogVideoXSpatialNorm3D(nn.Cell):
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
-        self.norm_layer = FP32GroupNorm(num_channels=f_channels, num_groups=groups, eps=1e-6, affine=True, dtype=dtype)
+        self.norm_layer = mint.nn.GroupNorm(
+            num_channels=f_channels, num_groups=groups, eps=1e-6, affine=True, dtype=dtype
+        )
         self.conv_y = CogVideoXCausalConv3d(zq_channels, f_channels, kernel_size=1, stride=1, dtype=dtype)
         self.conv_b = CogVideoXCausalConv3d(zq_channels, f_channels, kernel_size=1, stride=1, dtype=dtype)
 
@@ -213,8 +198,8 @@ class CogVideoXResnetBlock3D(nn.Cell):
         self.spatial_norm_dim = spatial_norm_dim
 
         if spatial_norm_dim is None:
-            self.norm1 = FP32GroupNorm(num_channels=in_channels, num_groups=groups, eps=eps, dtype=dtype)
-            self.norm2 = FP32GroupNorm(num_channels=out_channels, num_groups=groups, eps=eps, dtype=dtype)
+            self.norm1 = mint.nn.GroupNorm(num_channels=in_channels, num_groups=groups, eps=eps, dtype=dtype)
+            self.norm2 = mint.nn.GroupNorm(num_channels=out_channels, num_groups=groups, eps=eps, dtype=dtype)
         else:
             self.norm1 = CogVideoXSpatialNorm3D(
                 f_channels=in_channels, zq_channels=spatial_norm_dim, groups=groups, dtype=dtype
@@ -692,7 +677,7 @@ class CogVideoXEncoder3D(nn.Cell):
             dtype=dtype,
         )
 
-        self.norm_out = FP32GroupNorm(norm_num_groups, block_out_channels[-1], eps=1e-6, dtype=dtype)
+        self.norm_out = mint.nn.GroupNorm(norm_num_groups, block_out_channels[-1], eps=1e-6, dtype=dtype)
         self.conv_act = nn.SiLU()
         self.conv_out = CogVideoXCausalConv3d(
             block_out_channels[-1], 2 * out_channels, kernel_size=3, pad_mode=pad_mode, dtype=dtype

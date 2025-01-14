@@ -28,33 +28,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def apply_rotary_emb(x: Tensor, freqs_cis: Tensor, text_seq_length: int, internal_ops: bool = False) -> Tensor:
-    x_text, x_image = mint.split(x, (text_seq_length, x.shape[2] - text_seq_length), dim=2)
-    if internal_ops:
-        x_image = _apply_rotary_emb_internal(x_image, freqs_cis)
-    else:
-        x_image = _apply_rotary_emb(x_image, freqs_cis)
-    x = mint.cat([x_text, x_image], dim=2)
-    return x
-
-
-def _apply_rotary_emb(x: Tensor, freqs_cis: Tensor) -> Tensor:
-    dtype = x.dtype
-    x = x.to(ms.float32)
-    cos, sin = mint.chunk(freqs_cis, 2, dim=1).reshape(*x.shape[:-1], -1, 2)  # [B, 1, S, D // 2, 2]
-    x_real, x_imag = x.unbind(-1)  # [B, H, S, D // 2]
-    x_rotated = mint.stack([-x_imag, x_real], axis=-1)
-    x_rotated = mint.flatten(x_rotated, 3)
-    out = (x * cos + x_rotated * sin).to(dtype)
-    return out
-
-
-def _apply_rotary_emb_internal(x: Tensor, freqs_cis: Tensor) -> Tensor:
-    cos, sin = mint.chunk(freqs_cis, 2, dim=1)  # [B, 1, S, D]
-    out = ops.rotary_position_embedding(x, cos, sin, 0)
-    return out
-
-
 def scaled_dot_product_attention(query: Tensor, key: Tensor, value: Tensor) -> Tensor:
     dtype = query.dtype
     scale_factor = 1 / mint.sqrt(Tensor(query.shape[-1], dtype=ms.float32))
@@ -112,7 +85,7 @@ def get_3d_sincos_pos_embed(
     grid_h = mint.arange(spatial_size[1], dtype=ms.float32) / spatial_interpolation_scale
     grid_w = mint.arange(spatial_size[0], dtype=ms.float32) / spatial_interpolation_scale
     grid = ops.meshgrid(grid_w, grid_h)  # here w goes first
-    grid = mint.stack(grid, axis=0)
+    grid = mint.stack(grid, dim=0)
 
     grid = grid.reshape([2, 1, spatial_size[1], spatial_size[0]])
     pos_embed_spatial = get_2d_sincos_pos_embed_from_grid(embed_dim_spatial, grid)
@@ -165,6 +138,39 @@ def get_timestep_embedding(
     if embedding_dim % 2 == 1:
         emb = F.pad(emb, (0, 1, 0, 0))
     return emb
+
+
+class Rope2D(nn.Cell):
+    def __init__(self, use_internal: bool = True) -> None:
+        super().__init__()
+        if use_internal:
+            self.func = self._apply_rotary_emb_internal
+        else:
+            self.func = self._apply_rotary_emb
+
+    def _apply_rotary_emb(self, x: Tensor, freqs_cis: Tensor) -> Tensor:
+        dtype = x.dtype
+        x = x.to(ms.float32)
+        cos, sin = mint.chunk(freqs_cis, 2, dim=1)  # [B, 1, S, D]
+        x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, H, S, D // 2]
+        x_rotated = mint.stack([-x_imag, x_real], dim=-1)
+        x_rotated = mint.flatten(x_rotated, 3)
+        out = (x * cos + x_rotated * sin).to(dtype)
+        return out
+
+    def _apply_rotary_emb_internal(self, x: Tensor, freqs_cis: Tensor) -> Tensor:
+        # TODO: drop batch == 1
+        dtype = x.dtype
+        x = x.to(ms.float32)
+        cos, sin = mint.chunk(freqs_cis[:1], 2, dim=1)  # [B, 1, S, D]
+        out = ops.rotary_position_embedding(x, cos, sin, 1).to(dtype)
+        return out
+
+    def construct(self, x: Tensor, freqs_cis: Tensor, text_seq_length: int) -> Tensor:
+        x_text, x_image = mint.split(x, (text_seq_length, x.shape[2] - text_seq_length), dim=2)
+        x_image = self.func(x_image, freqs_cis)
+        x = mint.cat([x_text, x_image], dim=2)
+        return x
 
 
 class ApproximateGELU(nn.Cell):
@@ -277,7 +283,7 @@ class Attention(nn.Cell):
             [mint.nn.Linear(inner_dim, out_dim, bias=out_bias, dtype=dtype), mint.nn.Dropout(p=dropout)]
         )
 
-        self.rope_internal = ms.get_context("mode") == 0
+        self.rope = Rope2D()
 
     def construct(
         self,
@@ -306,8 +312,8 @@ class Attention(nn.Cell):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
-            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
+            query = self.rope(query, image_rotary_emb, text_seq_length)
+            key = self.rope(key, image_rotary_emb, text_seq_length)
 
         hidden_states = scaled_dot_product_attention(query, key, value)
 
@@ -358,12 +364,12 @@ class SequenceParallelAttention(nn.Cell):
             [mint.nn.Linear(inner_dim, out_dim, bias=out_bias, dtype=dtype), mint.nn.Dropout(p=dropout)]
         )
 
+        self.rope = Rope2D()
+
         self.sp_group = get_sequence_parallel_group()
         self.sp_size = get_group_size(self.sp_group)
         self.alltoall = AlltoAll(split_dim=1, concat_dim=2, group=self.sp_group)
         self.alltoall_back = AlltoAll(split_dim=2, concat_dim=1, group=self.sp_group)
-
-        self.rope_internal = ms.get_context("mode") == 0
 
     def construct(
         self,
@@ -413,8 +419,8 @@ class SequenceParallelAttention(nn.Cell):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
-            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
+            query = self.rope(query, image_rotary_emb, text_seq_length)
+            key = self.rope(key, image_rotary_emb, text_seq_length)
 
         hidden_states = scaled_dot_product_attention(query, key, value)
 
@@ -457,6 +463,7 @@ class FlashAttention(Attention):
             dtype=dtype,
         )
         self.flash_attention = FlashAttentionScore(heads, scale_value=dim_head**-0.5, input_layout="BNSD")
+        self.flash_attention.recompute(False)
 
     def construct(
         self,
@@ -485,8 +492,8 @@ class FlashAttention(Attention):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
-            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
+            query = self.rope(query, image_rotary_emb, text_seq_length)
+            key = self.rope(key, image_rotary_emb, text_seq_length)
 
         _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
 
@@ -575,8 +582,8 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            query = apply_rotary_emb(query, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
-            key = apply_rotary_emb(key, image_rotary_emb, text_seq_length, internal_ops=self.rope_internal)
+            query = self.rope(query, image_rotary_emb, text_seq_length)
+            key = self.rope(key, image_rotary_emb, text_seq_length)
 
         _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
 
@@ -728,6 +735,9 @@ class CogVideoXPatchEmbed(nn.Cell):
                 self.patch_size[2],
             )
             image_embeds = image_embeds.permute(0, 2, 4, 6, 1, 3, 5, 7)
+            image_embeds = image_embeds.reshape(
+                batch_size, -1, channels * self.patch_size[0] * self.patch_size[1] * self.patch_size[2]
+            )
             image_embeds = self.proj(image_embeds)
 
         # [batch, seq_length + num_frames x height x width, channels]
@@ -748,7 +758,9 @@ class CogVideoXPatchEmbed(nn.Cell):
                 or self.sample_width != width
                 or self.sample_frames != pre_time_compression_frames
             ):
-                pos_embedding = self._get_positional_embeddings(height, width, pre_time_compression_frames)
+                pos_embedding = ops.stop_gradient(
+                    self._get_positional_embeddings(height, width, pre_time_compression_frames)
+                )
                 pos_embedding = pos_embedding.to(embeds.dtype)
             else:
                 pos_embedding = self.pos_embedding.to(embeds.dtype)
@@ -1124,9 +1136,13 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 self.patch_size[1],
                 self.patch_size[2],
             )
-            output = mint.permute(output, (0, 4, 1, 2, 5, 3, 6))
+            output = output.permute(0, 4, 1, 2, 5, 3, 6)
             output = output.reshape(
-                output.shape[0], output.shape[1], output.shape[2], output.shape[3] * output.shape[4], -1
+                output.shape[0],
+                output.shape[1],
+                output.shape[2],
+                output.shape[3] * output.shape[4],
+                -1,
             )  # n, c, t, h, w
         else:
             output = hidden_states.reshape(
@@ -1139,7 +1155,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 self.patch_size[1],
                 self.patch_size[2],
             )
-            output = mint.permute(output, (0, 4, 1, 5, 2, 6, 3, 7))
+            output = output.permute(0, 4, 1, 5, 2, 6, 3, 7)
             output = output.reshape(
                 output.shape[0],
                 output.shape[1],
