@@ -463,7 +463,8 @@ class FlashAttention(Attention):
             dtype=dtype,
         )
         self.flash_attention = FlashAttentionScore(heads, scale_value=dim_head**-0.5, input_layout="BNSD")
-        self.flash_attention.recompute(False)
+        if ms.get_context("mode") == 0:
+            self.flash_attention.recompute(False)
 
     def construct(
         self,
