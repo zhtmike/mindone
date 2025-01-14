@@ -29,7 +29,7 @@ max_rowsize: -1
 text_drop_prob: 0.1
 
 # precision
-dtype: bf16
+dtype: fp16
 loss_scaler_type: static
 init_loss_scale: 1
 native_precision: True

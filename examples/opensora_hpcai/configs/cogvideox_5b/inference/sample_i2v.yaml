@@ -6,7 +6,7 @@ ckpt_path:
 
 t5_model: transformers
 t5_model_dir: "models/t5-v1_1-xxl/"
-t5_dtype: bf16
+t5_dtype: fp32
 
 vae_type: "CogVideoX-VAE"
 vae_checkpoint: "models/CogVideoX-5b-I2V/vae/diffusion_pytorch_model.safetensors"
