@@ -21,11 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 ACTIVATION_FUNCTIONS = {
-    "swish": nn.SiLU,
-    "silu": nn.SiLU,
-    "mish": nn.Mish,
-    "gelu": nn.GELU,
-    "relu": nn.ReLU,
+    "swish": mint.nn.SiLU,
+    "silu": mint.nn.SiLU,
+    "mish": mint.nn.Mish,
+    "gelu": mint.nn.GELU,
+    "relu": mint.nn.ReLU,
 }
 
 
@@ -678,7 +678,7 @@ class CogVideoXEncoder3D(nn.Cell):
         )
 
         self.norm_out = GroupNorm(norm_num_groups, block_out_channels[-1], eps=1e-6, dtype=dtype)
-        self.conv_act = nn.SiLU()
+        self.conv_act = mint.nn.SiLU()
         self.conv_out = CogVideoXCausalConv3d(
             block_out_channels[-1], 2 * out_channels, kernel_size=3, pad_mode=pad_mode, dtype=dtype
         )

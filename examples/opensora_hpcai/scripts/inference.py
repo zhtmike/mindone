@@ -127,6 +127,8 @@ def init_env(
             "please ensure the MindSpore version >= ms2.3_0615, and use GRAPH_MODE."
         )
 
+    ms.set_context(pynative_synchronize=True)
+
     return rank_id, device_num
 
 
