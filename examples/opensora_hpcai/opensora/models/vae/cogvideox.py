@@ -13,6 +13,8 @@ import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 from mindspore import Parameter, Tensor
 
+from .layer import GroupNorm
+
 __all__ = ["AutoencoderKLCogVideoX", "CogVideoX_VAE"]
 
 logger = logging.getLogger(__name__)
@@ -142,9 +144,7 @@ class CogVideoXSpatialNorm3D(nn.Cell):
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
-        self.norm_layer = mint.nn.GroupNorm(
-            num_channels=f_channels, num_groups=groups, eps=1e-6, affine=True, dtype=dtype
-        )
+        self.norm_layer = GroupNorm(num_channels=f_channels, num_groups=groups, eps=1e-6, affine=True, dtype=dtype)
         self.conv_y = CogVideoXCausalConv3d(zq_channels, f_channels, kernel_size=1, stride=1, dtype=dtype)
         self.conv_b = CogVideoXCausalConv3d(zq_channels, f_channels, kernel_size=1, stride=1, dtype=dtype)
 
@@ -198,8 +198,8 @@ class CogVideoXResnetBlock3D(nn.Cell):
         self.spatial_norm_dim = spatial_norm_dim
 
         if spatial_norm_dim is None:
-            self.norm1 = mint.nn.GroupNorm(num_channels=in_channels, num_groups=groups, eps=eps, dtype=dtype)
-            self.norm2 = mint.nn.GroupNorm(num_channels=out_channels, num_groups=groups, eps=eps, dtype=dtype)
+            self.norm1 = GroupNorm(num_channels=in_channels, num_groups=groups, eps=eps, dtype=dtype)
+            self.norm2 = GroupNorm(num_channels=out_channels, num_groups=groups, eps=eps, dtype=dtype)
         else:
             self.norm1 = CogVideoXSpatialNorm3D(
                 f_channels=in_channels, zq_channels=spatial_norm_dim, groups=groups, dtype=dtype
@@ -677,7 +677,7 @@ class CogVideoXEncoder3D(nn.Cell):
             dtype=dtype,
         )
 
-        self.norm_out = mint.nn.GroupNorm(norm_num_groups, block_out_channels[-1], eps=1e-6, dtype=dtype)
+        self.norm_out = GroupNorm(norm_num_groups, block_out_channels[-1], eps=1e-6, dtype=dtype)
         self.conv_act = nn.SiLU()
         self.conv_out = CogVideoXCausalConv3d(
             block_out_channels[-1], 2 * out_channels, kernel_size=3, pad_mode=pad_mode, dtype=dtype

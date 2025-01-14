@@ -6,9 +6,8 @@ from mindspore.common.initializer import initializer
 from mindspore.common.parameter import Parameter
 from mindspore.ops import group_norm
 
-'''
+
 class GroupNorm(mint.nn.GroupNorm):
-    
     def __init__(self, num_groups, num_channels, eps=1e-05, affine=True, dtype=None):
         super(mint.nn.GroupNorm, self).__init__()
         ms_dtype = mstype.float32 if dtype is None else dtype
@@ -44,4 +43,3 @@ class GroupNorm(mint.nn.GroupNorm):
     def construct(self, input):
         output = self._cal_output(input)
         return output
-'''
