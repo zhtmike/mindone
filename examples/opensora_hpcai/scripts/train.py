@@ -35,7 +35,7 @@ from opensora.models.cogvideox import (
 )
 from opensora.models.layers.operation_selector import set_dynamic_mode
 from opensora.models.stdit import STDiT2_XL_2, STDiT3_XL_2, STDiT3_XL_2_DSP, STDiT_XL_2
-from opensora.models.vae import CogVideoX_VAE
+from opensora.models.vae import CogVideoX_VAE_Encoder
 from opensora.models.vae.vae import SD_CONFIG, OpenSoraVAE_V1_2, VideoAutoencoderKL
 from opensora.pipelines import (
     DiffusionWithLoss,
@@ -416,7 +416,7 @@ def main(args):
                 freeze_vae_2d=True,
             )
         elif args.vae_type == "CogVideoX-VAE":
-            vae = CogVideoX_VAE(dtype=dtype_map[args.vae_dtype])
+            vae = CogVideoX_VAE_Encoder(dtype=dtype_map[args.vae_dtype])
             vae.load_from_checkpoint(args.vae_checkpoint)
         else:
             raise ValueError(f"Unknown VAE type: {args.vae_type}")

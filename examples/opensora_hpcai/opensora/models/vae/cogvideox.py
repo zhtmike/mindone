@@ -15,7 +15,7 @@ from mindspore import Parameter, Tensor
 
 from .layer import GroupNorm
 
-__all__ = ["AutoencoderKLCogVideoX", "CogVideoX_VAE"]
+__all__ = ["AutoencoderKLCogVideoX", "AutoencoderKLCogVideoXEncoder", "CogVideoX_VAE", "CogVideoX_VAE_Encoder"]
 
 logger = logging.getLogger(__name__)
 
@@ -1403,11 +1403,7 @@ class AutoencoderKLCogVideoX(nn.Cell):
         mean, _ = mint.chunk(x, 2, dim=1)
         return mean
 
-    def construct(
-        self,
-        sample: Tensor,
-        sample_posterior: bool = False,
-    ) -> Tensor:
+    def construct(self, sample: Tensor, sample_posterior: bool = False) -> Tensor:
         x = sample
         posterior = self.encode(x)
 
@@ -1447,8 +1443,28 @@ class AutoencoderKLCogVideoX(nn.Cell):
         return latent_size
 
 
+class AutoencoderKLCogVideoXEncoder(AutoencoderKLCogVideoX):
+    def construct(self, sample, sample_posterior=False):
+        x = sample
+        posterior = self.encode(x)
+
+        if sample_posterior:
+            z = self.sample(posterior)
+        else:
+            z = self.mode(posterior)
+        return z
+
+
 def CogVideoX_VAE(from_pretrained: Optional[str] = None, **kwargs) -> AutoencoderKLCogVideoX:
     model = AutoencoderKLCogVideoX(**kwargs)
+
+    if from_pretrained is not None:
+        model.load_from_checkpoint(from_pretrained)
+    return model
+
+
+def CogVideoX_VAE_Encoder(from_pretrained: Optional[str] = None, **kwargs) -> AutoencoderKLCogVideoX:
+    model = AutoencoderKLCogVideoXEncoder(**kwargs)
 
     if from_pretrained is not None:
         model.load_from_checkpoint(from_pretrained)

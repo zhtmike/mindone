@@ -15,7 +15,7 @@ from mindspore.communication import get_rank
 
 from ..acceleration.parallel_states import get_sequence_parallel_group
 from ..models.layers.operation_selector import get_split_op
-from ..models.vae import AutoencoderKLCogVideoX
+from ..models.vae import AutoencoderKLCogVideoXEncoder
 from ..schedulers.iddpm import SpacedDiffusion
 from ..schedulers.iddpm.diffusion_utils import (
     ModelMeanType,
@@ -442,7 +442,7 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         self.predict_v = self.diffusion.model_mean_type == ModelMeanType.VELOCITY
 
         if self.vae is not None:
-            assert isinstance(self.vae, AutoencoderKLCogVideoX)
+            assert isinstance(self.vae, AutoencoderKLCogVideoXEncoder)
             # self.vae.enable_slicing()
             # self.vae.enable_tiling()
 
@@ -454,14 +454,12 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
             self.broadcast = ops.Broadcast(0, group=self.sp_group)
 
     def get_latents(self, x: Tensor) -> Tensor:
-        y = self.vae.encode(x.to(self.vae.dtype))
-        y = self.vae.sample(y)
+        y = self.vae(x.to(self.vae.dtype), sample_posterior=True)
         y = ops.stop_gradient(y * self.scale_factor)
         return y
 
     def get_image_latents(self, x: Tensor) -> Tensor:
-        y = self.vae.encode(x.to(self.vae.dtype))
-        y = self.vae.sample(y)
+        y = self.vae(x.to(self.vae.dtype), sample_posterior=True)
         y = ops.stop_gradient(y * self.image_scale_factor)
         return y
 
