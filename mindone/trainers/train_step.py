@@ -105,7 +105,6 @@ class TrainOneStepWrapper(nn.TrainOneStepWithLossScaleCell):
         # Delegate the setting of training mode behavior to the network.
         self.network.set_train(mode)
 
-    @ms.jit
     def construct(self, *inputs):
         # compute loss
         weights = self.weights
