@@ -159,19 +159,20 @@ class DiffusionWithLoss(nn.Cell):
         """
         print("x shape: ", x.shape)
 
-        # 1. get image/video latents z using vae
-        # (b c f h w)
-        if not self.video_emb_cached:
-            x = self.get_latents(x)
+        with no_grad():
+            # 1. get image/video latents z using vae
+            # (b c f h w)
+            if not self.video_emb_cached:
+                x = self.get_latents(x)
 
-        if not self.image_emb_cached and image is not None:
-            image = self.get_latents(image)
+            if not self.image_emb_cached and image is not None:
+                image = self.get_latents(image)
 
-        # 2. get conditions
-        if not self.text_emb_cached:
-            text_embed = self.get_condition_embeddings(text_tokens)
-        else:
-            text_embed = text_tokens  # dataset returns text embeddings instead of text tokens
+            # 2. get conditions
+            if not self.text_emb_cached:
+                text_embed = self.get_condition_embeddings(text_tokens)
+            else:
+                text_embed = text_tokens  # dataset returns text embeddings instead of text tokens
 
         loss = self.compute_loss(
             x,
