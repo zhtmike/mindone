@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Dict, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 from safetensors import safe_open
@@ -124,9 +124,9 @@ class CogVideoXCausalConv3d(nn.Cell):
             inputs = mint.cat(cached_inputs + [inputs], dim=2)
         return inputs
 
-    def construct(self, inputs: Tensor, conv_cache: Optional[Tensor] = None) -> Tuple[Tensor, Dict[str, Tensor]]:
+    def construct(self, inputs: Tensor, conv_cache: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         inputs = self.fake_context_parallel_forward(inputs, conv_cache)
-        conv_cache = inputs[:, :, -self.time_kernel_size + 1 :].copy()
+        conv_cache = inputs[:, :, -self.time_kernel_size + 1 :]
 
         padding_2d = (self.width_pad, self.width_pad, self.height_pad, self.height_pad)
         inputs = F.pad(inputs, padding_2d, mode="constant", value=0)
@@ -148,11 +148,11 @@ class CogVideoXSpatialNorm3D(nn.Cell):
         self.conv_y = CogVideoXCausalConv3d(zq_channels, f_channels, kernel_size=1, stride=1, dtype=dtype)
         self.conv_b = CogVideoXCausalConv3d(zq_channels, f_channels, kernel_size=1, stride=1, dtype=dtype)
 
-    def construct(
-        self, f: Tensor, zq: Tensor, conv_cache: Optional[Dict[str, Tensor]] = None
-    ) -> Tuple[Tensor, Dict[str, Tensor]]:
-        new_conv_cache = {}
-        conv_cache = conv_cache or {}
+    def construct(self, f: Tensor, zq: Tensor, conv_cache: Optional[Tensor] = None) -> Tuple[Tensor, Tensor, Tensor]:
+        if conv_cache is not None:
+            conv_y_cache, conv_b_cache = conv_cache[0], conv_cache[1]
+        else:
+            conv_y_cache, conv_b_cache = None, None
 
         if f.shape[2] > 1 and f.shape[2] % 2 == 1:
             f_first, f_rest = f[:, :, :1], f[:, :, 1:]
@@ -164,12 +164,13 @@ class CogVideoXSpatialNorm3D(nn.Cell):
         else:
             zq = F.interpolate(zq, size=f.shape[-3:])
 
-        conv_y, new_conv_cache["conv_y"] = self.conv_y(zq, conv_cache=conv_cache.get("conv_y"))
-        conv_b, new_conv_cache["conv_b"] = self.conv_b(zq, conv_cache=conv_cache.get("conv_b"))
+        conv_y, conv_y_cache = self.conv_y(zq, conv_cache=conv_y_cache)
+        conv_b, conv_b_cache = self.conv_b(zq, conv_cache=conv_b_cache)
+        conv_cache = mint.stack([conv_y_cache, conv_b_cache], dim=0)
 
         norm_f = self.norm_layer(f)
         new_f = norm_f * conv_y + conv_b
-        return new_f, new_conv_cache
+        return new_f, conv_cache
 
 
 class CogVideoXResnetBlock3D(nn.Cell):
@@ -188,6 +189,7 @@ class CogVideoXResnetBlock3D(nn.Cell):
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
+        assert conv_shortcut is False, "conv_shortcut cache is not implemented"
 
         out_channels = out_channels or in_channels
 
@@ -242,43 +244,49 @@ class CogVideoXResnetBlock3D(nn.Cell):
         inputs: Tensor,
         temb: Optional[Tensor] = None,
         zq: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Tensor]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Tensor]]]:
-        new_conv_cache = {}
-        conv_cache = conv_cache or {}
-
+        conv_norm_cache: Optional[Tensor] = None,
+        conv_conv1_cache: Optional[Tensor] = None,
+        conv_conv2_cache: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Optional[Tensor], Tensor, Tensor]:
         hidden_states = inputs
 
+        if conv_norm_cache is not None:
+            conv_norm1_cache, conv_norm2_cache = conv_norm_cache[0], conv_norm_cache[1]
+        else:
+            conv_norm1_cache, conv_norm2_cache = None, None
+
         if zq is not None:
-            hidden_states, new_conv_cache["norm1"] = self.norm1(hidden_states, zq, conv_cache=conv_cache.get("norm1"))
+            hidden_states, conv_norm1_cache = self.norm1(hidden_states, zq, conv_cache=conv_norm1_cache)
         else:
             hidden_states = self.norm1(hidden_states)
 
         hidden_states = self.nonlinearity(hidden_states)
-        hidden_states, new_conv_cache["conv1"] = self.conv1(hidden_states, conv_cache=conv_cache.get("conv1"))
+        hidden_states, conv_conv1_cache = self.conv1(hidden_states, conv_cache=conv_conv1_cache)
 
         if temb is not None:
             hidden_states = hidden_states + self.temb_proj(self.nonlinearity(temb))[:, :, None, None, None]
 
         if zq is not None:
-            hidden_states, new_conv_cache["norm2"] = self.norm2(hidden_states, zq, conv_cache=conv_cache.get("norm2"))
+            hidden_states, conv_norm2_cache = self.norm2(hidden_states, zq, conv_cache=conv_norm2_cache)
         else:
             hidden_states = self.norm2(hidden_states)
 
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states, new_conv_cache["conv2"] = self.conv2(hidden_states, conv_cache=conv_cache.get("conv2"))
+        hidden_states, conv_conv2_cache = self.conv2(hidden_states, conv_cache=conv_conv2_cache)
 
         if self.in_channels != self.out_channels:
             if self.use_conv_shortcut:
-                inputs, new_conv_cache["conv_shortcut"] = self.conv_shortcut(
-                    inputs, conv_cache=conv_cache.get("conv_shortcut")
-                )
+                inputs, _ = self.conv_shortcut(inputs, conv_cache=None)
             else:
                 inputs = self.conv_shortcut(inputs)
 
         hidden_states = hidden_states + inputs
-        return hidden_states, new_conv_cache
+
+        if conv_conv1_cache is not None and conv_norm2_cache is not None:
+            conv_norm_cache = mint.stack([conv_norm1_cache, conv_norm2_cache], dim=0)
+
+        return hidden_states, conv_norm_cache, conv_conv1_cache, conv_conv2_cache
 
 
 class CogVideoXDownsample3D(nn.Cell):
@@ -399,25 +407,72 @@ class CogVideoXDownBlock3D(nn.Cell):
         hidden_states: Tensor,
         temb: Optional[Tensor] = None,
         zq: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Dict[str, Tensor]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Dict[str, Tensor]]]]:
-        r"""Forward method of the `CogVideoXDownBlock3D` class."""
-
-        new_conv_cache = {}
-        conv_cache = conv_cache or {}
+        conv_norm_cache: Optional[Tensor] = None,
+        conv_conv1_0_cache: Optional[Tensor] = None,
+        conv_conv1_1_cache: Optional[Tensor] = None,
+        conv_conv2_cache: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Optional[Tensor], Tensor, Tensor, Tensor]:
+        r"""Forward method of the `CogVideoXUpBlock3D` class."""
+        new_conv_norm_cache = list()
+        new_conv_conv1_0_cache = list()
+        new_conv_conv1_1_cache = list()
+        new_conv_conv2_cache = list()
 
         for i, resnet in enumerate(self.resnets):
-            conv_cache_key = f"resnet_{i}"
+            if conv_norm_cache is not None:
+                conv_norm_cache_layer = conv_norm_cache[i]
+            else:
+                conv_norm_cache_layer = None
 
-            hidden_states, new_conv_cache[conv_cache_key] = resnet(
-                hidden_states, temb, zq, conv_cache=conv_cache.get(conv_cache_key)
+            if i == 0:
+                if conv_conv1_0_cache is not None:
+                    conv_conv1_cache_layer = conv_conv1_0_cache[i]
+                else:
+                    conv_conv1_cache_layer = None
+            else:
+                if conv_conv1_1_cache is not None:
+                    conv_conv1_cache_layer = conv_conv1_1_cache[i - 1]
+                else:
+                    conv_conv1_cache_layer = None
+
+            if conv_conv2_cache is not None:
+                conv_conv2_cache_layer = conv_conv2_cache[i]
+            else:
+                conv_conv2_cache_layer = None
+
+            hidden_states, new_conv_norm_cache_layer, new_conv_conv1_cache_layer, new_conv_conv2_cache_layer = resnet(
+                hidden_states,
+                temb,
+                zq,
+                conv_norm_cache=conv_norm_cache_layer,
+                conv_conv1_cache=conv_conv1_cache_layer,
+                conv_conv2_cache=conv_conv2_cache_layer,
             )
+
+            if new_conv_norm_cache_layer is not None:
+                new_conv_norm_cache.append(new_conv_norm_cache_layer)
+
+            if i == 0:
+                new_conv_conv1_0_cache.append(new_conv_conv1_cache_layer)
+            else:
+                new_conv_conv1_1_cache.append(new_conv_conv1_cache_layer)
+
+            new_conv_conv2_cache.append(new_conv_conv2_cache_layer)
+
+        if len(new_conv_norm_cache) > 0:
+            new_conv_norm_cache = mint.stack(new_conv_norm_cache)
+        else:
+            new_conv_norm_cache = None
+
+        new_conv_conv1_0_cache = mint.stack(new_conv_conv1_0_cache)
+        new_conv_conv1_1_cache = mint.stack(new_conv_conv1_1_cache)
+        new_conv_conv2_cache = mint.stack(new_conv_conv2_cache)
 
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
                 hidden_states = downsampler(hidden_states)
 
-        return hidden_states, new_conv_cache
+        return hidden_states, new_conv_norm_cache, new_conv_conv1_0_cache, new_conv_conv1_1_cache, new_conv_conv2_cache
 
 
 class CogVideoXMidBlock3D(nn.Cell):
@@ -459,19 +514,67 @@ class CogVideoXMidBlock3D(nn.Cell):
         hidden_states: Tensor,
         temb: Optional[Tensor] = None,
         zq: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Dict[str, Tensor]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Dict[str, Tensor]]]]:
-        new_conv_cache = {}
-        conv_cache = conv_cache or {}
+        conv_norm_cache: Optional[Tensor] = None,
+        conv_conv1_0_cache: Optional[Tensor] = None,
+        conv_conv1_1_cache: Optional[Tensor] = None,
+        conv_conv2_cache: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Optional[Tensor], Tensor, Tensor, Tensor]:
+        r"""Forward method of the `CogVideoXUpBlock3D` class."""
+        new_conv_norm_cache = list()
+        new_conv_conv1_0_cache = list()
+        new_conv_conv1_1_cache = list()
+        new_conv_conv2_cache = list()
 
         for i, resnet in enumerate(self.resnets):
-            conv_cache_key = f"resnet_{i}"
+            if conv_norm_cache is not None:
+                conv_norm_cache_layer = conv_norm_cache[i]
+            else:
+                conv_norm_cache_layer = None
 
-            hidden_states, new_conv_cache[conv_cache_key] = resnet(
-                hidden_states, temb, zq, conv_cache=conv_cache.get(conv_cache_key)
+            if i == 0:
+                if conv_conv1_0_cache is not None:
+                    conv_conv1_cache_layer = conv_conv1_0_cache[i]
+                else:
+                    conv_conv1_cache_layer = None
+            else:
+                if conv_conv1_1_cache is not None:
+                    conv_conv1_cache_layer = conv_conv1_1_cache[i - 1]
+                else:
+                    conv_conv1_cache_layer = None
+
+            if conv_conv2_cache is not None:
+                conv_conv2_cache_layer = conv_conv2_cache[i]
+            else:
+                conv_conv2_cache_layer = None
+
+            hidden_states, new_conv_norm_cache_layer, new_conv_conv1_cache_layer, new_conv_conv2_cache_layer = resnet(
+                hidden_states,
+                temb,
+                zq,
+                conv_norm_cache=conv_norm_cache_layer,
+                conv_conv1_cache=conv_conv1_cache_layer,
+                conv_conv2_cache=conv_conv2_cache_layer,
             )
 
-        return hidden_states, new_conv_cache
+            if new_conv_norm_cache_layer is not None:
+                new_conv_norm_cache.append(new_conv_norm_cache_layer)
+
+            if i == 0:
+                new_conv_conv1_0_cache.append(new_conv_conv1_cache_layer)
+            else:
+                new_conv_conv1_1_cache.append(new_conv_conv1_cache_layer)
+
+            new_conv_conv2_cache.append(new_conv_conv2_cache_layer)
+
+        if len(new_conv_norm_cache) > 0:
+            new_conv_norm_cache = mint.stack(new_conv_norm_cache)
+        else:
+            new_conv_norm_cache = None
+
+        new_conv_conv1_0_cache = mint.stack(new_conv_conv1_0_cache)
+        new_conv_conv1_1_cache = mint.stack(new_conv_conv1_1_cache)
+        new_conv_conv2_cache = mint.stack(new_conv_conv2_cache)
+        return hidden_states, new_conv_norm_cache, new_conv_conv1_0_cache, new_conv_conv1_1_cache, new_conv_conv2_cache
 
 
 class CogVideoXUpsample3D(nn.Cell):
@@ -585,25 +688,67 @@ class CogVideoXUpBlock3D(nn.Cell):
         hidden_states: Tensor,
         temb: Optional[Tensor] = None,
         zq: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Dict[str, Tensor]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Dict[str, Tensor]]]]:
+        conv_norm_cache: Optional[Tensor] = None,
+        conv_conv1_0_cache: Optional[Tensor] = None,
+        conv_conv1_1_cache: Optional[Tensor] = None,
+        conv_conv2_cache: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         r"""Forward method of the `CogVideoXUpBlock3D` class."""
-
-        new_conv_cache = {}
-        conv_cache = conv_cache or {}
+        new_conv_norm_cache = list()
+        new_conv_conv1_0_cache = list()
+        new_conv_conv1_1_cache = list()
+        new_conv_conv2_cache = list()
 
         for i, resnet in enumerate(self.resnets):
-            conv_cache_key = f"resnet_{i}"
+            if conv_norm_cache is not None:
+                conv_norm_cache_layer = conv_norm_cache[i]
+            else:
+                conv_norm_cache_layer = None
 
-            hidden_states, new_conv_cache[conv_cache_key] = resnet(
-                hidden_states, temb, zq, conv_cache=conv_cache.get(conv_cache_key)
+            if i == 0:
+                if conv_conv1_0_cache is not None:
+                    conv_conv1_cache_layer = conv_conv1_0_cache[i]
+                else:
+                    conv_conv1_cache_layer = None
+            else:
+                if conv_conv1_1_cache is not None:
+                    conv_conv1_cache_layer = conv_conv1_1_cache[i - 1]
+                else:
+                    conv_conv1_cache_layer = None
+
+            if conv_conv2_cache is not None:
+                conv_conv2_cache_layer = conv_conv2_cache[i]
+            else:
+                conv_conv2_cache_layer = None
+
+            hidden_states, new_conv_norm_cache_layer, new_conv_conv1_cache_layer, new_conv_conv2_cache_layer = resnet(
+                hidden_states,
+                temb,
+                zq,
+                conv_norm_cache=conv_norm_cache_layer,
+                conv_conv1_cache=conv_conv1_cache_layer,
+                conv_conv2_cache=conv_conv2_cache_layer,
             )
+
+            new_conv_norm_cache.append(new_conv_norm_cache_layer)
+
+            if i == 0:
+                new_conv_conv1_0_cache.append(new_conv_conv1_cache_layer)
+            else:
+                new_conv_conv1_1_cache.append(new_conv_conv1_cache_layer)
+
+            new_conv_conv2_cache.append(new_conv_conv2_cache_layer)
+
+        new_conv_norm_cache = mint.stack(new_conv_norm_cache)
+        new_conv_conv1_0_cache = mint.stack(new_conv_conv1_0_cache)
+        new_conv_conv1_1_cache = mint.stack(new_conv_conv1_1_cache)
+        new_conv_conv2_cache = mint.stack(new_conv_conv2_cache)
 
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
                 hidden_states = upsampler(hidden_states)
 
-        return hidden_states, new_conv_cache
+        return hidden_states, new_conv_norm_cache, new_conv_conv1_0_cache, new_conv_conv1_1_cache, new_conv_conv2_cache
 
 
 class CogVideoXEncoder3D(nn.Cell):
@@ -684,33 +829,56 @@ class CogVideoXEncoder3D(nn.Cell):
         )
 
     def construct(
-        self,
-        sample: Tensor,
-        temb: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Union[Tensor, Dict[str, Dict[str, Tensor]]]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Union[Tensor, Dict[str, Dict[str, Tensor]]]]]]:
-        new_conv_cache = {}
-        conv_cache = conv_cache or {}
+        self, sample: Tensor, temb: Optional[Tensor] = None, conv_cache: Optional[List[Tensor]] = None
+    ) -> Tuple[Tensor, List[Tensor]]:
+        new_conv_cache = list()
+        if conv_cache is None:
+            conv_cache = [None] * (10 + (len(self.down_blocks) - 1) * 4)
 
-        hidden_states, new_conv_cache["conv_in"] = self.conv_in(sample, conv_cache=conv_cache.get("conv_in"))
+        hidden_states, conv_cache_ = self.conv_in(sample, conv_cache=conv_cache[0])
+        new_conv_cache.append(conv_cache_)
 
         # 1. Down
         for i, down_block in enumerate(self.down_blocks):
-            conv_cache_key = f"down_block_{i}"
-            hidden_states, new_conv_cache[conv_cache_key] = down_block(
-                hidden_states, temb, None, conv_cache=conv_cache.get(conv_cache_key)
+            result = down_block(
+                hidden_states,
+                temb,
+                None,
+                conv_norm_cache=conv_cache[1 + i * 4],
+                conv_conv1_0_cache=conv_cache[2 + i * 4],
+                conv_conv1_1_cache=conv_cache[3 + i * 4],
+                conv_conv2_cache=conv_cache[4 + i * 4],
             )
+            hidden_states = result[0]
+            new_conv_cache.append(result[1])
+            new_conv_cache.append(result[2])
+            new_conv_cache.append(result[3])
+            new_conv_cache.append(result[4])
 
         # 2. Mid
-        hidden_states, new_conv_cache["mid_block"] = self.mid_block(
-            hidden_states, temb, None, conv_cache=conv_cache.get("mid_block")
+        result = self.mid_block(
+            hidden_states,
+            temb,
+            None,
+            conv_norm_cache=conv_cache[5 + (len(self.down_blocks) - 1) * 4],
+            conv_conv1_0_cache=conv_cache[6 + (len(self.down_blocks) - 1) * 4],
+            conv_conv1_1_cache=conv_cache[7 + (len(self.down_blocks) - 1) * 4],
+            conv_conv2_cache=conv_cache[8 + (len(self.down_blocks) - 1) * 4],
         )
+        hidden_states = result[0]
+        new_conv_cache.append(result[1])
+        new_conv_cache.append(result[2])
+        new_conv_cache.append(result[3])
+        new_conv_cache.append(result[4])
 
         # 3. Post-process
         hidden_states = self.norm_out(hidden_states)
         hidden_states = self.conv_act(hidden_states)
 
-        hidden_states, new_conv_cache["conv_out"] = self.conv_out(hidden_states, conv_cache=conv_cache.get("conv_out"))
+        hidden_states, conv_cache_ = self.conv_out(
+            hidden_states, conv_cache=conv_cache[9 + (len(self.down_blocks) - 1) * 4]
+        )
+        new_conv_cache.append(conv_cache_)
 
         return hidden_states, new_conv_cache
 
@@ -800,36 +968,59 @@ class CogVideoXDecoder3D(nn.Cell):
         )
 
     def construct(
-        self,
-        sample: Tensor,
-        temb: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Union[Tensor, Dict[str, Dict[str, Tensor]]]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Union[Tensor, Dict[str, Dict[str, Tensor]]]]]]:
+        self, sample: Tensor, temb: Optional[Tensor] = None, conv_cache: Optional[List[Tensor]] = None
+    ) -> Tuple[Tensor, List[Tensor]]:
         r"""The forward method of the `CogVideoXDecoder3D` class."""
+        new_conv_cache = list()
+        if conv_cache is None:
+            conv_cache = [None] * (11 + (len(self.up_blocks) - 1) * 4)
 
-        new_conv_cache = {}
-        conv_cache = conv_cache or {}
-
-        hidden_states, new_conv_cache["conv_in"] = self.conv_in(sample, conv_cache=conv_cache.get("conv_in"))
+        hidden_states, conv_cache_ = self.conv_in(sample, conv_cache=conv_cache[0])
+        new_conv_cache.append(conv_cache_)
 
         # 1. Mid
-        hidden_states, new_conv_cache["mid_block"] = self.mid_block(
-            hidden_states, temb, sample, conv_cache=conv_cache.get("mid_block")
+        result = self.mid_block(
+            hidden_states,
+            temb,
+            sample,
+            conv_norm_cache=conv_cache[1],
+            conv_conv1_0_cache=conv_cache[2],
+            conv_conv1_1_cache=conv_cache[3],
+            conv_conv2_cache=conv_cache[4],
         )
+        hidden_states = result[0]
+        new_conv_cache.append(result[1])
+        new_conv_cache.append(result[2])
+        new_conv_cache.append(result[3])
+        new_conv_cache.append(result[4])
 
         # 2. Up
         for i, up_block in enumerate(self.up_blocks):
-            conv_cache_key = f"up_block_{i}"
-            hidden_states, new_conv_cache[conv_cache_key] = up_block(
-                hidden_states, temb, sample, conv_cache=conv_cache.get(conv_cache_key)
+            result = up_block(
+                hidden_states,
+                temb,
+                sample,
+                conv_norm_cache=conv_cache[5 + i * 4],
+                conv_conv1_0_cache=conv_cache[6 + i * 4],
+                conv_conv1_1_cache=conv_cache[7 + i * 4],
+                conv_conv2_cache=conv_cache[8 + i * 4],
             )
+            hidden_states = result[0]
+            new_conv_cache.append(result[1])
+            new_conv_cache.append(result[2])
+            new_conv_cache.append(result[3])
+            new_conv_cache.append(result[4])
 
         # 3. Post-process
-        hidden_states, new_conv_cache["norm_out"] = self.norm_out(
-            hidden_states, sample, conv_cache=conv_cache.get("norm_out")
+        hidden_states, conv_cache_ = self.norm_out(
+            hidden_states, sample, conv_cache=conv_cache[9 + (len(self.up_blocks) - 1) * 4]
         )
+        new_conv_cache.append(conv_cache_)
         hidden_states = self.conv_act(hidden_states)
-        hidden_states, new_conv_cache["conv_out"] = self.conv_out(hidden_states, conv_cache=conv_cache.get("conv_out"))
+        hidden_states, conv_cache_ = self.conv_out(
+            hidden_states, conv_cache=conv_cache[10 + (len(self.up_blocks) - 1) * 4]
+        )
+        new_conv_cache.append(conv_cache_)
 
         return hidden_states, new_conv_cache
 
@@ -1219,6 +1410,7 @@ class AutoencoderKLCogVideoX(nn.Cell):
     ) -> Tensor:
         x = sample
         posterior = self.encode(x)
+
         if sample_posterior:
             z = self.sample(posterior)
         else:
