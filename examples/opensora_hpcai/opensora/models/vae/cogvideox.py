@@ -134,7 +134,7 @@ class CogVideoXCausalConv3d(nn.Cell):
 
     def construct(self, inputs: Tensor, conv_cache: Optional[Tensor] = None) -> Tuple[Tensor, Dict[str, Tensor]]:
         inputs = self.fake_context_parallel_forward(inputs, conv_cache)
-        conv_cache = inputs[:, :, -self.time_kernel_size + 1 :].copy()
+        conv_cache = inputs[:, :, -self.time_kernel_size + 1 :]
 
         padding_2d = (self.width_pad, self.width_pad, self.height_pad, self.height_pad)
         inputs = F.pad(inputs, padding_2d, mode="constant", value=0)
