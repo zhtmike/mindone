@@ -11,6 +11,7 @@ import mindspore as ms
 import mindspore.mint as mint
 import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
+import mindspore.ops as ops
 from mindspore import Parameter, Tensor
 
 from .layer import GroupNorm
@@ -326,7 +327,9 @@ class CogVideoXDownsample3D(nn.Cell):
                     # (batch_size * height * width, channels, frames - 1) -> (batch_size * height * width, channels, (frames - 1) // 2)
                     # TODO: change to avg_pool1d once it is supported
                     # x_rest = F.avg_pool1d(x_rest, kernel_size=2, stride=2)
-                    x_rest = F.avg_pool2d(x_rest.unsqueeze(-1), kernel_size=(2, 1), stride=(2, 1)).squeeze(-1)
+                    # x_rest = F.avg_pool2d(x_rest.unsqueeze(-1), kernel_size=(2, 1), stride=(2, 1)).squeeze(-1)
+                    x_rest = x_rest.reshape(batch_size * height * width, channels, -1, 2)
+                    x_rest = mint.mean(x_rest, dim=-1, keepdim=False)
 
                 x = mint.cat([x_first[..., None], x_rest], dim=-1)
                 # (batch_size * height * width, channels, (frames // 2) + 1) -> (batch_size, height, width, channels, (frames // 2) + 1)
@@ -336,7 +339,9 @@ class CogVideoXDownsample3D(nn.Cell):
                 # (batch_size * height * width, channels, frames) -> (batch_size * height * width, channels, frames // 2)
                 # TODO: change to avg_pool1d once it is supported
                 # x = F.avg_pool1d(x, kernel_size=2, stride=2)
-                x = F.avg_pool2d(x.unsqueeze(-1), kernel_size=(2, 1), stride=(2, 1)).squeeze(-1)
+                # x = F.avg_pool2d(x.unsqueeze(-1), kernel_size=(2, 1), stride=(2, 1)).squeeze(-1)
+                x = x.reshape(batch_size * height * width, channels, -1, 2)
+                x = mint.mean(x, dim=-1, keepdim=False)
                 # (batch_size * height * width, channels, frames // 2) -> (batch_size, height, width, channels, frames // 2)
                 # -> (batch_size, channels, frames // 2, height, width)
                 x = x.reshape(batch_size, height, width, channels, x.shape[-1]).permute(0, 3, 4, 1, 2)
@@ -1208,11 +1213,10 @@ class AutoencoderKLCogVideoX(nn.Cell):
         return dec
 
     def sample(self, x: Tensor) -> Tensor:
-        dtype = x.dtype
         mean, logvar = mint.chunk(x, 2, dim=1)
         logvar = mint.clamp(logvar, -30.0, 20.0)
         std = mint.exp(0.5 * logvar)
-        x = mint.normal(mean=mean.to(ms.float32), std=std.to(ms.float32), size=mean.shape).to(dtype)
+        x = ops.normal(mean.shape, mean, std)
         return x
 
     def mode(self, x: Tensor) -> Tensor:

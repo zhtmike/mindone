@@ -821,6 +821,7 @@ class TimestepEmbedding(nn.Cell):
 
 
 class CogVideoXBlock(nn.Cell):
+    @ms.lazy_inline
     def __init__(
         self,
         dim: int,
@@ -881,14 +882,12 @@ class CogVideoXBlock(nn.Cell):
 
     def construct(
         self,
+        encoder_hidden_states: Tensor,
         hidden_states: Tensor,
-        text_seq_length: int,
         temb: Tensor,
         image_rotary_emb: Optional[Tensor] = None,
-    ) -> Tensor:
-        encoder_hidden_states, hidden_states = mint.split(
-            hidden_states, [text_seq_length, hidden_states.shape[1] - text_seq_length], dim=1
-        )
+    ) -> Tuple[Tensor, Tensor]:
+        text_seq_length = encoder_hidden_states.shape[1]
 
         # norm & modulate
         norm_hidden_states, norm_encoder_hidden_states, gate_msa, enc_gate_msa = self.norm1(
@@ -920,9 +919,7 @@ class CogVideoXBlock(nn.Cell):
         hidden_states = hidden_states + gate_ff * ff_output
         encoder_hidden_states = encoder_hidden_states + enc_gate_ff * ff_encoder_output
 
-        hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
-
-        return hidden_states
+        return encoder_hidden_states, hidden_states
 
 
 class CogVideoXTransformer3DModel(nn.Cell):
@@ -1105,26 +1102,23 @@ class CogVideoXTransformer3DModel(nn.Cell):
         hidden_states = self.patch_embed(encoder_hidden_states, hidden_states)
         hidden_states = self.embedding_dropout(hidden_states)
 
+        text_seq_length = encoder_hidden_states.shape[1]
         encoder_hidden_states, hidden_states = mint.split(
-            hidden_states,
-            (encoder_hidden_states.shape[1], hidden_states.shape[1] - encoder_hidden_states.shape[1]),
-            dim=1,
+            hidden_states, (text_seq_length, hidden_states.shape[1] - text_seq_length), dim=1
         )
 
         if self.enable_sequence_parallelism:
-            assert encoder_hidden_states.shape[1] % self.sp_size == 0
             assert hidden_states.shape[1] % self.sp_size == 0
-            encoder_hidden_states = self.split_forward_gather_backward(encoder_hidden_states)
+            assert encoder_hidden_states.shape[1] % self.sp_size == 0
             hidden_states = self.split_forward_gather_backward(hidden_states)
-
-        text_seq_length = encoder_hidden_states.shape[1]
-        hidden_states = mint.cat([encoder_hidden_states, hidden_states], dim=1)
+            encoder_hidden_states = self.split_forward_gather_backward(encoder_hidden_states)
 
         # 3. Transformer blocks
         for block in self.transformer_blocks:
-            hidden_states = block(hidden_states, text_seq_length, emb, image_rotary_emb=image_rotary_emb)
+            encoder_hidden_states, hidden_states = block(
+                encoder_hidden_states, hidden_states, emb, image_rotary_emb=image_rotary_emb
+            )
 
-        _, hidden_states = mint.split(hidden_states, [text_seq_length, hidden_states.shape[1] - text_seq_length], dim=1)
         hidden_states = self.norm_final(hidden_states)
 
         # 4. Final block
