@@ -16,7 +16,14 @@ from mindspore import Parameter, Tensor
 
 from .layer import GroupNorm
 
-__all__ = ["AutoencoderKLCogVideoX", "AutoencoderKLCogVideoXEncoder", "CogVideoX_VAE", "CogVideoX_VAE_Encoder"]
+__all__ = [
+    "AutoencoderKLCogVideoX",
+    "AutoencoderKLCogVideoXEncoder",
+    "AutoencoderKLCogVideoXDecoder",
+    "CogVideoX_VAE",
+    "CogVideoX_VAE_Encoder",
+    "CogVideoX_VAE_Decoder",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +291,7 @@ class CogVideoXResnetBlock3D(nn.Cell):
 
         hidden_states = hidden_states + inputs
 
-        if conv_conv1_cache is not None and conv_norm2_cache is not None:
+        if conv_norm1_cache is not None and conv_norm2_cache is not None:
             conv_norm_cache = mint.stack([conv_norm1_cache, conv_norm2_cache], dim=0)
 
         return hidden_states, conv_norm_cache, conv_conv1_cache, conv_conv2_cache
@@ -1445,7 +1452,7 @@ class AutoencoderKLCogVideoX(nn.Cell):
 
 
 class AutoencoderKLCogVideoXEncoder(AutoencoderKLCogVideoX):
-    def construct(self, sample, sample_posterior=False):
+    def construct(self, sample: Tensor, sample_posterior: bool = False) -> Tensor:
         x = sample
         posterior = self.encode(x)
 
@@ -1456,6 +1463,12 @@ class AutoencoderKLCogVideoXEncoder(AutoencoderKLCogVideoX):
         return z
 
 
+class AutoencoderKLCogVideoXDecoder(AutoencoderKLCogVideoX):
+    def construct(self, z: Tensor) -> Tensor:
+        dec = self.decode(z)
+        return dec
+
+
 def CogVideoX_VAE(from_pretrained: Optional[str] = None, **kwargs) -> AutoencoderKLCogVideoX:
     model = AutoencoderKLCogVideoX(**kwargs)
 
@@ -1464,8 +1477,16 @@ def CogVideoX_VAE(from_pretrained: Optional[str] = None, **kwargs) -> Autoencode
     return model
 
 
-def CogVideoX_VAE_Encoder(from_pretrained: Optional[str] = None, **kwargs) -> AutoencoderKLCogVideoX:
+def CogVideoX_VAE_Encoder(from_pretrained: Optional[str] = None, **kwargs) -> AutoencoderKLCogVideoXEncoder:
     model = AutoencoderKLCogVideoXEncoder(**kwargs)
+
+    if from_pretrained is not None:
+        model.load_from_checkpoint(from_pretrained)
+    return model
+
+
+def CogVideoX_VAE_Decoder(from_pretrained: Optional[str] = None, **kwargs) -> AutoencoderKLCogVideoXDecoder:
+    model = AutoencoderKLCogVideoXDecoder(**kwargs)
 
     if from_pretrained is not None:
         model.load_from_checkpoint(from_pretrained)

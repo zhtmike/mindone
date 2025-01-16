@@ -17,7 +17,7 @@ mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
-from opensora.models.vae import AutoencoderKLCogVideoX, CogVideoX_VAE
+from opensora.models.vae.cogvideox import AutoencoderKLCogVideoX, CogVideoX_VAE
 from opensora.models.vae.vae import SD_CONFIG, AutoencoderKL
 from opensora.utils.model_utils import _check_cfgs_in_parser
 

@@ -15,7 +15,7 @@ from mindspore.communication import get_rank
 
 from ..acceleration.parallel_states import get_sequence_parallel_group
 from ..models.layers.operation_selector import get_split_op
-from ..models.vae import AutoencoderKLCogVideoXEncoder
+from ..models.vae.cogvideox import AutoencoderKLCogVideoXEncoder
 from ..schedulers.iddpm import SpacedDiffusion
 from ..schedulers.iddpm.diffusion_utils import (
     ModelMeanType,

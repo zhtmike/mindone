@@ -534,6 +534,8 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
         self.flash_attention = FlashAttentionScore(
             heads // self.sp_size, scale_value=dim_head**-0.5, input_layout="BNSD"
         )
+        if ms.get_context("mode") == 0:
+            self.flash_attention.recompute(False)
 
     def construct(
         self,

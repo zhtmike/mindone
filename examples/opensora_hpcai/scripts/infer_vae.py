@@ -19,7 +19,7 @@ sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
 from opensora.datasets.video_dataset import create_dataloader
-from opensora.models.vae import CogVideoX_VAE
+from opensora.models.vae.cogvideox import CogVideoX_VAE
 from opensora.models.vae.vae import SD_CONFIG, AutoencoderKL
 from opensora.utils.amp import auto_mixed_precision
 from opensora.utils.model_utils import str2bool  # _check_cfgs_in_parser

@@ -16,7 +16,7 @@ from mindone.models.modules.pos_embed import get_2d_sincos_pos_embed
 from mindone.transformers import T5EncoderModel
 
 from ..models.layers.rotary_embedding import get_3d_rotary_pos_embed, precompute_freqs_cis
-from ..models.vae import AutoencoderKLCogVideoX
+from ..models.vae.cogvideox import AutoencoderKLCogVideoX
 from ..models.vae.vae import VideoAutoencoderKL, VideoAutoencoderPipeline
 from ..schedulers.iddpm import create_diffusion
 from ..schedulers.rectified_flow import RFLOW

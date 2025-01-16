@@ -27,8 +27,8 @@ sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
 from opensora.datasets.vae_dataset import create_dataloader
+from opensora.models.vae.cogvideox import CogVideoX_VAE
 from opensora.models.vae.vae import SD_CONFIG, SDXL_CONFIG, OpenSoraVAE_V1_2, VideoAutoencoderKL
-from opensora.models.vae import CogVideoX_VAE
 
 from mindone.utils.amp import auto_mixed_precision
 from mindone.utils.config import instantiate_from_config, str2bool
@@ -80,7 +80,7 @@ def main(args):
     set_logger(name="", output_dir=args.output_path, rank=0)
 
     # build model
-    if args.use_temporal_vae and args.vae_type=='opensora':
+    if args.use_temporal_vae and args.vae_type == "opensora":
         model = OpenSoraVAE_V1_2(
             micro_batch_size=4,
             micro_frame_size=17,
@@ -104,7 +104,7 @@ def main(args):
     # if args.eval_loss:
     #    lpips_loss_fn = LPIPS()
 
-    if args.dtype != "fp32": # and args.vae_type != "cvx":
+    if args.dtype != "fp32":  # and args.vae_type != "cvx":
         amp_level = "O2"
         dtype = {"fp16": ms.float16, "bf16": ms.bfloat16}[args.dtype]
         # FIXME: due to AvgPool and ops.interpolate doesn't support bf16, we add them to fp32 cells
@@ -159,17 +159,16 @@ def main(args):
     for step, data in tqdm(enumerate(ds_iter)):
         x = data["video"]
         start_time = time.time()
-        
-        '''
+
+        """
         z = model.encode(x)
         if not args.encode_only:
             if args.use_temporal_vae and args.vae_type=='opensora':
                 recons = model.decode(z, num_frames=args.num_frames)
             else:
                 recons = model.decode(z)
-        '''
+        """
         recons = model(x)
-
 
         # adapt to bf16
         recons = recons.to(ms.float32)
@@ -188,7 +187,7 @@ def main(args):
 
             recons_rgb = postprocess(recons.asnumpy())
             x_rgb = postprocess(x.asnumpy())
-            
+
             psnr_cur = [calc_psnr(x_rgb[i], recons_rgb[i]) for i in range(x_rgb.shape[0])]
             ssim_cur = [
                 calc_ssim(x_rgb[i], recons_rgb[i], data_range=255, channel_axis=-1, multichannel=True)
@@ -197,7 +196,7 @@ def main(args):
             mean_psnr += sum(psnr_cur)
             mean_ssim += sum(ssim_cur)
             num_samples += x_rgb.shape[0]
-            
+
             logger.info(f"cur psnr: {psnr_cur[-1]:.4f}, mean psnr:{mean_psnr/num_samples:.4f}")
             logger.info(f"cur ssim: {ssim_cur[-1]:.4f}, mean ssim:{mean_ssim/num_samples:.4f}")
 
