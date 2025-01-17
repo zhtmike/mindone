@@ -19,7 +19,7 @@ sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
 from opensora.datasets.video_dataset import create_dataloader
-from opensora.models.vae.cogvideox import CogVideoX_VAE
+from opensora.models.vae.cogvideox import CogVideoX_VAE_Encoder
 from opensora.models.vae.vae import SD_CONFIG, AutoencoderKL
 from opensora.utils.amp import auto_mixed_precision
 from opensora.utils.model_utils import str2bool  # _check_cfgs_in_parser
@@ -150,7 +150,7 @@ def main(args):
     logger.info("vae init")
     dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16, "fp32": ms.float32}
     if args.vae_type == "CogVideoX-VAE":
-        vae = CogVideoX_VAE(dtype=dtype_map[args.dtype])
+        vae = CogVideoX_VAE_Encoder(dtype=dtype_map[args.dtype])
         vae.load_from_checkpoint(args.vae_checkpoint)
         vae.set_train(False)
         vae.enable_slicing()
@@ -251,8 +251,8 @@ def main(args):
                         frame_data = np.transpose(frame_data, (0, 2, 1, 3, 4))
                         if args.save_first_frame:
                             frame_data = frame_data[:, :, :1]
-                        video_latent_mean, video_latent_std = vae.encode_with_moments_output(
-                            ms.Tensor(frame_data, dtype_map[args.dtype])
+                        video_latent_mean, video_latent_std = vae(
+                            ms.Tensor(frame_data, dtype_map[args.dtype]), encode_with_moments_output=True
                         )
                         video_latent_mean = video_latent_mean.swapaxes(1, 2)
                         video_latent_std = video_latent_std.swapaxes(1, 2)

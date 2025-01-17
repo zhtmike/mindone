@@ -1265,7 +1265,12 @@ class AutoencoderKLCogVideoX(nn.Cell):
 
 
 class AutoencoderKLCogVideoXEncoder(AutoencoderKLCogVideoX):
-    def construct(self, sample: Tensor, sample_posterior: bool = False) -> Tensor:
+    def construct(
+        self, sample: Tensor, sample_posterior: bool = False, encode_with_moments_output: bool = False
+    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+        if encode_with_moments_output:
+            return self.encode_with_moments_output(sample)
+
         x = sample
         posterior = self.encode(x)
 

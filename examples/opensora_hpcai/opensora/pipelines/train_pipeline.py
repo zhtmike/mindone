@@ -443,8 +443,8 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
 
         if self.vae is not None:
             assert isinstance(self.vae, AutoencoderKLCogVideoXEncoder)
-            # self.vae.enable_slicing()
-            # self.vae.enable_tiling()
+            self.vae.enable_slicing()
+            self.vae.enable_tiling()
 
         self.sp_group = get_sequence_parallel_group()
         if self.sp_group is not None:

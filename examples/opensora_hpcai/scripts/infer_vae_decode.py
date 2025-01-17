@@ -17,7 +17,7 @@ mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
-from opensora.models.vae.cogvideox import AutoencoderKLCogVideoX, CogVideoX_VAE
+from opensora.models.vae.cogvideox import AutoencoderKLCogVideoXDecoder, CogVideoX_VAE_Decoder
 from opensora.models.vae.vae import SD_CONFIG, AutoencoderKL
 from opensora.utils.model_utils import _check_cfgs_in_parser
 
@@ -41,14 +41,14 @@ def init_env(args):
     return device_id
 
 
-def cogvideox_vae_decode_video(x: ms.Tensor, vae: AutoencoderKLCogVideoX, scale_factor: float) -> ms.Tensor:
+def cogvideox_vae_decode_video(x: ms.Tensor, vae: AutoencoderKLCogVideoXDecoder, scale_factor: float) -> ms.Tensor:
     """
     Args:
         x: (b t c h w), denoised latent
     Return:
         y: (b f H W 3), batch of images, normalized to [0, 1]
     """
-    y = ops.stop_gradient(vae.decode((x / scale_factor).to(vae.dtype)))
+    y = ops.stop_gradient(vae((x / scale_factor).to(vae.dtype)))
     y = ops.clip_by_value((y + 1.0) / 2.0, clip_value_min=0.0, clip_value_max=1.0)
     # (b 3 t h w) -> (b t h w 3)
     y = ops.transpose(y, (0, 2, 3, 4, 1))
@@ -69,7 +69,7 @@ def main(args):
     logger.info("vae init")
     dtype_map = {"fp16": ms.float16, "bf16": ms.bfloat16, "fp32": ms.float32}
     if args.vae_type == "CogVideoX-VAE":
-        vae = CogVideoX_VAE(dtype=dtype_map[args.dtype])
+        vae = CogVideoX_VAE_Decoder(dtype=dtype_map[args.dtype])
         vae.load_from_checkpoint(args.vae_checkpoint)
         vae.set_train(False)
         vae.enable_slicing()
