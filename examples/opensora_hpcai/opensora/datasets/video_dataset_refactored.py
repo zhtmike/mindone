@@ -409,10 +409,12 @@ class VideoDatasetRefactored(BaseDataset):
 
         if self._use_rotary_positional_embeddings:
             # for cogvideo-x
-            _, t, h, w = data["video"].shape
             if self._vae_latent_folder is None:
+                _, t, h, w = data["video"].shape
                 t = self._t_compress_func(t)
                 h, w = h // self._vae_downsample_rate, w // self._vae_downsample_rate
+            else:
+                t, _, h, w = data["video"].shape
             data["image_rotary_emb"] = self._prepare_rotary_positional_embeddings(int(h), int(w), t)
 
         if self._image_to_video:
