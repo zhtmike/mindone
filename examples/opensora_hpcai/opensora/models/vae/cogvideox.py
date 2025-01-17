@@ -1072,18 +1072,20 @@ class AutoencoderKLCogVideoX(nn.Cell):
 
     def blend_v(self, a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
         blend_extent = min(a.shape[3], b.shape[3], blend_extent)
-        for y in range(blend_extent):
-            b[:, :, :, y, :] = a[:, :, :, -blend_extent + y, :] * (1 - y / blend_extent) + b[:, :, :, y, :] * (
-                y / blend_extent
-            )
+        ratio = mint.arange(blend_extent, dtype=ms.float32) / blend_extent
+        ratio = ratio[None, None, None, :, None]
+        b[:, :, :, :blend_extent, :] = (
+            (1 - ratio) * a[:, :, :, -blend_extent:, :] * ratio * b[:, :, :, :blend_extent, :]
+        )
         return b
 
     def blend_h(self, a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
         blend_extent = min(a.shape[4], b.shape[4], blend_extent)
-        for x in range(blend_extent):
-            b[:, :, :, :, x] = a[:, :, :, :, -blend_extent + x] * (1 - x / blend_extent) + b[:, :, :, :, x] * (
-                x / blend_extent
-            )
+        ratio = mint.arange(blend_extent, dtype=ms.float32) / blend_extent
+        ratio = ratio[None, None, None, None, :]
+        b[:, :, :, :, :blend_extent] = (
+            (1 - ratio) * a[:, :, :, :, -blend_extent:] * ratio * b[:, :, :, :, :blend_extent]
+        )
         return b
 
     def tiled_encode(self, x: Tensor) -> Tensor:
