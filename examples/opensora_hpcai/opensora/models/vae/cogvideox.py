@@ -1074,21 +1074,19 @@ class AutoencoderKLCogVideoX(nn.Cell):
         blend_extent = min(a.shape[3], b.shape[3], blend_extent)
         ratio = mint.arange(blend_extent, dtype=ms.float32) / blend_extent
         ratio = ratio[None, None, None, :, None]
-        blended_b = b.copy()
-        blended_b[:, :, :, :blend_extent, :] = (
-            (1 - ratio) * a[:, :, :, -blend_extent:, :] * ratio * b[:, :, :, :blend_extent, :]
-        )
-        return blended_b
+        part, b = mint.split(b, (blend_extent, b.shape[3] - blend_extent), dim=3)
+        part = (1 - ratio) * a[:, :, :, -blend_extent:, :] + ratio * part
+        b = mint.cat([part, b], dim=3)
+        return b
 
     def blend_h(self, a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
         blend_extent = min(a.shape[4], b.shape[4], blend_extent)
         ratio = mint.arange(blend_extent, dtype=ms.float32) / blend_extent
         ratio = ratio[None, None, None, None, :]
-        blended_b = b.copy()
-        blended_b[:, :, :, :, :blend_extent] = (
-            (1 - ratio) * a[:, :, :, :, -blend_extent:] * ratio * b[:, :, :, :, :blend_extent]
-        )
-        return blended_b
+        part, b = mint.split(b, (blend_extent, b.shape[4] - blend_extent), dim=4)
+        part = (1 - ratio) * a[:, :, :, :, -blend_extent:] + ratio * part
+        b = mint.cat([part, b], dim=4)
+        return b
 
     def tiled_encode(self, x: Tensor) -> Tensor:
         # For a rough memory estimate, take a look at the `tiled_decode` method.
