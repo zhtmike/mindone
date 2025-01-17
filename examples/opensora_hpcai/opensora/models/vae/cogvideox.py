@@ -1072,7 +1072,7 @@ class AutoencoderKLCogVideoX(nn.Cell):
 
     def blend_v(self, a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
         blend_extent = min(a.shape[3], b.shape[3], blend_extent)
-        ratio = mint.arange(blend_extent, dtype=ms.float32) / blend_extent
+        ratio = mint.arange(blend_extent, dtype=b.dtype) / blend_extent
         ratio = ratio[None, None, None, :, None]
         part, b = mint.split(b, (blend_extent, b.shape[3] - blend_extent), dim=3)
         part = (1 - ratio) * a[:, :, :, -blend_extent:, :] + ratio * part
@@ -1081,7 +1081,7 @@ class AutoencoderKLCogVideoX(nn.Cell):
 
     def blend_h(self, a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
         blend_extent = min(a.shape[4], b.shape[4], blend_extent)
-        ratio = mint.arange(blend_extent, dtype=ms.float32) / blend_extent
+        ratio = mint.arange(blend_extent, dtype=b.dtype) / blend_extent
         ratio = ratio[None, None, None, None, :]
         part, b = mint.split(b, (blend_extent, b.shape[4] - blend_extent), dim=4)
         part = (1 - ratio) * a[:, :, :, :, -blend_extent:] + ratio * part
