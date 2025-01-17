@@ -32,6 +32,10 @@ def test_vae(mode: int, test_full: bool = False):
         model = CogVideoX_VAE("models/CogVideoX1.5-5B/vae/diffusion_pytorch_model.safetensors")
     else:
         model = CogVideoX_VAE_Encoder("models/CogVideoX1.5-5B/vae/diffusion_pytorch_model.safetensors")
+
+    model.enable_tiling()
+    model.enable_slicing()
+
     output = model(data_0)
     now = time.time()
     output = model(data_1)
