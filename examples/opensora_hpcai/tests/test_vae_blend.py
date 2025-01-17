@@ -7,36 +7,44 @@ from mindspore import Tensor
 
 def blend_v(a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
     blend_extent = min(a.shape[3], b.shape[3], blend_extent)
+    blended_b = b.copy()
     for y in range(blend_extent):
-        b[:, :, :, y, :] = a[:, :, :, -blend_extent + y, :] * (1 - y / blend_extent) + b[:, :, :, y, :] * (
+        blended_b[:, :, :, y, :] = a[:, :, :, -blend_extent + y, :] * (1 - y / blend_extent) + b[:, :, :, y, :] * (
             y / blend_extent
         )
-    return b
+    return blended_b
 
 
 def blend_v_vec(a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
     blend_extent = min(a.shape[3], b.shape[3], blend_extent)
     ratio = mint.arange(blend_extent, dtype=ms.float32) / blend_extent
     ratio = ratio[None, None, None, :, None]
-    b[:, :, :, :blend_extent, :] = (1 - ratio) * a[:, :, :, -blend_extent:, :] * ratio * b[:, :, :, :blend_extent, :]
-    return b
+    blended_b = b.copy()
+    blended_b[:, :, :, :blend_extent, :] = (
+        (1 - ratio) * a[:, :, :, -blend_extent:, :] * ratio * b[:, :, :, :blend_extent, :]
+    )
+    return blended_b
 
 
 def blend_h(a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
     blend_extent = min(a.shape[4], b.shape[4], blend_extent)
+    blended_b = b.copy()
     for x in range(blend_extent):
-        b[:, :, :, :, x] = a[:, :, :, :, -blend_extent + x] * (1 - x / blend_extent) + b[:, :, :, :, x] * (
+        blended_b[:, :, :, :, x] = a[:, :, :, :, -blend_extent + x] * (1 - x / blend_extent) + b[:, :, :, :, x] * (
             x / blend_extent
         )
-    return b
+    return blended_b
 
 
 def blend_h_vec(a: Tensor, b: Tensor, blend_extent: int) -> Tensor:
     blend_extent = min(a.shape[4], b.shape[4], blend_extent)
     ratio = mint.arange(blend_extent, dtype=ms.float32) / blend_extent
     ratio = ratio[None, None, None, None, :]
-    b[:, :, :, :, :blend_extent] = (1 - ratio) * a[:, :, :, :, -blend_extent:] * ratio * b[:, :, :, :, :blend_extent]
-    return b
+    blended_b = b.copy()
+    blended_b[:, :, :, :, :blend_extent] = (
+        (1 - ratio) * a[:, :, :, :, -blend_extent:] * ratio * b[:, :, :, :, :blend_extent]
+    )
+    return blended_b
 
 
 if __name__ == "__main__":
