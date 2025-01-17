@@ -163,9 +163,15 @@ class DiffusionWithLoss(nn.Cell):
             # (b c f h w)
             if not self.video_emb_cached:
                 x = self.get_latents(x)
+            else:
+                # latent is saved as b f c h w
+                x = mint.permute(x, (0, 2, 1, 3, 4))
 
-            if not self.image_emb_cached and image is not None:
-                image = self.get_latents(image)
+            if image is not None:
+                if not self.image_emb_cached:
+                    image = self.get_latents(image)
+                else:
+                    image = mint.permute(image, (0, 2, 1, 3, 4))
 
             # 2. get conditions
             if not self.text_emb_cached:
