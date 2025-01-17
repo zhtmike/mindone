@@ -418,6 +418,10 @@ def main(args):
         elif args.vae_type == "CogVideoX-VAE":
             vae = CogVideoX_VAE_Encoder(dtype=dtype_map[args.vae_dtype])
             vae.load_from_checkpoint(args.vae_checkpoint)
+            if args.vae_enable_slicing:
+                vae.enable_slicing()
+            if args.vae_enable_tiling:
+                vae.enable_tiling()
         else:
             raise ValueError(f"Unknown VAE type: {args.vae_type}")
         vae = vae.set_train(False)

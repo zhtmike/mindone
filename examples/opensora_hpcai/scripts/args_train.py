@@ -183,6 +183,8 @@ def parse_train_args(parser):
         default=17,
         help="If not None, split batch_size*num_frames into smaller ones for VAE encoding to reduce memory limitation. Used by temporal vae",
     )
+    parser.add_argument("--vae_enable_slicing", type=str2bool, default=True, help="VAE use slicing")
+    parser.add_argument("--vae_enable_tiling", type=str2bool, default=True, help="VAE use tiling")
     parser.add_argument("--start_learning_rate", default=1e-5, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--end_learning_rate", default=1e-7, type=float, help="The end learning rate for Adam.")
     parser.add_argument("--decay_steps", default=0, type=int, help="lr decay steps.")

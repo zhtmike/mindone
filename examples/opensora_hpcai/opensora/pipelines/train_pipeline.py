@@ -15,7 +15,6 @@ from mindspore.communication import get_rank
 
 from ..acceleration.parallel_states import get_sequence_parallel_group
 from ..models.layers.operation_selector import get_split_op
-from ..models.vae.cogvideox import AutoencoderKLCogVideoXEncoder
 from ..schedulers.iddpm import SpacedDiffusion
 from ..schedulers.iddpm.diffusion_utils import (
     ModelMeanType,
@@ -440,12 +439,6 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.predict_v = self.diffusion.model_mean_type == ModelMeanType.VELOCITY
-
-        if self.vae is not None:
-            assert isinstance(self.vae, AutoencoderKLCogVideoXEncoder)
-            self.vae.enable_slicing()
-            self.vae.enable_tiling()
-
         self.sp_group = get_sequence_parallel_group()
         if self.sp_group is not None:
             logging.info(

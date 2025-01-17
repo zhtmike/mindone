@@ -16,7 +16,6 @@ from mindone.models.modules.pos_embed import get_2d_sincos_pos_embed
 from mindone.transformers import T5EncoderModel
 
 from ..models.layers.rotary_embedding import get_3d_rotary_pos_embed, precompute_freqs_cis
-from ..models.vae.cogvideox import AutoencoderKLCogVideoX
 from ..models.vae.vae import VideoAutoencoderKL, VideoAutoencoderPipeline
 from ..schedulers.iddpm import create_diffusion
 from ..schedulers.rectified_flow import RFLOW
@@ -428,10 +427,6 @@ class InferPipelineFiTLike(InferPipeline):
 class InferPipelineCogVideoX(InferPipeline):
     def __init__(self, *args, encode_scale_factor: Optional[float] = None, **kwargs):
         super().__init__(*args, **kwargs)
-        assert isinstance(self.vae, AutoencoderKLCogVideoX)
-        self.vae.enable_slicing()
-        self.vae.enable_tiling()
-
         self.encode_scale_factor = self.scale_factor if encode_scale_factor is None else encode_scale_factor
 
     def vae_decode_video(self, x: Tensor) -> Tensor:
