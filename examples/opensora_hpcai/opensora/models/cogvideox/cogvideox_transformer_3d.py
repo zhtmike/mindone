@@ -84,7 +84,7 @@ def get_3d_sincos_pos_embed(
     # 1. Spatial
     grid_h = mint.arange(spatial_size[1], dtype=ms.float32) / spatial_interpolation_scale
     grid_w = mint.arange(spatial_size[0], dtype=ms.float32) / spatial_interpolation_scale
-    grid = ops.meshgrid(grid_w, grid_h)  # here w goes first
+    grid = mint.meshgrid(grid_w, grid_h, indexing="xy")  # here w goes first
     grid = mint.stack(grid, dim=0)
 
     grid = grid.reshape([2, 1, spatial_size[1], spatial_size[0]])
@@ -698,13 +698,12 @@ class CogVideoXPatchEmbed(nn.Cell):
         self.use_learned_positional_embeddings = use_learned_positional_embeddings
 
         if self.patch_size[0] == 1:
-            self.proj = nn.Conv2d(
+            self.proj = mint.nn.Conv2d(
                 in_channels,
                 embed_dim,
                 kernel_size=(patch_size[1], patch_size[2]),
                 stride=(patch_size[1], patch_size[2]),
-                pad_mode="pad",
-                has_bias=bias,
+                bias=bias,
                 dtype=dtype,
             )
         else:
