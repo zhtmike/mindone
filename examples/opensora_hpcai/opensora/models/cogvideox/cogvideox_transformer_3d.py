@@ -466,6 +466,18 @@ class FlashAttention(Attention):
         if ms.get_context("mode") == 0:
             self.flash_attention.recompute(False)
 
+    def flash_attention_(self, query: Tensor, key: Tensor, value: Tensor) -> Tensor:
+        if query.dtype != ms.float32:
+            _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
+            return hidden_states
+
+        query = query.to(ms.bfloat16)
+        key = key.to(ms.bfloat16)
+        value = value.to(ms.bfloat16)
+        _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
+        hidden_states = hidden_states.to(ms.float32)
+        return hidden_states
+
     def construct(
         self,
         hidden_states: Tensor,
@@ -496,7 +508,7 @@ class FlashAttention(Attention):
             query = self.rope(query, image_rotary_emb, text_seq_length)
             key = self.rope(key, image_rotary_emb, text_seq_length)
 
-        _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
+        hidden_states = self.flash_attention_(query, key, value)
 
         hidden_states = hidden_states.swapaxes(1, 2).reshape(batch_size, -1, self.heads * head_dim)
         hidden_states = self.to_out(hidden_states)
@@ -536,6 +548,18 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
         )
         if ms.get_context("mode") == 0:
             self.flash_attention.recompute(False)
+
+    def flash_attention_(self, query: Tensor, key: Tensor, value: Tensor) -> Tensor:
+        if query.dtype != ms.float32:
+            _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
+            return hidden_states
+
+        query = query.to(ms.bfloat16)
+        key = key.to(ms.bfloat16)
+        value = value.to(ms.bfloat16)
+        _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
+        hidden_states = hidden_states.to(ms.float32)
+        return hidden_states
 
     def construct(
         self,
@@ -588,7 +612,7 @@ class SequenceParallelFlashAttention(SequenceParallelAttention):
             query = self.rope(query, image_rotary_emb, text_seq_length)
             key = self.rope(key, image_rotary_emb, text_seq_length)
 
-        _, _, _, hidden_states = self.flash_attention(query, key, value, None, None, None, None)
+        hidden_states = self.flash_attention_(query, key, value)
 
         encoder_hidden_states, hidden_states = mint.split(
             hidden_states, (text_seq_length, hidden_states.shape[2] - text_seq_length), dim=2
