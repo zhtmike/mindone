@@ -14,8 +14,6 @@ import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
 
-from .layer import GroupNorm
-
 __all__ = [
     "AutoencoderKLCogVideoX",
     "AutoencoderKLCogVideoXEncoder",
@@ -45,7 +43,7 @@ def get_activation(act_fn: str) -> nn.Cell:
         raise ValueError(f"Unsupported activation function: {act_fn}")
 
 
-class CogVideoXSafeConv3d(nn.Conv3d):
+class CogVideoXSafeConv3d(mint.nn.Conv3d):
     def construct(self, input: Tensor) -> Tensor:
         memory_count = (
             (input.shape[0] * input.shape[1] * input.shape[2] * input.shape[3] * input.shape[4]) * 2 / 1024**3
@@ -65,20 +63,11 @@ class CogVideoXSafeConv3d(nn.Conv3d):
 
             output_chunks = []
             for input_chunk in input_chunks:
-                output_chunks.append(self._construct(input_chunk))
+                output_chunks.append(super().construct(input_chunk))
             output = mint.cat(output_chunks, dim=2)
             return output
         else:
-            return self._construct(input)
-
-    def _construct(self, x):
-        # TODO: drop cast when it supports fp32
-        dtype = x.dtype
-        assert self.group == 1
-        out = self.conv3d(x.to(ms.bfloat16), self.weight.to(ms.bfloat16))
-        if self.has_bias:
-            out = self.bias_add(out, self.bias.to(ms.bfloat16))
-        return out.to(dtype)
+            return super().construct(input)
 
 
 class CogVideoXCausalConv3d(nn.Cell):
@@ -119,9 +108,8 @@ class CogVideoXCausalConv3d(nn.Cell):
             out_channels=out_channels,
             kernel_size=kernel_size,
             stride=stride,
-            pad_mode="pad",
             dilation=dilation,
-            has_bias=True,
+            bias=True,
             dtype=dtype,
         )
 
@@ -152,7 +140,9 @@ class CogVideoXSpatialNorm3D(nn.Cell):
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
-        self.norm_layer = GroupNorm(num_channels=f_channels, num_groups=groups, eps=1e-6, affine=True, dtype=dtype)
+        self.norm_layer = mint.nn.GroupNorm(
+            num_channels=f_channels, num_groups=groups, eps=1e-6, affine=True, dtype=dtype
+        )
         self.conv_y = CogVideoXCausalConv3d(zq_channels, f_channels, kernel_size=1, stride=1, dtype=dtype)
         self.conv_b = CogVideoXCausalConv3d(zq_channels, f_channels, kernel_size=1, stride=1, dtype=dtype)
 
@@ -206,8 +196,8 @@ class CogVideoXResnetBlock3D(nn.Cell):
         self.spatial_norm_dim = spatial_norm_dim
 
         if spatial_norm_dim is None:
-            self.norm1 = GroupNorm(num_channels=in_channels, num_groups=groups, eps=eps, dtype=dtype)
-            self.norm2 = GroupNorm(num_channels=out_channels, num_groups=groups, eps=eps, dtype=dtype)
+            self.norm1 = mint.nn.GroupNorm(num_channels=in_channels, num_groups=groups, eps=eps, dtype=dtype)
+            self.norm2 = mint.nn.GroupNorm(num_channels=out_channels, num_groups=groups, eps=eps, dtype=dtype)
         else:
             self.norm1 = CogVideoXSpatialNorm3D(
                 f_channels=in_channels, zq_channels=spatial_norm_dim, groups=groups, dtype=dtype
@@ -239,9 +229,8 @@ class CogVideoXResnetBlock3D(nn.Cell):
                     out_channels=out_channels,
                     kernel_size=1,
                     stride=1,
-                    pad_mode="pad",
                     padding=0,
-                    has_bias=True,
+                    bias=True,
                     dtype=dtype,
                 )
 
@@ -302,14 +291,13 @@ class CogVideoXDownsample3D(nn.Cell):
     ) -> None:
         super().__init__()
 
-        self.conv = nn.Conv2d(
+        self.conv = mint.nn.Conv2d(
             in_channels,
             out_channels,
             kernel_size=kernel_size,
             stride=stride,
-            pad_mode="pad",
             padding=padding,
-            has_bias=True,
+            bias=True,
             dtype=dtype,
         )
         self.compress_time = compress_time
@@ -499,14 +487,13 @@ class CogVideoXUpsample3D(nn.Cell):
     ) -> None:
         super().__init__()
 
-        self.conv = nn.Conv2d(
+        self.conv = mint.nn.Conv2d(
             in_channels,
             out_channels,
             kernel_size=kernel_size,
             stride=stride,
-            pad_mode="pad",
             padding=padding,
-            has_bias=True,
+            bias=True,
             dtype=dtype,
         )
         self.compress_time = compress_time
@@ -689,7 +676,7 @@ class CogVideoXEncoder3D(nn.Cell):
             dtype=dtype,
         )
 
-        self.norm_out = GroupNorm(norm_num_groups, block_out_channels[-1], eps=1e-6, dtype=dtype)
+        self.norm_out = mint.nn.GroupNorm(norm_num_groups, block_out_channels[-1], eps=1e-6, dtype=dtype)
         self.conv_act = mint.nn.SiLU()
         self.conv_out = CogVideoXCausalConv3d(
             block_out_channels[-1], 2 * out_channels, kernel_size=3, pad_mode=pad_mode, dtype=dtype
@@ -806,7 +793,7 @@ class CogVideoXDecoder3D(nn.Cell):
         self.norm_out = CogVideoXSpatialNorm3D(
             reversed_block_out_channels[-1], in_channels, groups=norm_num_groups, dtype=dtype
         )
-        self.conv_act = nn.SiLU()
+        self.conv_act = mint.nn.SiLU()
         self.conv_out = CogVideoXCausalConv3d(
             reversed_block_out_channels[-1], out_channels, kernel_size=3, pad_mode=pad_mode, dtype=dtype
         )
@@ -918,14 +905,12 @@ class AutoencoderKLCogVideoX(nn.Cell):
             dtype=dtype,
         )
         self.quant_conv = (
-            CogVideoXSafeConv3d(2 * out_channels, 2 * out_channels, 1, pad_mode="pad", has_bias=True, dtype=dtype)
+            CogVideoXSafeConv3d(2 * out_channels, 2 * out_channels, 1, bias=True, dtype=dtype)
             if use_quant_conv
             else None
         )
         self.post_quant_conv = (
-            CogVideoXSafeConv3d(out_channels, out_channels, 1, pad_mode="pad", has_bias=True, dtype=dtype)
-            if use_post_quant_conv
-            else None
+            CogVideoXSafeConv3d(out_channels, out_channels, 1, bias=True, dtype=dtype) if use_post_quant_conv else None
         )
 
         self.use_slicing = False
