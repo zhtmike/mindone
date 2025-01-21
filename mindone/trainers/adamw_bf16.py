@@ -15,11 +15,13 @@ except ImportError:
     from mindspore import ms_function as jit
 
 
-def _check_param_value(beta1, beta2, eps, prim_name):
+def _check_param_value(beta1, beta2, eps, prim_name, parameters):
     """Check the type of inputs."""
     assert isinstance(beta1, float) and 0 <= beta1 <= 1.0, f"For {prim_name}, beta1 should between 0 and 1"
     assert isinstance(beta2, float) and 0 <= beta2 <= 1.0, f"For {prim_name}, beta2 should between 0 and 1"
     assert isinstance(eps, float) and eps > 0, f"For {prim_name}, eps should be bigger than 0"
+    for x in parameters:
+        assert x.dtype == ms.bfloat16, f"model paramters should be bfloat16, but get `{x.dtype}`."
 
 
 _grad_scale = ops.MultitypeFuncGraph("grad_scale")
@@ -61,6 +63,7 @@ _scaler_one = Tensor(1, ms.int32)
     "Tensor",
     "Tensor",
     "Tensor",
+    "Tensor",
     "Bool",
     "Bool",
 )
@@ -72,6 +75,7 @@ def _update_run_op(
     eps,
     lr,
     weight_decay,
+    master_param,
     param,
     m,
     v,
@@ -87,7 +91,8 @@ def _update_run_op(
         eps (Tensor): Term added to the denominator to improve numerical stability. Should be greater than 0.
         lr (Tensor): Learning rate.
         weight_decay (Tensor): Weight decay. Should be equal to or greater than 0.
-        param (Tensor): Parameters.
+        master_param (Tensor): Parameters in FP32.
+        param (Tensor): Model Paramters in BF16.
         m (Tensor): m value of parameters.
         v (Tensor): v value of parameters.
         gradient (Tensor): Gradient of parameters.
@@ -97,7 +102,6 @@ def _update_run_op(
         Tensor, the new value of v after updating.
     """
     if optim_filter:
-        param_fp32 = ops.cast(param, ms.float32)
         m_fp32 = ops.cast(m, ms.float32)
         v_fp32 = ops.cast(v, ms.float32)
         gradient_fp32 = ops.cast(gradient, ms.float32)
@@ -115,20 +119,21 @@ def _update_run_op(
 
         update = regulate_m / (eps + ops.sqrt(regulate_v))
         if decay_flag:
-            update = ops.mul(weight_decay, param_fp32) + update
+            update = ops.mul(weight_decay, master_param) + update
 
         update_with_lr = ops.mul(lr, update)
-        next_param = param_fp32 - ops.reshape(update_with_lr, ops.shape(param_fp32))
+        next_param = master_param - ops.reshape(update_with_lr, ops.shape(master_param))
 
-        next_param = ops.depend(next_param, ops.assign(param, ops.cast(next_param, param.dtype)))
+        next_param = ops.depend(next_param, ops.assign(master_param, next_param))
         next_param = ops.depend(next_param, ops.assign(m, ops.cast(next_m, m.dtype)))
         next_param = ops.depend(next_param, ops.assign(v, ops.cast(next_v, v.dtype)))
+        next_param = ops.depend(next_param, ops.assign(param, ops.cast(master_param, param.dtype)))
 
-        return ops.cast(next_param, param.dtype)
+        return next_param
     return gradient
 
 
-class AdamW_FP32(Optimizer):
+class AdamW_BF16(Optimizer):
     """
     Implements the gradient clipping by norm for a AdamWeightDecay optimizer.
     """
@@ -146,36 +151,25 @@ class AdamW_FP32(Optimizer):
         clip=False,
     ):
         super().__init__(learning_rate, params, weight_decay)
-        _check_param_value(beta1, beta2, eps, self.cls_name)
+        _check_param_value(beta1, beta2, eps, self.cls_name, self.parameters)
         self.beta1 = Tensor(np.array([beta1]).astype(np.float32))
         self.beta2 = Tensor(np.array([beta2]).astype(np.float32))
         self.eps = Tensor(np.array([eps]).astype(np.float32))
-        self.moments1 = ParameterTuple(
-            [
-                Parameter(
-                    np.zeros(x.shape, dtype=np.float32),
-                    name="adam_m_" + x.name,
-                    requires_grad=False,
-                )
-                for x in self.parameters
-            ]
-        )
-
-        self.moments2 = ParameterTuple(
-            [
-                Parameter(
-                    np.zeros(x.shape, dtype=np.float32),
-                    name="adam_v_" + x.name,
-                    requires_grad=False,
-                )
-                for x in self.parameters
-            ]
-        )
-
+        self.moments1 = self.parameters.clone(prefix="adam_m", init="zeros")
+        self.moments2 = self.parameters.clone(prefix="adam_v", init="zeros")
         self.hyper_map = ops.HyperMap()
         self.beta1_power = Parameter(initializer(1, [1], ms.float32), name="beta1_power")
         self.beta2_power = Parameter(initializer(1, [1], ms.float32), name="beta2_power")
-
+        self.master_parameters = ParameterTuple(
+            [
+                Parameter(
+                    x.to(ms.float32),
+                    name="master_" + x.name,
+                    requires_grad=False,
+                )
+                for x in self.parameters
+            ]
+        )
         self.reciprocal_scale = Tensor(1.0 / loss_scale, ms.float32)
         self.clip = clip
 
@@ -218,6 +212,7 @@ class AdamW_FP32(Optimizer):
                     ops.partial(_adam_opt, beta1_power, beta2_power, self.beta1, self.beta2, self.eps),
                     lr,
                     self.weight_decay,
+                    self.master_parameters,
                     self.parameters,
                     self.moments1,
                     self.moments2,
@@ -229,6 +224,7 @@ class AdamW_FP32(Optimizer):
                 optim_result = self.hyper_map(
                     ops.partial(_adam_opt, beta1_power, beta2_power, self.beta1, self.beta2, self.eps, lr),
                     self.weight_decay,
+                    self.master_parameters,
                     self.parameters,
                     self.moments1,
                     self.moments2,
@@ -241,6 +237,7 @@ class AdamW_FP32(Optimizer):
                 ops.partial(
                     _adam_opt, beta1_power, beta2_power, self.beta1, self.beta2, self.eps, lr, self.weight_decay
                 ),
+                self.master_parameters,
                 self.parameters,
                 self.moments1,
                 self.moments2,
