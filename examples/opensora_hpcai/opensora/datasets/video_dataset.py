@@ -74,13 +74,6 @@ class MinCropAndResize:
 
 
 def create_video_transforms(h, w, interpolation="bicubic", name="center"):
-    """
-    h, w : target resize height, weight
-    if h < w: (512, 1024)
-        if ch < cw: (512, 768)
-            cannot crop, unless crop and resize
-
-    """
     # expect rgb image in range 0-255, shape (h w c)
     from albumentations import CenterCrop, SmallestMaxSize
 
@@ -88,7 +81,7 @@ def create_video_transforms(h, w, interpolation="bicubic", name="center"):
     if name == "center":
         pixel_transforms = A.Compose(
             [
-                SmallestMaxSize(max_size=h, interpolation=mapping[interpolation]),
+                SmallestMaxSize(max_size=None, max_size_hw=(h, w), interpolation=mapping[interpolation]),
                 CenterCrop(h, w),
             ],
         )
