@@ -9,6 +9,6 @@ msrun --worker_num=8 --local_worker_num=8 --log_dir=$output_dir scripts/infer_va
     --vae_checkpoint models/CogVideoX1.5-5B/vae/diffusion_pytorch_model.safetensors \
     --dtype fp32 \
     --mode 1 \
-    --num_parallel_workers 1 \
+    --num_parallel_workers 4 \
     --use_parallel True \
     --transform_name center
