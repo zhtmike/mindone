@@ -11,7 +11,7 @@ import numpy as np
 import mindspore as ms
 import mindspore.mint.nn.functional as F
 from mindspore import Tensor, _no_grad, jit_class, mint, nn, ops
-from mindspore.communication import get_rank
+from mindspore.communication import GlobalComm, get_rank
 
 from ..acceleration.parallel_states import get_sequence_parallel_group
 from ..models.layers.operation_selector import get_split_op
@@ -445,6 +445,7 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.predict_v = self.diffusion.model_mean_type == ModelMeanType.VELOCITY
+        self.global_rank = get_rank() if GlobalComm.INITED else 0
         self.sp_group = get_sequence_parallel_group()
         if self.sp_group is not None:
             logging.info(
@@ -462,6 +463,14 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         y = ops.stop_gradient(y * self.image_scale_factor)
         return y
 
+    def rand_t(self, x: Tensor) -> Tensor:
+        # to sample different t for different rank under the same global seed
+        t = ops.randint(
+            self.global_rank, self.diffusion.num_timesteps + self.global_rank, (x.shape[0],), dtype=ms.int32
+        )
+        t = t % self.diffusion.num_timesteps
+        return t
+
     def compute_loss(
         self,
         x: Tensor,
@@ -471,7 +480,7 @@ class DiffusionWithLossCogVideoX(DiffusionWithLoss):
         image: Optional[Tensor] = None,
         **kwargs,
     ) -> Tensor:
-        t = self._broadcast(ops.randint(0, self.diffusion.num_timesteps, (x.shape[0],), dtype=ms.int32))
+        t = self._broadcast(self.rand_t(x))
         noise = self._broadcast(ops.randn(*x.shape))
         x = x.to(ms.float32)
         if image is not None:
