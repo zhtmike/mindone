@@ -176,6 +176,8 @@ def init_env(
     if save_graphs > 0:
         ms.set_context(save_graphs=args.save_graphs)
 
+    ms.set_context(max_call_depth=2000)
+
     return rank_id, device_num
 
 
