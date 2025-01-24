@@ -12,6 +12,7 @@ import yaml
 import mindspore as ms
 from mindspore import Tensor, nn
 from mindspore.communication.management import GlobalComm, get_group_size, get_rank, init
+from mindspore.nn.utils import no_init_parameters
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
@@ -204,7 +205,8 @@ def main(args):
             freeze_vae_2d=True,
         )
     elif args.vae_type == "CogVideoX-VAE":
-        vae = CogVideoX_VAE(dtype=dtype_map[args.vae_dtype])
+        with no_init_parameters():
+            vae = CogVideoX_VAE(dtype=dtype_map[args.vae_dtype])
         vae.load_from_checkpoint(args.vae_checkpoint)
         if args.vae_enable_slicing:
             vae.enable_slicing()
@@ -277,48 +279,53 @@ def main(args):
     elif args.model_version == "CogVideoX-2B":
         model_name = "CogVideoX-2B"
         logger.info(f"{model_name} init")
-        latte_model = CogVideoX_2B(
-            enable_flash_attention=args.enable_flash_attention,
-            enable_sequence_parallelism=args.enable_sequence_parallelism,
-            max_text_seq_length=args.model_max_length,
-            dtype=dtype_map[args.dtype],
-        )
+        with no_init_parameters():
+            latte_model = CogVideoX_2B(
+                enable_flash_attention=args.enable_flash_attention,
+                enable_sequence_parallelism=args.enable_sequence_parallelism,
+                max_text_seq_length=args.model_max_length,
+                dtype=dtype_map[args.dtype],
+            )
     elif args.model_version == "CogVideoX-5B":
         model_name = "CogVideoX-5B"
         logger.info(f"{model_name} init")
-        latte_model = CogVideoX_5B(
-            enable_flash_attention=args.enable_flash_attention,
-            enable_sequence_parallelism=args.enable_sequence_parallelism,
-            max_text_seq_length=args.model_max_length,
-            dtype=dtype_map[args.dtype],
-        )
+        with no_init_parameters():
+            latte_model = CogVideoX_5B(
+                enable_flash_attention=args.enable_flash_attention,
+                enable_sequence_parallelism=args.enable_sequence_parallelism,
+                max_text_seq_length=args.model_max_length,
+                dtype=dtype_map[args.dtype],
+            )
     elif args.model_version == "CogVideoX-5B-I2V":
         model_name = "CogVideoX-5B-I2V"
         logger.info(f"{model_name} init")
-        latte_model = CogVideoX_5B_I2V(
-            enable_flash_attention=args.enable_flash_attention,
-            enable_sequence_parallelism=args.enable_sequence_parallelism,
-            max_text_seq_length=args.model_max_length,
-            dtype=dtype_map[args.dtype],
-        )
+        with no_init_parameters():
+            latte_model = CogVideoX_5B_I2V(
+                enable_flash_attention=args.enable_flash_attention,
+                enable_sequence_parallelism=args.enable_sequence_parallelism,
+                max_text_seq_length=args.model_max_length,
+                dtype=dtype_map[args.dtype],
+            )
     elif args.model_version == "CogVideoX-5B-v1.5":
         model_name = "CogVideoX-5B-v1.5"
         logger.info(f"{model_name} init")
-        latte_model = CogVideoX_5B_v1_5(
-            enable_flash_attention=args.enable_flash_attention,
-            enable_sequence_parallelism=args.enable_sequence_parallelism,
-            max_text_seq_length=args.model_max_length,
-            dtype=dtype_map[args.dtype],
-        )
+        with no_init_parameters():
+            latte_model = CogVideoX_5B_v1_5(
+                enable_flash_attention=args.enable_flash_attention,
+                enable_sequence_parallelism=args.enable_sequence_parallelism,
+                max_text_seq_length=args.model_max_length,
+                dtype=dtype_map[args.dtype],
+            )
     elif args.model_version == "CogVideoX-5B-v1.5-I2V":
         model_name = "CogVideoX-5B-v1.5-I2V"
         logger.info(f"{model_name} init")
-        latte_model = CogVideoX_5B_v1_5_I2V(
-            enable_flash_attention=args.enable_flash_attention,
-            enable_sequence_parallelism=args.enable_sequence_parallelism,
-            max_text_seq_length=args.model_max_length,
-            dtype=dtype_map[args.dtype],
-        )
+        with no_init_parameters():
+            latte_model = CogVideoX_5B_v1_5_I2V(
+                enable_flash_attention=args.enable_flash_attention,
+                enable_sequence_parallelism=args.enable_sequence_parallelism,
+                max_text_seq_length=args.model_max_length,
+                dtype=dtype_map[args.dtype],
+            )
     else:
         raise ValueError(f"Unknown model version: {args.model_version}")
 
