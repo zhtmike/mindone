@@ -126,6 +126,9 @@ class DiffusionWithLoss(nn.Cell):
         z = ops.stop_gradient(self.vae.encode(x))
         return z
 
+    def get_image_latents(self, x: Tensor) -> Tensor:
+        raise NotImplementedError("Only CogvideoX I2V support this method.")
+
     def construct(
         self,
         x: Tensor,
@@ -169,7 +172,7 @@ class DiffusionWithLoss(nn.Cell):
 
             if image is not None:
                 if not self.image_emb_cached:
-                    image = self.get_latents(image)
+                    image = self.get_image_latents(image)
                 else:
                     image = mint.permute(image, (0, 2, 1, 3, 4))
 
