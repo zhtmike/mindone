@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 from safetensors import safe_open
@@ -132,7 +132,7 @@ class CogVideoXCausalConv3d(nn.Cell):
             inputs = mint.cat(cached_inputs + [inputs], dim=2)
         return inputs
 
-    def construct(self, inputs: Tensor, conv_cache: Optional[Tensor] = None) -> Tuple[Tensor, Dict[str, Tensor]]:
+    def construct(self, inputs: Tensor, conv_cache: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
         inputs = self.fake_context_parallel_forward(inputs, conv_cache)
         conv_cache = inputs[:, :, -self.time_kernel_size + 1 :]
 
@@ -250,8 +250,8 @@ class CogVideoXResnetBlock3D(nn.Cell):
         inputs: Tensor,
         temb: Optional[Tensor] = None,
         zq: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Tensor]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Tensor]]]:
+        conv_cache: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Tensor, Dict[str, Any]]:
         new_conv_cache = {}
         conv_cache = conv_cache or {}
 
@@ -411,8 +411,8 @@ class CogVideoXDownBlock3D(nn.Cell):
         hidden_states: Tensor,
         temb: Optional[Tensor] = None,
         zq: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Dict[str, Tensor]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Dict[str, Tensor]]]]:
+        conv_cache: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Tensor, Dict[str, Any]]:
         r"""Forward method of the `CogVideoXDownBlock3D` class."""
 
         new_conv_cache = {}
@@ -471,8 +471,8 @@ class CogVideoXMidBlock3D(nn.Cell):
         hidden_states: Tensor,
         temb: Optional[Tensor] = None,
         zq: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Dict[str, Tensor]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Dict[str, Tensor]]]]:
+        conv_cache: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Tensor, Dict[str, Any]]:
         new_conv_cache = {}
         conv_cache = conv_cache or {}
 
@@ -597,8 +597,8 @@ class CogVideoXUpBlock3D(nn.Cell):
         hidden_states: Tensor,
         temb: Optional[Tensor] = None,
         zq: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Dict[str, Tensor]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Dict[str, Tensor]]]]:
+        conv_cache: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Tensor, Dict[str, Any]]:
         r"""Forward method of the `CogVideoXUpBlock3D` class."""
 
         new_conv_cache = {}
@@ -696,11 +696,8 @@ class CogVideoXEncoder3D(nn.Cell):
         )
 
     def construct(
-        self,
-        sample: Tensor,
-        temb: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Union[Tensor, Dict[str, Dict[str, Tensor]]]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Union[Tensor, Dict[str, Dict[str, Tensor]]]]]]:
+        self, sample: Tensor, temb: Optional[Tensor] = None, conv_cache: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Tensor, Dict[str, Any]]:
         new_conv_cache = {}
         conv_cache = conv_cache or {}
 
@@ -812,11 +809,8 @@ class CogVideoXDecoder3D(nn.Cell):
         )
 
     def construct(
-        self,
-        sample: Tensor,
-        temb: Optional[Tensor] = None,
-        conv_cache: Optional[Dict[str, Dict[str, Union[Tensor, Dict[str, Dict[str, Tensor]]]]]] = None,
-    ) -> Tuple[Tensor, Dict[str, Dict[str, Union[Tensor, Dict[str, Dict[str, Tensor]]]]]]:
+        self, sample: Tensor, temb: Optional[Tensor] = None, conv_cache: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Tensor, Dict[str, Any]]:
         r"""The forward method of the `CogVideoXDecoder3D` class."""
 
         new_conv_cache = {}
@@ -880,7 +874,7 @@ class AutoencoderKLCogVideoX(nn.Cell):
         use_quant_conv: bool = False,
         use_post_quant_conv: bool = False,
         dtype: ms.Type = ms.float32,
-    ):
+    ) -> None:
         super().__init__()
         self.out_channels = out_channels
         self.latent_channels = latent_channels
