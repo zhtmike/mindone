@@ -449,7 +449,7 @@ class InferPipelineCogVideoX(InferPipeline):
             x: (b c t h w), image (t=1) or video
         """
         y = self.vae.encode(x.to(self.vae.dtype))
-        y = self.vae.sample(y)
+        y = self.vae.mode(y)
         y = ops.stop_gradient(y * self.encode_scale_factor)
         return y
 
