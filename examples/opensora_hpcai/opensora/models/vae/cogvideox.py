@@ -128,8 +128,10 @@ class CogVideoXCausalConv3d(nn.Cell):
     def fake_context_parallel_forward(self, inputs: Tensor, conv_cache: Optional[Tensor] = None) -> Tensor:
         kernel_size = self.time_kernel_size
         if kernel_size > 1:
-            cached_inputs = [conv_cache] if conv_cache is not None else [inputs[:, :, :1]] * (kernel_size - 1)
-            inputs = mint.cat(cached_inputs + [inputs], dim=2)
+            cached_inputs = (
+                conv_cache if conv_cache is not None else mint.tile(inputs[:, :, :1], (1, 1, kernel_size - 1, 1, 1))
+            )
+            inputs = mint.cat([cached_inputs, inputs], dim=2)
         return inputs
 
     def construct(self, inputs: Tensor, conv_cache: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
