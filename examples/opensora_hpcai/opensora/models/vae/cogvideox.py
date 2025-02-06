@@ -315,23 +315,14 @@ class CogVideoXDownsample3D(nn.Cell):
                 x_first, x_rest = x[..., 0], x[..., 1:]
                 if x_rest.shape[-1] > 0:
                     # (batch_size * height * width, channels, frames - 1) -> (batch_size * height * width, channels, (frames - 1) // 2)
-                    # TODO: change to avg_pool1d once it is supported
-                    # x_rest = F.avg_pool1d(x_rest, kernel_size=2, stride=2)
-                    # x_rest = F.avg_pool2d(x_rest.unsqueeze(-1), kernel_size=(2, 1), stride=(2, 1)).squeeze(-1)
-                    x_rest = x_rest.reshape(batch_size * height * width, channels, -1, 2)
-                    x_rest = mint.mean(x_rest, dim=-1, keepdim=False)
-
+                    x_rest = F.avg_pool1d(x_rest, kernel_size=2, stride=2)
                 x = mint.cat([x_first[..., None], x_rest], dim=-1)
                 # (batch_size * height * width, channels, (frames // 2) + 1) -> (batch_size, height, width, channels, (frames // 2) + 1)
                 # -> (batch_size, channels, (frames // 2) + 1, height, width)
                 x = x.reshape(batch_size, height, width, channels, x.shape[-1]).permute(0, 3, 4, 1, 2)
             else:
                 # (batch_size * height * width, channels, frames) -> (batch_size * height * width, channels, frames // 2)
-                # TODO: change to avg_pool1d once it is supported
-                # x = F.avg_pool1d(x, kernel_size=2, stride=2)
-                # x = F.avg_pool2d(x.unsqueeze(-1), kernel_size=(2, 1), stride=(2, 1)).squeeze(-1)
-                x = x.reshape(batch_size * height * width, channels, -1, 2)
-                x = mint.mean(x, dim=-1, keepdim=False)
+                x = F.avg_pool1d(x, kernel_size=2, stride=2)
                 # (batch_size * height * width, channels, frames // 2) -> (batch_size, height, width, channels, frames // 2)
                 # -> (batch_size, channels, frames // 2, height, width)
                 x = x.reshape(batch_size, height, width, channels, x.shape[-1]).permute(0, 3, 4, 1, 2)
