@@ -448,13 +448,18 @@ def main(args):
         VAE_Z_CH = vae.out_channels
         latent_size = vae.get_latent_size((args.num_frames, img_h, img_w))
     else:
+        logger.info("vae init...skip due to vae cache.")
         # vae cache
         vae = None
         assert args.vae_type != "OpenSoraVAE_V1_2", "vae cache is not supported with 3D VAE currently."
         VAE_Z_CH = SD_CONFIG["z_channels"]
         VAE_T_COMPRESS = 1
         VAE_S_COMPRESS = 8
-        latent_size = (args.num_frames // VAE_T_COMPRESS, img_h // VAE_S_COMPRESS, img_w // VAE_S_COMPRESS)
+        if args.num_latent_frames is not None:
+            num_latent_frames = args.num_latent_frames
+        else:
+            num_latent_frames = args.num_frames // VAE_T_COMPRESS
+        latent_size = (num_latent_frames, img_h // VAE_S_COMPRESS, img_w // VAE_S_COMPRESS)
 
     # 2.2 stdit
     if args.model_version == "v1":
