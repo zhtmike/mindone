@@ -165,11 +165,9 @@ class CogVideoXSpatialNorm3D(nn.Cell):
         conv_cache = conv_cache or {}
 
         if f.shape[2] > 1 and f.shape[2] % 2 == 1:
-            f_first, f_rest = f[:, :, :1], f[:, :, 1:]
-            f_first_size, f_rest_size = f_first.shape[-3:], f_rest.shape[-3:]
-            z_first, z_rest = zq[:, :, :1], zq[:, :, 1:]
-            z_first = F.interpolate(z_first, size=f_first_size)
-            z_rest = F.interpolate(z_rest, size=f_rest_size)
+            z_first, z_rest = mint.split(zq, [1, zq.shape[2] - 1], dim=2)
+            z_first = F.interpolate(z_first, size=(1, *f.shape[-2:]))
+            z_rest = F.interpolate(z_rest, size=f.shape[-3:])
             zq = mint.cat([z_first, z_rest], dim=2)
         else:
             zq = F.interpolate(zq, size=f.shape[-3:])
@@ -324,7 +322,7 @@ class CogVideoXDownsample3D(nn.Cell):
             x = x.permute(0, 3, 4, 1, 2).reshape(batch_size * height * width, channels, frames)
 
             if x.shape[-1] % 2 == 1:
-                x_first, x_rest = x[..., 0], x[..., 1:]
+                x_first, x_rest = mint.split(x, [1, x.shape[-1] - 1], dim=-1)
                 if x_rest.shape[-1] > 0:
                     # (batch_size * height * width, channels, frames - 1) -> (batch_size * height * width, channels, (frames - 1) // 2)
                     # TODO: change to avg_pool1d once it is supported
@@ -333,7 +331,7 @@ class CogVideoXDownsample3D(nn.Cell):
                     x_rest = x_rest.reshape(batch_size * height * width, channels, -1, 2)
                     x_rest = mint.mean(x_rest, dim=-1, keepdim=False)
 
-                x = mint.cat([x_first[..., None], x_rest], dim=-1)
+                x = mint.cat([x_first, x_rest], dim=-1)
                 # (batch_size * height * width, channels, (frames // 2) + 1) -> (batch_size, height, width, channels, (frames // 2) + 1)
                 # -> (batch_size, channels, (frames // 2) + 1, height, width)
                 x = x.reshape(batch_size, height, width, channels, x.shape[-1]).permute(0, 3, 4, 1, 2)
@@ -515,20 +513,7 @@ class CogVideoXUpsample3D(nn.Cell):
 
     def construct(self, inputs: Tensor) -> Tensor:
         if self.compress_time:
-            if inputs.shape[2] > 1 and inputs.shape[2] % 2 == 1:
-                # split first frame
-                x_first, x_rest = inputs[:, :, 0], inputs[:, :, 1:]
-
-                x_first = F.interpolate(x_first, scale_factor=2.0)
-                x_rest = F.interpolate(x_rest, scale_factor=2.0)
-                x_first = x_first[:, :, None, :, :]
-                inputs = mint.cat([x_first, x_rest], dim=2)
-            elif inputs.shape[2] > 1:
-                inputs = F.interpolate(inputs, scale_factor=2.0)
-            else:
-                inputs = inputs.squeeze(2)
-                inputs = F.interpolate(inputs, scale_factor=2.0)
-                inputs = inputs[:, :, None, :, :]
+            inputs = F.interpolate(inputs, scale_factor=2.0)
         else:
             # only interpolate 2D
             b, c, t, h, w = inputs.shape
