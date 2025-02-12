@@ -513,7 +513,19 @@ class CogVideoXUpsample3D(nn.Cell):
 
     def construct(self, inputs: Tensor) -> Tensor:
         if self.compress_time:
-            inputs = F.interpolate(inputs, scale_factor=2.0)
+            if inputs.shape[2] > 1 and inputs.shape[2] % 2 == 1:
+                # split first frame
+                x_first, x_rest = inputs[:, :, 0], inputs[:, :, 1:]
+                x_first = F.interpolate(x_first, scale_factor=2.0)
+                x_rest = F.interpolate(x_rest, scale_factor=2.0)
+                x_first = x_first[:, :, None, :, :]
+                inputs = mint.cat([x_first, x_rest], dim=2)
+            elif inputs.shape[2] > 1:
+                inputs = F.interpolate(inputs, scale_factor=2.0)
+            else:
+                inputs = inputs.squeeze(2)
+                inputs = F.interpolate(inputs, scale_factor=2.0)
+                inputs = inputs[:, :, None, :, :]
         else:
             # only interpolate 2D
             b, c, t, h, w = inputs.shape
