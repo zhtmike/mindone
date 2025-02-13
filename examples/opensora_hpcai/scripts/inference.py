@@ -284,6 +284,7 @@ def main(args):
                 enable_flash_attention=args.enable_flash_attention,
                 enable_sequence_parallelism=args.enable_sequence_parallelism,
                 max_text_seq_length=args.model_max_length,
+                lora_dim=args.lora_dim,
                 dtype=dtype_map[args.dtype],
             )
     elif args.model_version == "CogVideoX-5B":
@@ -294,6 +295,7 @@ def main(args):
                 enable_flash_attention=args.enable_flash_attention,
                 enable_sequence_parallelism=args.enable_sequence_parallelism,
                 max_text_seq_length=args.model_max_length,
+                lora_dim=args.lora_dim,
                 dtype=dtype_map[args.dtype],
             )
     elif args.model_version == "CogVideoX-5B-I2V":
@@ -304,6 +306,7 @@ def main(args):
                 enable_flash_attention=args.enable_flash_attention,
                 enable_sequence_parallelism=args.enable_sequence_parallelism,
                 max_text_seq_length=args.model_max_length,
+                lora_dim=args.lora_dim,
                 dtype=dtype_map[args.dtype],
             )
     elif args.model_version == "CogVideoX-5B-v1.5":
@@ -314,6 +317,7 @@ def main(args):
                 enable_flash_attention=args.enable_flash_attention,
                 enable_sequence_parallelism=args.enable_sequence_parallelism,
                 max_text_seq_length=args.model_max_length,
+                lora_dim=args.lora_dim,
                 dtype=dtype_map[args.dtype],
             )
     elif args.model_version == "CogVideoX-5B-v1.5-I2V":
@@ -324,6 +328,7 @@ def main(args):
                 enable_flash_attention=args.enable_flash_attention,
                 enable_sequence_parallelism=args.enable_sequence_parallelism,
                 max_text_seq_length=args.model_max_length,
+                lora_dim=args.lora_dim,
                 dtype=dtype_map[args.dtype],
             )
     else:
@@ -354,6 +359,12 @@ def main(args):
             latte_model.load_from_checkpoint(args.ckpt_path[0])
     else:
         logger.warning(f"{model_name} uses random initialization!")
+
+    if args.lora_ckpt_path:
+        if args.lora_dim is None:
+            raise ValueError("`lora_dim` must be provided to loading lora ckpt")
+        logger.info(f"Loading LoRA ckpt {args.lora_ckpt_path} into {model_name}")
+        latte_model.load_from_checkpoint([args.lora_ckpt_path])
 
     # 2.3 text encoder
     num_prompts = len(captions)
@@ -856,6 +867,14 @@ def parse_args():
     parser.add_argument("--beta_end", type=float, default=0.02, help="beta end value.")
     parser.add_argument("--snr_shift_scale", type=float, help="SNR shift scale.")
     parser.add_argument("--rescale_betas_zero_snr", type=str2bool, default=False, help="Rescale beta to zero SNR.")
+
+    parser.add_argument(
+        "--lora_dim",
+        default=None,
+        type=int,
+        help="lora dimension. If it is None, then sft will be performed; otherwise, lora with rank=lora_dim will be performed.",
+    )
+    parser.add_argument("--lora_ckpt_path", help="Path of the lora checkpoint")
 
     parser.add_argument("--pre_patchify", default=False, type=str2bool, help="Patchify the latent before inference.")
     parser.add_argument("--max_image_size", default=512, type=int, help="Max image size for patchified latent.")

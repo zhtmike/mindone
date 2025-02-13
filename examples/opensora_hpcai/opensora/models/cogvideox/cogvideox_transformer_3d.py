@@ -1,10 +1,13 @@
 # diffusers/models/transformers/cogvideox_transformer_3d.py -- v0.31.0
 import logging
+from functools import partial
 from typing import List, Literal, Optional, Tuple, Union
 
 import numpy as np
 from opensora.acceleration.communications import AlltoAll, GatherFowardSplitBackward, SplitFowardGatherBackward
 from opensora.acceleration.parallel_states import get_sequence_parallel_group
+from opensora.models.lora import Linear as LinearRoRA
+from opensora.models.lora import mark_only_lora_as_trainable
 from safetensors import safe_open
 
 import mindspore as ms
@@ -1230,75 +1233,221 @@ class CogVideoXTransformer3DModel(nn.Cell):
         assert len(param_not_load) == 0 and len(ckpt_not_load) == 0
 
 
-def CogVideoX_2B(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
-    model = CogVideoXTransformer3DModel(
-        num_attention_heads=30, num_layers=30, use_rotary_positional_embeddings=False, **kwargs
-    )
-
-    if from_pretrained is not None:
-        model.load_from_checkpoint(from_pretrained)
-    return model
-
-
-def CogVideoX_5B(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
-    model = CogVideoXTransformer3DModel(
-        num_attention_heads=48, num_layers=42, use_rotary_positional_embeddings=True, **kwargs
-    )
-
-    if from_pretrained is not None:
-        model.load_from_checkpoint(from_pretrained)
-    return model
-
-
-def CogVideoX_5B_I2V(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
-    model = CogVideoXTransformer3DModel(
-        num_attention_heads=48,
-        in_channels=32,
-        num_layers=42,
-        use_rotary_positional_embeddings=True,
-        use_learned_positional_embeddings=True,
+class CogVideoXTransformer3DModelLoRA(CogVideoXTransformer3DModel):
+    def __init__(
+        self,
+        *args,
+        lora_dim: int = 4,
+        lora_alpha: Optional[int] = None,
+        lora_dropout: float = 0.0,
+        lora_merge_weights: bool = True,
         **kwargs,
-    )
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        for cell_name, cell in self.cells_and_names():
+            if isinstance(cell, (Attention, SequenceParallelAttention)):
+                cell.to_q = LinearRoRA(
+                    cell.to_q.in_features,
+                    cell.to_q.out_features,
+                    bias=cell.to_q.has_bias,
+                    r=lora_dim,
+                    lora_alpha=lora_alpha,
+                    lora_dropout=lora_dropout,
+                    merge_weights=lora_merge_weights,
+                    dtype=self.dtype,
+                )
+                list(map(partial(self._prefix_param, cell_name), cell.to_q.get_parameters()))
+                cell.to_k = LinearRoRA(
+                    cell.to_k.in_features,
+                    cell.to_k.out_features,
+                    bias=cell.to_k.has_bias,
+                    r=lora_dim,
+                    lora_alpha=lora_alpha,
+                    lora_dropout=lora_dropout,
+                    merge_weights=lora_merge_weights,
+                    dtype=self.dtype,
+                )
+                list(map(partial(self._prefix_param, cell_name), cell.to_k.get_parameters()))
+                cell.to_v = LinearRoRA(
+                    cell.to_v.in_features,
+                    cell.to_v.out_features,
+                    bias=cell.to_v.has_bias,
+                    r=lora_dim,
+                    lora_alpha=lora_alpha,
+                    lora_dropout=lora_dropout,
+                    merge_weights=lora_merge_weights,
+                    dtype=self.dtype,
+                )
+                list(map(partial(self._prefix_param, cell_name), cell.to_v.get_parameters()))
+                cell.to_out[0] = LinearRoRA(
+                    cell.to_out[0].in_features,
+                    cell.to_out[0].out_features,
+                    bias=cell.to_out[0].has_bias,
+                    r=lora_dim,
+                    lora_alpha=lora_alpha,
+                    lora_dropout=lora_dropout,
+                    merge_weights=lora_merge_weights,
+                    dtype=self.dtype,
+                )
+                list(map(partial(self._prefix_param, cell_name), cell.to_out[0].get_parameters()))
+        mark_only_lora_as_trainable(self, "none")
+
+    def _prefix_param(self, prefix: str, param: Parameter):
+        if not param.name.startswith(prefix):
+            param.name = f"{prefix}.{param.name}"
+
+    def load_from_checkpoint(self, ckpt_path: List[str]) -> None:
+        assert isinstance(ckpt_path, list)
+        format = "safetensors" if ckpt_path[0].endswith(".safetensors") else "ckpt"
+
+        if format == "ckpt":
+            if len(ckpt_path) > 1:
+                raise ValueError("It can read weight from single file (.ckpt) only.")
+            parameter_dict = ms.load_checkpoint(ckpt_path[0])
+            parameter_dict = {k.replace("network.", ""): v for k, v in parameter_dict.items()}
+        else:
+            parameter_dict = dict()
+            for path in ckpt_path:
+                with safe_open(path, framework="np") as f:
+                    for k in f.keys():
+                        parameter_dict[k] = Parameter(Tensor(f.get_tensor(k), dtype=self.dtype))
+
+        _, ckpt_not_load = ms.load_param_into_net(self, parameter_dict, strict_load=True)
+        assert len(ckpt_not_load) == 0
+
+
+def CogVideoX_2B(
+    from_pretrained: Optional[str] = None, lora_dim: Optional[int] = None, **kwargs
+) -> CogVideoXTransformer3DModel:
+    if lora_dim is not None:
+        model = CogVideoXTransformer3DModelLoRA(
+            num_attention_heads=30, num_layers=30, use_rotary_positional_embeddings=False, lora_dim=lora_dim, **kwargs
+        )
+    else:
+        model = CogVideoXTransformer3DModel(
+            num_attention_heads=30, num_layers=30, use_rotary_positional_embeddings=False, **kwargs
+        )
 
     if from_pretrained is not None:
         model.load_from_checkpoint(from_pretrained)
     return model
 
 
-def CogVideoX_5B_v1_5(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
-    model = CogVideoXTransformer3DModel(
-        num_attention_heads=48,
-        num_layers=42,
-        use_rotary_positional_embeddings=True,
-        sample_width=300,
-        sample_height=300,
-        sample_frames=81,
-        patch_size=(2, 2, 2),
-        patch_bias=False,
-        rope_grid_type="slice",
-        **kwargs,
-    )
+def CogVideoX_5B(
+    from_pretrained: Optional[str] = None, lora_dim: Optional[int] = None, **kwargs
+) -> CogVideoXTransformer3DModel:
+    if lora_dim is not None:
+        model = CogVideoXTransformer3DModelLoRA(
+            num_attention_heads=48, num_layers=42, use_rotary_positional_embeddings=True, lora_dim=lora_dim, **kwargs
+        )
+    else:
+        model = CogVideoXTransformer3DModel(
+            num_attention_heads=48, num_layers=42, use_rotary_positional_embeddings=True, **kwargs
+        )
 
     if from_pretrained is not None:
         model.load_from_checkpoint(from_pretrained)
     return model
 
 
-def CogVideoX_5B_v1_5_I2V(from_pretrained: Optional[str] = None, **kwargs) -> CogVideoXTransformer3DModel:
-    model = CogVideoXTransformer3DModel(
-        num_attention_heads=48,
-        in_channels=32,
-        num_layers=42,
-        use_rotary_positional_embeddings=True,
-        sample_width=300,
-        sample_height=300,
-        sample_frames=81,
-        patch_size=(2, 2, 2),
-        patch_bias=False,
-        ofs_embed_dim=512,
-        rope_grid_type="slice",
-        **kwargs,
-    )
+def CogVideoX_5B_I2V(
+    from_pretrained: Optional[str] = None, lora_dim: Optional[int] = None, **kwargs
+) -> CogVideoXTransformer3DModel:
+    if lora_dim is not None:
+        model = CogVideoXTransformer3DModelLoRA(
+            num_attention_heads=48,
+            in_channels=32,
+            num_layers=42,
+            use_rotary_positional_embeddings=True,
+            use_learned_positional_embeddings=True,
+            lora_dim=lora_dim,
+            **kwargs,
+        )
+    else:
+        model = CogVideoXTransformer3DModel(
+            num_attention_heads=48,
+            in_channels=32,
+            num_layers=42,
+            use_rotary_positional_embeddings=True,
+            use_learned_positional_embeddings=True,
+            **kwargs,
+        )
+
+    if from_pretrained is not None:
+        model.load_from_checkpoint(from_pretrained)
+    return model
+
+
+def CogVideoX_5B_v1_5(
+    from_pretrained: Optional[str] = None, lora_dim: Optional[int] = None, **kwargs
+) -> CogVideoXTransformer3DModel:
+    if lora_dim is not None:
+        model = CogVideoXTransformer3DModelLoRA(
+            num_attention_heads=48,
+            num_layers=42,
+            use_rotary_positional_embeddings=True,
+            sample_width=300,
+            sample_height=300,
+            sample_frames=81,
+            patch_size=(2, 2, 2),
+            patch_bias=False,
+            rope_grid_type="slice",
+            lora_dim=lora_dim,
+            **kwargs,
+        )
+    else:
+        model = CogVideoXTransformer3DModel(
+            num_attention_heads=48,
+            num_layers=42,
+            use_rotary_positional_embeddings=True,
+            sample_width=300,
+            sample_height=300,
+            sample_frames=81,
+            patch_size=(2, 2, 2),
+            patch_bias=False,
+            rope_grid_type="slice",
+            **kwargs,
+        )
+
+    if from_pretrained is not None:
+        model.load_from_checkpoint(from_pretrained)
+    return model
+
+
+def CogVideoX_5B_v1_5_I2V(
+    from_pretrained: Optional[str] = None, lora_dim: Optional[int] = None, **kwargs
+) -> CogVideoXTransformer3DModel:
+    if lora_dim is not None:
+        model = CogVideoXTransformer3DModelLoRA(
+            num_attention_heads=48,
+            in_channels=32,
+            num_layers=42,
+            use_rotary_positional_embeddings=True,
+            sample_width=300,
+            sample_height=300,
+            sample_frames=81,
+            patch_size=(2, 2, 2),
+            patch_bias=False,
+            ofs_embed_dim=512,
+            rope_grid_type="slice",
+            lora_dim=lora_dim,
+            **kwargs,
+        )
+    else:
+        model = CogVideoXTransformer3DModel(
+            num_attention_heads=48,
+            in_channels=32,
+            num_layers=42,
+            use_rotary_positional_embeddings=True,
+            sample_width=300,
+            sample_height=300,
+            sample_frames=81,
+            patch_size=(2, 2, 2),
+            patch_bias=False,
+            ofs_embed_dim=512,
+            rope_grid_type="slice",
+            **kwargs,
+        )
 
     if from_pretrained is not None:
         model.load_from_checkpoint(from_pretrained)
