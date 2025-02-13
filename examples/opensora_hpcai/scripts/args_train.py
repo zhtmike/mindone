@@ -402,6 +402,14 @@ def parse_train_args(parser):
         help="log interval in the unit of data sink size. E.g. if data sink size = 10, log_interval=2, log every 20 steps",
     )
 
+    # LoRA
+    parser.add_argument(
+        "--lora_dim",
+        default=None,
+        type=int,
+        help="lora dimension. If it is None, then sft will be performed; otherwise, lora with rank=lora_dim will be performed.",
+    )
+
     # ---------- Validation ----------
     parser.add_argument(
         "--validate", type=str2bool, default=False, help="Whether to perform validation during training."

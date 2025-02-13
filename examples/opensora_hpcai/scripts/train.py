@@ -511,6 +511,7 @@ def main(args):
             use_recompute=args.use_recompute,
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
+            lora_dim=args.lora_dim,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B":
@@ -522,6 +523,7 @@ def main(args):
             use_recompute=args.use_recompute,
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
+            lora_dim=args.lora_dim,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B-I2V":
@@ -533,6 +535,7 @@ def main(args):
             use_recompute=args.use_recompute,
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
+            lora_dim=args.lora_dim,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B-v1.5":
@@ -544,6 +547,7 @@ def main(args):
             use_recompute=args.use_recompute,
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
+            lora_dim=args.lora_dim,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B-v1.5-I2V":
@@ -555,6 +559,7 @@ def main(args):
             use_recompute=args.use_recompute,
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
+            lora_dim=args.lora_dim,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     else:
@@ -900,6 +905,9 @@ def main(args):
                 "As steps per epoch are inaccurate with bucket config, TimeMonitor is disabled. See result.log for the actual step time"
             )
         if rank_id == 0:
+            save_trainable_only = args.lora_dim is not None
+            model_name = model_name + "_lora" if args.lora_dim is not None else model_name
+
             save_cb = EvalSaveCallback(
                 network=latent_diffusion_with_loss.network,
                 rank_id=rank_id,
@@ -914,6 +922,7 @@ def main(args):
                 log_interval=args.log_interval,
                 start_epoch=start_epoch,
                 model_name=model_name,
+                save_trainable_only=save_trainable_only,
                 resume_prefix_blacklist=("vae.", "swap."),
                 record_lr=False,
                 train_steps=args.train_steps,
@@ -948,6 +957,7 @@ def main(args):
                 f"Distributed mode: {args.use_parallel}",
                 f"Num params: {num_params:,} (latte: {num_params_latte:,}, vae: {num_params_vae:,})",
                 f"Num trainable params: {num_params_trainable:,}",
+                f"LoRA rank: {args.lora_dim}",
                 f"{model_name} dtype: {args.dtype}",
                 f"VAE dtype: {args.vae_dtype}",
                 f"Learning rate: {args.start_learning_rate}",

@@ -428,6 +428,8 @@ class InferPipelineCogVideoX(InferPipeline):
     def __init__(self, *args, encode_scale_factor: Optional[float] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.encode_scale_factor = self.scale_factor if encode_scale_factor is None else encode_scale_factor
+        # expicitly call set_train False to enable lora fusion
+        self.model.set_train(False)
 
     def vae_decode_video(self, x: Tensor) -> Tensor:
         """
