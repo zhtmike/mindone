@@ -115,9 +115,9 @@ class AlltoAllPynative(nn.Cell):
         return mint.cat(output_list, dim=concat_dim).contiguous()
 
     def construct(self, x: Tensor) -> Tensor:
-        x = self._all_to_all(x, self.concat_dim, self.split_dim, group=self.group)
+        x = self._all_to_all(x, self.split_dim, self.concat_dim, group=self.group)
         return x
 
     def bprop(self, x: Tensor, out: Tensor, dout: Tensor) -> Tuple[Tensor]:
-        dout = self._all_to_all(dout, self.split_dim, self.concat_dim, group=self.group)
+        dout = self._all_to_all(dout, self.concat_dim, self.split_dim, group=self.group)
         return (dout,)
