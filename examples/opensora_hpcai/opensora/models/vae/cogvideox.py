@@ -167,7 +167,7 @@ class CogVideoXSpatialNorm3D(nn.Cell):
         if f.shape[2] > 1 and f.shape[2] % 2 == 1:
             z_first, z_rest = mint.split(zq, [1, zq.shape[2] - 1], dim=2)
             z_first = F.interpolate(z_first, size=(1, *f.shape[-2:]))
-            z_rest = F.interpolate(z_rest, size=f.shape[-3:])
+            z_rest = F.interpolate(z_rest, size=(f.shape[2] - 1, *f.shape[-2:]))
             zq = mint.cat([z_first, z_rest], dim=2)
         else:
             zq = F.interpolate(zq, size=f.shape[-3:])
