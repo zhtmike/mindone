@@ -176,7 +176,8 @@ def init_env(
     if save_graphs > 0:
         ms.set_context(save_graphs=args.save_graphs)
 
-    ms.set_context(max_call_depth=2000)
+    # for cogvideox VAE tiling + DiT training, use dfs to save memory
+    ms.set_context(max_call_depth=2000, exec_order="dfs")
 
     return rank_id, device_num
 
