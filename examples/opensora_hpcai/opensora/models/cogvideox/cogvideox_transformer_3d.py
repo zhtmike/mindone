@@ -4,7 +4,12 @@ from functools import partial
 from typing import List, Literal, Optional, Tuple, Union
 
 import numpy as np
-from opensora.acceleration.communications import AlltoAll, GatherFowardSplitBackward, SplitFowardGatherBackward
+from opensora.acceleration.communications import (
+    AlltoAll,
+    AlltoAllPynative,
+    GatherFowardSplitBackward,
+    SplitFowardGatherBackward,
+)
 from opensora.acceleration.parallel_states import get_sequence_parallel_group
 from opensora.models.lora import Linear as LinearRoRA
 from opensora.models.lora import mark_only_lora_as_trainable
@@ -371,8 +376,12 @@ class SequenceParallelAttention(nn.Cell):
 
         self.sp_group = get_sequence_parallel_group()
         self.sp_size = get_group_size(self.sp_group)
-        self.alltoall = AlltoAll(split_dim=1, concat_dim=2, group=self.sp_group)
-        self.alltoall_back = AlltoAll(split_dim=2, concat_dim=1, group=self.sp_group)
+        if ms.get_context("mode") == ms.GRAPH_MODE:
+            self.alltoall = AlltoAll(split_dim=1, concat_dim=2, group=self.sp_group)
+            self.alltoall_back = AlltoAll(split_dim=2, concat_dim=1, group=self.sp_group)
+        else:
+            self.alltoall = AlltoAllPynative(split_dim=1, concat_dim=2, group=self.sp_group)
+            self.alltoall_back = AlltoAllPynative(split_dim=2, concat_dim=1, group=self.sp_group)
 
     def construct(
         self,
