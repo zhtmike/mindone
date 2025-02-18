@@ -98,39 +98,31 @@ def _update_run_op(
         gradient (Tensor): Gradient of parameters.
         decay_flag (bool): Applies weight decay or not.
         optim_filter (bool): Applies parameter update or not.
-    Returns:
-        Tensor, the new value of v after updating.
     """
-    if optim_filter:
-        m_fp32 = ops.cast(m, ms.float32)
-        v_fp32 = ops.cast(v, ms.float32)
-        gradient_fp32 = ops.cast(gradient, ms.float32)
+    if not optim_filter:
+        return
 
-        next_m = ops.mul(beta1, m_fp32) + ops.mul(
-            ops.cast(ops.tuple_to_array((1.0,)), ms.float32) - beta1, gradient_fp32
-        )
+    next_m = ops.mul(beta1, ops.cast(m, ms.float32)) + ops.mul(
+        ops.cast(ops.tuple_to_array((1.0,)), ms.float32) - beta1, ops.cast(gradient, ms.float32)
+    )
+    next_m = next_m / (_scaler_one - beta1_power)
 
-        next_v = ops.mul(beta2, v_fp32) + ops.mul(
-            ops.cast(ops.tuple_to_array((1.0,)), ms.float32) - beta2, ops.square(gradient_fp32)
-        )
+    next_v = ops.mul(beta2, ops.cast(v, ms.float32)) + ops.mul(
+        ops.cast(ops.tuple_to_array((1.0,)), ms.float32) - beta2, ops.square(ops.cast(gradient, ms.float32))
+    )
+    next_v = next_v / (_scaler_one - beta2_power)
 
-        regulate_m = next_m / (_scaler_one - beta1_power)
-        regulate_v = next_v / (_scaler_one - beta2_power)
+    update = next_m / (eps + ops.sqrt(next_v))
+    if decay_flag:
+        update = ops.mul(weight_decay, master_param) + update
 
-        update = regulate_m / (eps + ops.sqrt(regulate_v))
-        if decay_flag:
-            update = ops.mul(weight_decay, master_param) + update
+    update_with_lr = ops.mul(lr, update)
+    next_param = master_param - ops.reshape(update_with_lr, ops.shape(master_param))
 
-        update_with_lr = ops.mul(lr, update)
-        next_param = master_param - ops.reshape(update_with_lr, ops.shape(master_param))
-
-        next_param = ops.depend(next_param, ops.assign(master_param, next_param))
-        next_param = ops.depend(next_param, ops.assign(m, ops.cast(next_m, m.dtype)))
-        next_param = ops.depend(next_param, ops.assign(v, ops.cast(next_v, v.dtype)))
-        next_param = ops.depend(next_param, ops.assign(param, ops.cast(master_param, param.dtype)))
-
-        return next_param
-    return gradient
+    ops.assign(master_param, next_param)
+    ops.assign(m, ops.cast(next_m, m.dtype))
+    ops.assign(v, ops.cast(next_v, v.dtype))
+    ops.assign(param, ops.cast(master_param, param.dtype))
 
 
 class AdamW_BF16(Optimizer):

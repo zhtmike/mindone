@@ -50,15 +50,12 @@ def _update_run_op(
     gradient: Tensor,
     decay_flag: bool,
     optim_filter: bool,
-) -> Tensor:
+) -> None:
     if not optim_filter:
-        return gradient
+        return
 
     dtype = param.dtype
-    param_ = ops.cast(param, ms.float32)
-    gradient = ops.cast(gradient, ms.float32)
-
-    update = mint.square(gradient) + eps1
+    update = mint.square(ops.cast(gradient, ms.float32)) + eps1
 
     v_row_next, v_col_next, v_next = None, None, None
     factored = len(gradient.shape) >= 2
@@ -66,10 +63,10 @@ def _update_run_op(
         v_row_next = beta2 * v_row + (1 - beta2) * mint.mean(update, dim=-1)
         v_col_next = beta2 * v_col + (1 - beta2) * mint.mean(update, dim=-2)
         u = _approx_sq_grad(v_row_next, v_col_next)
-        u = u * gradient
+        u = u * ops.cast(gradient, ms.float32)
     else:
         v_next = beta2 * v + (1 - beta2) * update
-        u = mint.rsqrt(v_next) * gradient
+        u = mint.rsqrt(v_next) * ops.cast(gradient, ms.float32)
 
     u = u / mint.clamp(_rms(u) / d, min=1.0)
 
@@ -85,7 +82,7 @@ def _update_run_op(
     else:
         u = m_next
 
-    param_ = param_ - lr * u
+    param_ = ops.cast(param, ms.float32) - lr * u
 
     if decay_flag:
         param_ = param_ - lr * weight_decay * param_
@@ -99,8 +96,6 @@ def _update_run_op(
         ops.assign(v_res_col, v_res_col_next)
     else:
         ops.assign(v, v_next)
-
-    return param_
 
 
 def _rms(x: Tensor) -> Tensor:
