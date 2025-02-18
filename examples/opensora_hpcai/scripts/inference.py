@@ -40,6 +40,7 @@ from opensora.utils.util import IMG_FPS, apply_mask_strategy, process_mask_strat
 from transformers import AutoTokenizer
 
 from mindone.data.data_split import distribute_samples
+from mindone.trainers.zero import prepare_network
 from mindone.transformers import T5EncoderModel
 from mindone.utils.logger import set_logger
 from mindone.utils.misc import to_abspath
@@ -365,6 +366,9 @@ def main(args):
             raise ValueError("`lora_dim` must be provided to loading lora ckpt")
         logger.info(f"Loading LoRA ckpt {args.lora_ckpt_path} into {model_name}")
         latte_model.load_from_checkpoint([args.lora_ckpt_path])
+
+    if args.use_zero3:
+        latte_model = prepare_network(latte_model, zero_stage=3, op_group=GlobalComm.WORLD_COMM_GROUP)
 
     # 2.3 text encoder
     num_prompts = len(captions)
@@ -879,6 +883,7 @@ def parse_args():
     parser.add_argument("--pre_patchify", default=False, type=str2bool, help="Patchify the latent before inference.")
     parser.add_argument("--max_image_size", default=512, type=int, help="Max image size for patchified latent.")
     parser.add_argument("--max_num_frames", default=16, type=int, help="Max number of frames for patchified latent.")
+    parser.add_argument("--use_zero3", default=False, type=str2bool, help="Use ZeRO3 for inference")
     default_args = parser.parse_args()
 
     __dir__ = os.path.dirname(os.path.abspath(__file__))
