@@ -13,6 +13,9 @@ import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
+from mindspore.communication import get_rank
+
+from ...acceleration.parallel_states import get_sequence_parallel_group
 
 __all__ = [
     "AutoencoderKLCogVideoX",
@@ -934,6 +937,13 @@ class AutoencoderKLCogVideoX(nn.Cell):
         self.tile_overlap_factor_width = 1 / 5
         self._dtype = dtype
 
+        self.sp_group = get_sequence_parallel_group()
+        if self.sp_group is not None:
+            logging.info(
+                f"Broadcasting all random variables from rank (0) to current rank ({get_rank(self.sp_group)}) in group `{self.sp_group}`."
+            )
+            self.broadcast = ops.Broadcast(0, group=self.sp_group)
+
     @property
     def dtype(self):
         return self._dtype
@@ -1187,12 +1197,17 @@ class AutoencoderKLCogVideoX(nn.Cell):
         mean, logvar = mint.chunk(x, 2, dim=1)
         logvar = mint.clamp(logvar, -30.0, 20.0)
         std = mint.exp(0.5 * logvar)
-        x = ops.normal(mean.shape, mean, std)
+        x = self._broadcast(ops.normal(mean.shape, mean, std))
         return x
 
     def mode(self, x: Tensor) -> Tensor:
         mean, _ = mint.chunk(x, 2, dim=1)
         return mean
+
+    def _broadcast(self, x: Tensor) -> Tensor:
+        if self.sp_group is None:
+            return x
+        return self.broadcast((x,))[0]
 
     def construct(self, sample: Tensor, sample_posterior: bool = False) -> Tensor:
         x = sample
