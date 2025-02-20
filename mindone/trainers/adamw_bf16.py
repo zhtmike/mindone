@@ -122,7 +122,7 @@ def _update_run_op(
     ops.assign(master_param, next_param)
     ops.assign(m, ops.cast(next_m, m.dtype))
     ops.assign(v, ops.cast(next_v, v.dtype))
-    ops.assign(param, ops.cast(master_param, param.dtype))
+    ops.assign(param, ops.cast(next_param, param.dtype))
 
 
 class AdamW_BF16(Optimizer):
