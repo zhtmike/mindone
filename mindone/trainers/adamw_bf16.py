@@ -1,242 +1,197 @@
-"""Gradient clipping wrapper for optimizers."""
-import numpy as np
+import logging
 
 import mindspore as ms
+from mindspore import Parameter, ParameterTuple, Tensor
+from mindspore import _checkparam as validator
 from mindspore import ops
-from mindspore.common.initializer import initializer
-from mindspore.common.parameter import Parameter, ParameterTuple
-from mindspore.common.tensor import Tensor
-from mindspore.nn.optim import Optimizer
-from mindspore.nn.optim.optimizer import opt_init_args_register
+from mindspore.ops import MultitypeFuncGraph
 
-try:
-    from mindspore import jit
-except ImportError:
-    from mindspore import ms_function as jit
+from .adamw_mint import AdamW, _optim_adamw_opt
+
+_logger = logging.getLogger(__name__)
 
 
-def _check_param_value(beta1, beta2, eps, prim_name, parameters):
-    """Check the type of inputs."""
-    assert isinstance(beta1, float) and 0 <= beta1 <= 1.0, f"For {prim_name}, beta1 should between 0 and 1"
-    assert isinstance(beta2, float) and 0 <= beta2 <= 1.0, f"For {prim_name}, beta2 should between 0 and 1"
-    assert isinstance(eps, float) and eps > 0, f"For {prim_name}, eps should be bigger than 0"
-    for x in parameters:
-        assert x.dtype == ms.bfloat16, f"model paramters should be bfloat16, but get `{x.dtype}`."
+update_ = MultitypeFuncGraph("update_")
 
 
-_grad_scale = ops.MultitypeFuncGraph("grad_scale")
-map_ = ops.Map()
+@update_.register("Tensor", "Tensor")
+def update_param(source_param: Tensor, target_param: Tensor) -> None:
+    ops.assign(target_param, ops.cast(source_param, target_param.dtype))
 
 
-@_grad_scale.register("Number", "Tensor")
-def tensor_grad_scale(scale, grad):
-    """Get grad with scale."""
-    if scale == 1.0:
-        return grad
-    return ops.mul(grad, ops.cast(scale, grad.dtype))
-
-
-@_grad_scale.register("Tensor", "Tensor")
-def tensor_grad_scale_with_tensor(scale, grad):
-    """Get grad with scale."""
-    return ops.mul(grad, ops.cast(scale, grad.dtype))
-
-
-def scale_grad(gradients, reciprocal_scale):
-    gradients = map_(ops.partial(_grad_scale, reciprocal_scale), gradients)
-    return gradients
-
-
-_adam_opt = ops.MultitypeFuncGraph("adam_opt")
-_scaler_one = Tensor(1, ms.int32)
-
-
-@_adam_opt.register(
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Bool",
-    "Bool",
-)
-def _update_run_op(
-    beta1_power,
-    beta2_power,
-    beta1,
-    beta2,
-    eps,
-    lr,
-    weight_decay,
-    master_param,
-    param,
-    m,
-    v,
-    gradient,
-    decay_flag,
-    optim_filter,
-):
-    """
-    Update parameters.
-    Args:
-        beta1 (Tensor): The exponential decay rate for the 1st moment estimations. Should be in range (0.0, 1.0).
-        beta2 (Tensor): The exponential decay rate for the 2nd moment estimations. Should be in range (0.0, 1.0).
-        eps (Tensor): Term added to the denominator to improve numerical stability. Should be greater than 0.
-        lr (Tensor): Learning rate.
-        weight_decay (Tensor): Weight decay. Should be equal to or greater than 0.
-        master_param (Tensor): Parameters in FP32.
-        param (Tensor): Model Paramters in BF16.
-        m (Tensor): m value of parameters.
-        v (Tensor): v value of parameters.
-        gradient (Tensor): Gradient of parameters.
-        decay_flag (bool): Applies weight decay or not.
-        optim_filter (bool): Applies parameter update or not.
-    """
-    if not optim_filter:
-        return
-
-    next_m = ops.mul(beta1, ops.cast(m, ms.float32)) + ops.mul(
-        ops.cast(ops.tuple_to_array((1.0,)), ms.float32) - beta1, ops.cast(gradient, ms.float32)
-    )
-    next_m = next_m / (_scaler_one - beta1_power)
-
-    next_v = ops.mul(beta2, ops.cast(v, ms.float32)) + ops.mul(
-        ops.cast(ops.tuple_to_array((1.0,)), ms.float32) - beta2, ops.square(ops.cast(gradient, ms.float32))
-    )
-    next_v = next_v / (_scaler_one - beta2_power)
-
-    update = next_m / (eps + ops.sqrt(next_v))
-    if decay_flag:
-        update = ops.mul(weight_decay, master_param) + update
-
-    update_with_lr = ops.mul(lr, update)
-    next_param = master_param - ops.reshape(update_with_lr, ops.shape(master_param))
-
-    ops.assign(master_param, next_param)
-    ops.assign(m, ops.cast(next_m, m.dtype))
-    ops.assign(v, ops.cast(next_v, v.dtype))
-    ops.assign(param, ops.cast(next_param, param.dtype))
-
-
-class AdamW_BF16(Optimizer):
-    """
-    Implements the gradient clipping by norm for a AdamWeightDecay optimizer.
+class BF16AdamW(AdamW):
+    r"""Implements the BF16 Adam Weight Decay algorithm.
+    This is an AdamW optimizer with a float32 copy of the parameters, in accordance with section C.2 of the
+    [Scaling Language Models](https://storage.googleapis.com/deepmind-media/research/language-research/Training%20Gopher.pdf) .
     """
 
-    @opt_init_args_register
     def __init__(
         self,
         params,
         learning_rate=1e-3,
         beta1=0.9,
         beta2=0.999,
-        eps=1e-8,
+        eps=1e-6,
         weight_decay=0.0,
-        loss_scale=1.0,
-        clip=False,
+        amsgrad=False,
+        *,
+        maximize=False,
     ):
-        super().__init__(learning_rate, params, weight_decay)
-        _check_param_value(beta1, beta2, eps, self.cls_name, self.parameters)
-        self.beta1 = Tensor(np.array([beta1]).astype(np.float32))
-        self.beta2 = Tensor(np.array([beta2]).astype(np.float32))
-        self.eps = Tensor(np.array([eps]).astype(np.float32))
-        self.moments1 = self.parameters.clone(prefix="adam_m", init="zeros")
-        self.moments2 = self.parameters.clone(prefix="adam_v", init="zeros")
-        self.hyper_map = ops.HyperMap()
-        self.beta1_power = Parameter(initializer(1, [1], ms.float32), name="beta1_power")
-        self.beta2_power = Parameter(initializer(1, [1], ms.float32), name="beta2_power")
-        self.master_parameters = ParameterTuple(
-            [
-                Parameter(
-                    x.to(ms.float32),
-                    name="master_" + x.name,
-                    requires_grad=False,
-                )
-                for x in self.parameters
-            ]
+        super().__init__(
+            params,
+            learning_rate=learning_rate,
+            beta1=beta1,
+            beta2=beta2,
+            eps=eps,
+            weight_decay=weight_decay,
+            amsgrad=amsgrad,
+            maximize=maximize,
         )
-        self.reciprocal_scale = Tensor(1.0 / loss_scale, ms.float32)
-        self.clip = clip
 
-    def get_lr(self):
-        """
-        The optimizer calls this interface to get the learning rate for the current step. User-defined optimizers based
-        on :class:`mindspore.nn.Optimizer` can also call this interface before updating the parameters.
+        # maintain a copy of parameters in fp32 for the optimiser update
+        self._master_parameters = ParameterTuple(
+            [Parameter(x.to(ms.float32), name="master." + x.name) for x in self._parameters]
+        )
 
-        Returns:
-            float, the learning rate of current step.
-        """
-        lr = self.learning_rate
-        if self.dynamic_lr:
-            if self.is_group_lr:
-                lr = ()
-                for learning_rate in self.learning_rate:
-                    current_dynamic_lr = learning_rate(self.global_step).reshape(())
-                    lr += (current_dynamic_lr,)
-            else:
-                lr = self.learning_rate(self.global_step).reshape(())
-        if self._is_dynamic_lr_or_weight_decay():
-            self.assignadd(self.global_step, self.global_step_increase_tensor)
-        return lr
+    def _check_param_value(self, beta1, beta2, eps, prim_name):
+        """Check the type of inputs."""
+        validator.check_value_type("beta1", beta1, [float], prim_name)
+        validator.check_value_type("beta2", beta2, [float], prim_name)
+        validator.check_value_type("eps", eps, [float], prim_name)
+        validator.check_float_range(beta1, 0.0, 1.0, validator.INC_NEITHER, "beta1", prim_name)
+        validator.check_float_range(beta2, 0.0, 1.0, validator.INC_NEITHER, "beta2", prim_name)
+        validator.check_positive_float(eps, "eps", prim_name)
+        for x in self.parameters:
+            if x.dtype != ms.bfloat16:
+                _logger.warning(f"model parameters should be `bfloat16`, but get `{x.dtype}`.")
 
-    @jit
     def construct(self, gradients):
+        gradients = self.flatten_gradients(gradients)
+        weight_decay = self.get_weight_decay()
         lr = self.get_lr()
-        gradients = scale_grad(gradients, self.reciprocal_scale)
-        if self.clip:
-            gradients = ops.clip_by_global_norm(gradients, 5.0, None)
-
-        beta1_power = self.beta1_power * self.beta1
-        self.beta1_power = beta1_power
-        beta2_power = self.beta2_power * self.beta2
-        self.beta2_power = beta2_power
-
-        if self.is_group:
-            if self.is_group_lr:
-                optim_result = self.hyper_map(
-                    ops.partial(_adam_opt, beta1_power, beta2_power, self.beta1, self.beta2, self.eps),
-                    lr,
-                    self.weight_decay,
-                    self.master_parameters,
-                    self.parameters,
-                    self.moments1,
-                    self.moments2,
-                    gradients,
-                    self.decay_flags,
-                    self.optim_filter,
-                )
+        self.assignadd(self.global_step, self.global_step_increase_tensor)
+        state_step = self.global_step.astype(ms.float32)
+        if self.amsgrad:
+            if self.is_group:
+                if self.is_group_lr:
+                    optim_result = self.hyper_map(
+                        ops.partial(
+                            _optim_adamw_opt,
+                            self.adamw_opt,
+                            self.beta1,
+                            self.beta2,
+                            self.eps,
+                            state_step,
+                            self.amsgrad,
+                            self.maximize,
+                        ),
+                        lr,
+                        weight_decay,
+                        self._master_parameters,
+                        gradients,
+                        self.exp_avg,
+                        self.exp_avg_sq,
+                        self.max_exp_avg_sq,
+                    )
+                else:
+                    optim_result = self.hyper_map(
+                        ops.partial(
+                            _optim_adamw_opt,
+                            self.adamw_opt,
+                            self.beta1,
+                            self.beta2,
+                            self.eps,
+                            state_step,
+                            self.amsgrad,
+                            self.maximize,
+                            lr,
+                        ),
+                        weight_decay,
+                        self._master_parameters,
+                        gradients,
+                        self.exp_avg,
+                        self.exp_avg_sq,
+                        self.max_exp_avg_sq,
+                    )
             else:
                 optim_result = self.hyper_map(
-                    ops.partial(_adam_opt, beta1_power, beta2_power, self.beta1, self.beta2, self.eps, lr),
-                    self.weight_decay,
-                    self.master_parameters,
-                    self.parameters,
-                    self.moments1,
-                    self.moments2,
+                    ops.partial(
+                        _optim_adamw_opt,
+                        self.adamw_opt,
+                        self.beta1,
+                        self.beta2,
+                        self.eps,
+                        state_step,
+                        self.amsgrad,
+                        self.maximize,
+                        lr,
+                        weight_decay,
+                    ),
+                    self._master_parameters,
                     gradients,
-                    self.decay_flags,
-                    self.optim_filter,
+                    self.exp_avg,
+                    self.exp_avg_sq,
+                    self.max_exp_avg_sq,
                 )
         else:
-            optim_result = self.hyper_map(
-                ops.partial(
-                    _adam_opt, beta1_power, beta2_power, self.beta1, self.beta2, self.eps, lr, self.weight_decay
-                ),
-                self.master_parameters,
-                self.parameters,
-                self.moments1,
-                self.moments2,
-                gradients,
-                self.decay_flags,
-                self.optim_filter,
-            )
-        if self.use_parallel:
-            self.broadcast_params(optim_result)
+            if self.is_group:
+                if self.is_group_lr:
+                    optim_result = self.hyper_map(
+                        ops.partial(
+                            _optim_adamw_opt,
+                            self.adamw_opt,
+                            self.beta1,
+                            self.beta2,
+                            self.eps,
+                            state_step,
+                            self.amsgrad,
+                            self.maximize,
+                        ),
+                        lr,
+                        weight_decay,
+                        self._master_parameters,
+                        gradients,
+                        self.exp_avg,
+                        self.exp_avg_sq,
+                    )
+                else:
+                    optim_result = self.hyper_map(
+                        ops.partial(
+                            _optim_adamw_opt,
+                            self.adamw_opt,
+                            self.beta1,
+                            self.beta2,
+                            self.eps,
+                            state_step,
+                            self.amsgrad,
+                            self.maximize,
+                            lr,
+                        ),
+                        weight_decay,
+                        self._master_parameters,
+                        gradients,
+                        self.exp_avg,
+                        self.exp_avg_sq,
+                    )
+            else:
+                optim_result = self.hyper_map(
+                    ops.partial(
+                        _optim_adamw_opt,
+                        self.adamw_opt,
+                        self.beta1,
+                        self.beta2,
+                        self.eps,
+                        state_step,
+                        self.amsgrad,
+                        self.maximize,
+                        lr,
+                        weight_decay,
+                    ),
+                    self._master_parameters,
+                    gradients,
+                    self.exp_avg,
+                    self.exp_avg_sq,
+                )
+
+        optim_result = ops.depend(optim_result, self.map_(update_, self._master_parameters, self._parameters))
         return optim_result
