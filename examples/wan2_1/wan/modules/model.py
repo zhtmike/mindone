@@ -618,8 +618,8 @@ class WanModel(ModelMixin, ConfigMixin):
 
         assert x.shape[1] % self.sp_size == 0
         x = self.split_forward_gather_backward(x)
-        if self.sp_size > 1 and x.shape[1] % self.sp_size != 0:
-            pad_num = self.sp_size - x.shape[1] % self.sp_size
+        if self.sp_size > 1 and context.shape[1] % self.sp_size != 0:
+            pad_num = self.sp_size - context.shape[1] % self.sp_size
             context = F.pad(context, (0, 0, 0, pad_num))
         assert context.shape[1] % self.sp_size == 0
         context = self.split_forward_gather_backward(context)
