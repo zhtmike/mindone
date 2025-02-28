@@ -6,6 +6,7 @@ import numpy as np
 
 import mindspore as ms
 import mindspore.mint as mint
+import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
@@ -178,7 +179,7 @@ class WanSelfAttention(nn.Cell):
             key=rope_apply(k, grid_sizes, freqs),
             value=v,
             head_num=self.num_heads // self.sp_size,
-            actual_seq_kvlen=seq_lens // self.sp_size,
+            actual_seq_kvlen=seq_lens,
             scalar_value=1 / math.sqrt(q.shape[-1]),
             input_layout="BSND",
         )
@@ -202,21 +203,25 @@ class WanT2VCrossAttention(WanSelfAttention):
 
         # compute query, key, value
         q = self.norm_q(self.q(x)).view(b, -1, n, d)
+        q = self.all_to_all(q)
         k = self.norm_k(self.k(context)).view(b, -1, n, d)
+        k = self.all_to_all(k)
         v = self.v(context).view(b, -1, n, d)
+        v = self.all_to_all(v)
 
         # compute attention
         x = ops.flash_attention_score(
             q,
             k,
             v,
-            head_num=self.num_heads,
+            head_num=self.num_heads // self.sp_size,
             actual_seq_kvlen=context_lens,
             scalar_value=1 / math.sqrt(q.shape[-1]),
             input_layout="BSND",
         )
 
         # output
+        x = self.all_to_all_back(x)
         x = x.flatten(2)
         x = self.o(x)
         return x
@@ -238,7 +243,7 @@ class WanI2VCrossAttention(WanSelfAttention):
         self.v_img = mint.nn.Linear(dim, dim, dtype=dtype)
         self.norm_k_img = WanRMSNorm(dim, eps=eps, dtype=dtype) if qk_norm else mint.nn.Identity()
 
-    def construct(self, x: Tensor, context: Tensor, context_lens: Tensor) -> Tensor:
+    def construct(self, x: Tensor, context: Tensor, context_lens: Optional[Tensor]) -> Tensor:
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
@@ -251,8 +256,11 @@ class WanI2VCrossAttention(WanSelfAttention):
 
         # compute query, key, value
         q = self.norm_q(self.q(x)).view(b, -1, n, d)
+        q = self.all_to_all(q)
         k = self.norm_k(self.k(context)).view(b, -1, n, d)
+        k = self.all_to_all(k)
         v = self.v(context).view(b, -1, n, d)
+        v = self.all_to_all(v)
         k_img = self.norm_k_img(self.k_img(context_img)).view(b, -1, n, d)
         k_img = self.all_to_all(k_img)
         v_img = self.v_img(context_img).view(b, -1, n, d)
@@ -261,7 +269,7 @@ class WanI2VCrossAttention(WanSelfAttention):
             q,
             k_img,
             v_img,
-            head_num=self.num_heads,
+            head_num=self.num_heads // self.sp_size,
             scalar_value=1 / math.sqrt(q.shape[-1]),
             input_layout="BSND",
         )
@@ -270,7 +278,7 @@ class WanI2VCrossAttention(WanSelfAttention):
             q,
             k,
             v,
-            head_num=self.num_heads,
+            head_num=self.num_heads // self.sp_size,
             actual_seq_kvlen=context_lens,
             scalar_value=1 / math.sqrt(q.shape[-1]),
             input_layout="BSND",
@@ -610,6 +618,11 @@ class WanModel(ModelMixin, ConfigMixin):
 
         assert x.shape[1] % self.sp_size == 0
         x = self.split_forward_gather_backward(x)
+        if self.sp_size > 1 and x.shape[1] % self.sp_size != 0:
+            pad_num = self.sp_size - x.shape[1] % self.sp_size
+            context = F.pad(context, (0, 0, 0, pad_num))
+        assert context.shape[1] % self.sp_size == 0
+        context = self.split_forward_gather_backward(context)
 
         # arguments
         kwargs = dict(
