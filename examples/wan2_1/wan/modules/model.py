@@ -247,7 +247,13 @@ class WanI2VCrossAttention(WanSelfAttention):
         )
         # compute attention
         x = ops.flash_attention_score(
-            q, k, v, head_num=self.num_heads, actual_seq_kvlen=context_lens, input_layout="BSND"
+            q,
+            k,
+            v,
+            head_num=self.num_heads,
+            actual_seq_kvlen=context_lens,
+            scalar_value=1 / math.sqrt(q.shape[-1]),
+            input_layout="BSND",
         )
 
         # output
