@@ -253,7 +253,7 @@ msrun --worker_num=2 --local_worker_num=2 generate.py \
 Experiments are tested on ascend 910* with mindspore 2.5.0 **pynative** mode:
 
 |     model    |  h x w x f |     cards | steps | npu peak memory  |   s/video  |
-|:------------:|:------------:|:------------:|:------------:|
+|:------------:|:------------:|:------------:|:------------:|:------------:|:------------:|
 | T2V-1.3B   |      832x480x81 |  1   | 50    |  21GB    |  ~235   |
 | T2V-14B   |        1280x720x81 |  1   |  50   |  52.2GB  | ~4650    |
 | I2V-14B   |        832x480x81 |  1   |  40  |    50GB  | ~1150   |
