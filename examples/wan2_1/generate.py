@@ -127,6 +127,7 @@ def _parse_args():
 
     # extra for mindspore
     parser.add_argument("--distributed", action="store_true", default=False, help="Distributed mode")
+    parser.add_argument("--ulysses_sp", action="store_true", default=False, help="turn on ulysses parallelism in DiT.")
 
     args = parser.parse_args()
 
@@ -155,6 +156,9 @@ def generate(args):
 
         rank = dist.get_rank()
         world_size = dist.get_world_size()
+
+        if args.ulysses_sp:
+            args.ulysses_size = world_size
     else:
         assert not (
             args.t5_fsdp or args.dit_fsdp
@@ -175,7 +179,6 @@ def generate(args):
         assert (
             args.ulysses_size * args.ring_size == world_size
         ), "The number of ulysses_size and ring_size should be equal to the world size."
-        raise NotImplementedError()
 
     if args.use_prompt_extend:
         if args.prompt_extend_method == "dashscope":
@@ -232,7 +235,7 @@ def generate(args):
             rank=rank,
             t5_fsdp=args.t5_fsdp,
             dit_fsdp=args.dit_fsdp,
-            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
+            use_usp=args.ulysses_sp,
             t5_cpu=args.t5_cpu,
         )
 
@@ -285,7 +288,7 @@ def generate(args):
             rank=rank,
             t5_fsdp=args.t5_fsdp,
             dit_fsdp=args.dit_fsdp,
-            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
+            use_usp=args.ulysses_sp,
             t5_cpu=args.t5_cpu,
         )
 
@@ -333,4 +336,6 @@ def generate(args):
 
 if __name__ == "__main__":
     args = _parse_args()
+    # TODO: remove global seed
+    ms.set_seed(args.base_seed)
     generate(args)
