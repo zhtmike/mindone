@@ -180,7 +180,7 @@ def generate(args):
         ), "The number of ulysses_size and ring_size should be equal to the world size."
 
     if args.use_prompt_extend:
-        raise NotImplementedError(f"prompt_extend is not supported")
+        raise NotImplementedError("prompt_extend is not supported")
 
     cfg = WAN_CONFIGS[args.task]
     if args.ulysses_size > 1:
@@ -200,25 +200,7 @@ def generate(args):
             args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
         logging.info(f"Input prompt: {args.prompt}")
         if args.use_prompt_extend:
-            logging.info("Extending prompt ...")
-            if rank == 0:
-                prompt_output = prompt_expander(
-                    args.prompt, tar_lang=args.prompt_extend_target_lang, seed=args.base_seed
-                )
-                if prompt_output.status is False:
-                    logging.info(f"Extending prompt failed: {prompt_output.message}")
-                    logging.info("Falling back to original prompt.")
-                    input_prompt = args.prompt
-                else:
-                    input_prompt = prompt_output.prompt
-                input_prompt = [input_prompt]
-            else:
-                input_prompt = [None]
-            # TODO: GlobalComm.INITED -> mint.is_initialzed
-            if GlobalComm.INITED:
-                dist.broadcast_object_list(input_prompt, src=0)
-            args.prompt = input_prompt[0]
-            logging.info(f"Extended prompt: {args.prompt}")
+            raise NotImplementedError
 
         logging.info("Creating WanT2V pipeline.")
         wan_t2v = wan.WanT2V(
@@ -254,24 +236,7 @@ def generate(args):
 
         img = Image.open(args.image).convert("RGB")
         if args.use_prompt_extend:
-            logging.info("Extending prompt ...")
-            if rank == 0:
-                prompt_output = prompt_expander(
-                    args.prompt, tar_lang=args.prompt_extend_target_lang, image=img, seed=args.base_seed
-                )
-                if prompt_output.status is False:
-                    logging.info(f"Extending prompt failed: {prompt_output.message}")
-                    logging.info("Falling back to original prompt.")
-                    input_prompt = args.prompt
-                else:
-                    input_prompt = prompt_output.prompt
-                input_prompt = [input_prompt]
-            else:
-                input_prompt = [None]
-            if dist.is_initialized():
-                dist.broadcast_object_list(input_prompt, src=0)
-            args.prompt = input_prompt[0]
-            logging.info(f"Extended prompt: {args.prompt}")
+            raise NotImplementedError
 
         logging.info("Creating WanI2V pipeline.")
         wan_i2v = wan.WanI2V(
