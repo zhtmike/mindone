@@ -12,10 +12,11 @@ from mindone.diffusers.models.modeling_utils import (
     _fetch_index_file,
     _get_checkpoint_shard_files,
     _get_model_file,
-    load_checkpoint_and_dispatch,
     load_state_dict,
     logger,
 )
+
+from .model_loading_utils import load_checkpoint_and_dispatch
 
 
 class ModelMixinFastLoad(ModelMixin):
