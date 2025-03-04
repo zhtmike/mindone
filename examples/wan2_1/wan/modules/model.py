@@ -12,11 +12,11 @@ from mindspore import Parameter, Tensor
 from mindspore.communication import GlobalComm, get_group_size
 
 from mindone.diffusers.configuration_utils import ConfigMixin, register_to_config
-from mindone.diffusers.models.modeling_utils import ModelMixin
 from mindone.models.utils import normal_, xavier_uniform_, zeros_
 
 from ..acceleration.communications import AlltoAll, GatherForwardSplitBackward, SplitForwardGatherBackward
 from ..acceleration.parallel_states import get_sequence_parallel_group
+from ..diffusers.models.modeling_utils import ModelMixinFastLoad
 
 __all__ = ["WanModel"]
 
@@ -409,7 +409,7 @@ class MLPProj(nn.Cell):
         return clip_extra_context_tokens
 
 
-class WanModel(ModelMixin, ConfigMixin):
+class WanModel(ModelMixinFastLoad, ConfigMixin):
     r"""
     Wan diffusion backbone supporting both text-to-video and image-to-video.
     """
