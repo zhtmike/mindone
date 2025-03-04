@@ -505,7 +505,7 @@ class WanModel(ModelMixinFastLoad, ConfigMixin):
         self.time_embedding = nn.SequentialCell(
             mint.nn.Linear(freq_dim, dim, dtype=dtype), mint.nn.SiLU(), mint.nn.Linear(dim, dim, dtype=dtype)
         )
-        self.time_projection = nn.SequentialCell(mint.nn.SiLU(), mint.nn.Linear(dim, dim * 6))
+        self.time_projection = nn.SequentialCell(mint.nn.SiLU(), mint.nn.Linear(dim, dim * 6, dtype=dtype))
 
         # blocks
         cross_attn_type = "t2v_cross_attn" if model_type == "t2v" else "i2v_cross_attn"
