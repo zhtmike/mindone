@@ -4,6 +4,7 @@ import os
 from typing import Dict, Optional, Union
 
 import safetensors.numpy
+from tqdm import tqdm
 
 import mindspore as ms
 import mindspore.nn as nn
@@ -161,7 +162,7 @@ def load_checkpoint_and_dispatch(
     is_sharded = index_filename is not None
     cm = silence_mindspore_logger() if is_sharded else nullcontext()
     with cm:
-        for checkpoint_file in checkpoint_files:
+        for checkpoint_file in tqdm(checkpoint_files, desc="Loading and converting to MindSpore format"):
             loaded_checkpoint = load_state_dict(checkpoint_file, dtype=dtype)
             ms.load_param_into_net(model, loaded_checkpoint, strict_load=True)
             unexpected_keys.update(set(loaded_checkpoint.keys()) - model_keys)
