@@ -9,6 +9,10 @@ from typing import Union
 from PIL import Image
 from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
+import mindspore as ms
+from mindspore import Tensor
+from mindspore.nn.utils import no_init_parameters
+
 from ..transformers import Qwen2_5_VLForConditionalGeneration
 from .qwen_vl_utils import process_vision_info
 
@@ -104,10 +108,9 @@ class PromptOutput(object):
 
 
 class PromptExpander:
-    def __init__(self, model_name, is_vl=False, device=0, **kwargs):
+    def __init__(self, model_name, is_vl=False, **kwargs):
         self.model_name = model_name
         self.is_vl = is_vl
-        self.device = device
 
     def extend_with_img(self, prompt, system_prompt, image=None, seed=-1, *args, **kwargs):
         pass
@@ -143,7 +146,7 @@ class QwenPromptExpander(PromptExpander):
         "Qwen2.5_14B": "Qwen/Qwen2.5-14B-Instruct",
     }
 
-    def __init__(self, model_name=None, device=0, is_vl=False, **kwargs):
+    def __init__(self, model_name=None, is_vl=False, **kwargs):
         """
         Args:
             model_name: Use predefined model names such as 'QwenVL2.5_7B' and 'Qwen2.5_14B',
@@ -161,7 +164,7 @@ class QwenPromptExpander(PromptExpander):
         """
         if model_name is None:
             model_name = "Qwen2.5_14B" if not is_vl else "QwenVL2.5_7B"
-        super().__init__(model_name, is_vl, device, **kwargs)
+        super().__init__(model_name, is_vl, **kwargs)
         if (not os.path.exists(self.model_name)) and (self.model_name in self.model_dict):
             self.model_name = self.model_dict[self.model_name]
 
@@ -172,20 +175,21 @@ class QwenPromptExpander(PromptExpander):
             self.processor = AutoProcessor.from_pretrained(
                 self.model_name, min_pixels=min_pixels, max_pixels=max_pixels, use_fast=True
             )
-            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                self.model_name, mindspore_dtype="auto", attn_implementation="flash_attention_2"
-            )
+            with no_init_parameters():
+                self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    self.model_name, mindspore_dtype=ms.bfloat16, attn_implementation="flash_attention_2"
+                )
         else:
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name, mindspore_dtype="auto", attn_implementation="flash_attention_2"
-            )
+            with no_init_parameters():
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name, mindspore_dtype="auto", attn_implementation="flash_attention_2"
+                )
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
 
     def extend(self, prompt, system_prompt, seed=-1, *args, **kwargs):
-        self.model = self.model.to(self.device)
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
         text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
+        model_inputs = self.tokenizer([text], return_tensors="numpy")
 
         generated_ids = self.model.generate(**model_inputs, max_new_tokens=512)
         generated_ids = [
@@ -193,7 +197,6 @@ class QwenPromptExpander(PromptExpander):
         ]
 
         expanded_prompt = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        self.model = self.model.to("cpu")
         return PromptOutput(
             status=True,
             prompt=expanded_prompt,
@@ -203,7 +206,6 @@ class QwenPromptExpander(PromptExpander):
         )
 
     def extend_with_img(self, prompt, system_prompt, image: Union[Image.Image, str] = None, seed=-1, *args, **kwargs):
-        self.model = self.model.to(self.device)
         messages = [
             {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
             {
@@ -228,7 +230,7 @@ class QwenPromptExpander(PromptExpander):
             padding=True,
             return_tensors="pt",
         )
-        inputs = inputs.to(self.device)
+        inputs = {k: Tensor(v.numpy()) for k, v in inputs.items()}
 
         # Inference: Generation of the output
         generated_ids = self.model.generate(**inputs, max_new_tokens=512)
@@ -236,7 +238,6 @@ class QwenPromptExpander(PromptExpander):
         expanded_prompt = self.processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )[0]
-        self.model = self.model.to("cpu")
         return PromptOutput(
             status=True,
             prompt=expanded_prompt,

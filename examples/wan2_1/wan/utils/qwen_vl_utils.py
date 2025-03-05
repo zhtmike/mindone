@@ -9,6 +9,7 @@ import time
 import warnings
 from functools import lru_cache
 from io import BytesIO
+from typing import Union
 
 import requests
 import torchvision
@@ -80,7 +81,7 @@ def smart_resize(
     return h_bar, w_bar
 
 
-def fetch_image(ele: dict[str, str | Image.Image], size_factor: int = IMAGE_FACTOR) -> Image.Image:
+def fetch_image(ele: dict[str, Union[str, Image.Image]], size_factor: int = IMAGE_FACTOR) -> Image.Image:
     if "image" in ele:
         image = ele["image"]
     else:
@@ -125,11 +126,7 @@ def fetch_image(ele: dict[str, str | Image.Image], size_factor: int = IMAGE_FACT
     return image
 
 
-def smart_nframes(
-    ele: dict,
-    total_frames: int,
-    video_fps: int | float,
-) -> int:
+def smart_nframes(ele: dict, total_frames: int, video_fps: Union[int, float]) -> int:
     """calculate the number of frames for video used for model inputs.
 
     Args:
@@ -254,7 +251,7 @@ def get_video_reader_backend() -> str:
     return video_reader_backend
 
 
-def fetch_video(ele: dict, image_factor: int = IMAGE_FACTOR) -> Tensor | list[Image.Image]:
+def fetch_video(ele: dict, image_factor: int = IMAGE_FACTOR) -> Union[Tensor, list[Image.Image]]:
     if isinstance(ele["video"], str):
         video_reader_backend = get_video_reader_backend()
         video = VIDEO_READER_BACKENDS[video_reader_backend](ele)
@@ -300,7 +297,7 @@ def fetch_video(ele: dict, image_factor: int = IMAGE_FACTOR) -> Tensor | list[Im
         return images
 
 
-def extract_vision_info(conversations: list[dict] | list[list[dict]]) -> list[dict]:
+def extract_vision_info(conversations: Union[list[dict], list[list[dict]]]) -> list[dict]:
     vision_infos = []
     if isinstance(conversations[0], dict):
         conversations = [conversations]
@@ -319,8 +316,8 @@ def extract_vision_info(conversations: list[dict] | list[list[dict]]) -> list[di
 
 
 def process_vision_info(
-    conversations: list[dict] | list[list[dict]],
-) -> tuple[list[Image.Image] | None, list[Tensor | list[Image.Image]] | None]:
+    conversations: Union[list[dict], list[list[dict]]],
+) -> tuple[Union[list[Image.Image], None], Union[list[Union[Tensor, list[Image.Image]]], None]]:
     vision_infos = extract_vision_info(conversations)
     # Read images or videos
     image_inputs = []
