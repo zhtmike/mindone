@@ -1317,11 +1317,19 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
 
                     time_tensor = expanded_range * second_per_grid_t * self.config.vision_config.tokens_per_second
 
-                    time_tensor_long = time_tensor.long()
-                    t_index = time_tensor_long.flatten()
-
-                    h_index = mint.arange(llm_grid_h).view(1, -1, 1).expand((llm_grid_t, -1, llm_grid_w)).flatten()
-                    w_index = mint.arange(llm_grid_w).view(1, 1, -1).expand((llm_grid_t, llm_grid_h, -1)).flatten()
+                    t_index = time_tensor.flatten()
+                    h_index = (
+                        mint.arange(llm_grid_h, dtype=ms.int32)
+                        .view(1, -1, 1)
+                        .expand((llm_grid_t, -1, llm_grid_w))
+                        .flatten()
+                    )
+                    w_index = (
+                        mint.arange(llm_grid_w, dtype=ms.int32)
+                        .view(1, 1, -1)
+                        .expand((llm_grid_t, llm_grid_h, -1))
+                        .flatten()
+                    )
                     llm_pos_ids_list.append(mint.stack([t_index, h_index, w_index]) + text_len + st_idx)
                     st = ed + llm_grid_t * llm_grid_h * llm_grid_w
 
