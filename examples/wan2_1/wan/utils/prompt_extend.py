@@ -230,7 +230,13 @@ class QwenPromptExpander(PromptExpander):
             padding=True,
             return_tensors="pt",
         )
-        inputs = {k: Tensor(v.numpy()) for k, v in inputs.items()}
+
+        def to_int32(x: Tensor):
+            if x.dtype == ms.int64:
+                return x.to(ms.int32)
+            return x
+
+        inputs = {k: to_int32(Tensor(v.numpy())) for k, v in inputs.items()}
 
         # Inference: Generation of the output
         generated_ids = self.model.generate(**inputs, max_new_tokens=512)
