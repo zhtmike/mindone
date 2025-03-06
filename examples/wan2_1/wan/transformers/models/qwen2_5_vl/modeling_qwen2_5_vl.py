@@ -1158,6 +1158,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         self.vocab_size = config.vocab_size
         self.lm_head = mint.nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.rope_deltas = None  # cache rope_deltas here
+        if config.tie_word_embeddings:
+            self.lm_head.weight = self.model.embed_tokens.weight
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1507,6 +1509,9 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
             shift_labels = shift_labels.view(-1)
             loss = loss_fct(shift_logits, shift_labels)
+        else:
+            # TODO: return bf16 directly
+            logits = logits.float()
 
         if not return_dict:
             output = (logits,) + outputs[1:]
