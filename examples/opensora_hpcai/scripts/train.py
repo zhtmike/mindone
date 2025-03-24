@@ -513,6 +513,7 @@ def main(args):
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
             lora_dim=args.lora_dim,
+            init_weight=args.init_weight,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B":
@@ -525,6 +526,7 @@ def main(args):
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
             lora_dim=args.lora_dim,
+            init_weight=args.init_weight,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B-I2V":
@@ -537,6 +539,7 @@ def main(args):
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
             lora_dim=args.lora_dim,
+            init_weight=args.init_weight,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B-v1.5":
@@ -549,6 +552,7 @@ def main(args):
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
             lora_dim=args.lora_dim,
+            init_weight=args.init_weight,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     elif args.model_version == "CogVideoX-5B-v1.5-I2V":
@@ -561,6 +565,7 @@ def main(args):
             num_recompute_blocks=args.num_recompute_blocks,
             max_text_seq_length=args.model_max_length,
             lora_dim=args.lora_dim,
+            init_weight=args.init_weight,
             dtype=dtype_map[args.dtype] if args.native_precision else ms.float32,
         )
     else:

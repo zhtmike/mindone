@@ -401,6 +401,7 @@ def parse_train_args(parser):
         type=int,
         help="log interval in the unit of data sink size. E.g. if data sink size = 10, log_interval=2, log every 20 steps",
     )
+    parser.add_argument("--init_weight", default=True, type=str2bool, help="perform weight initialization in DiT way")
 
     # LoRA
     parser.add_argument(

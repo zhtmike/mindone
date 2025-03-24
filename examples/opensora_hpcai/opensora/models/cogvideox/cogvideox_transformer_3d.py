@@ -996,6 +996,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
         enable_sequence_parallelism: bool = False,
         use_recompute: bool = False,
         num_recompute_blocks: Optional[int] = None,
+        init_weight: bool = True,
         dtype: ms.Type = ms.float32,
     ) -> None:
         super().__init__()
@@ -1081,7 +1082,9 @@ class CogVideoXTransformer3DModel(nn.Cell):
             dtype=dtype,
         )
         self.proj_out = mint.nn.Linear(inner_dim, np.prod(patch_size).item() * out_channels, dtype=dtype)
-        self._init_weight()
+
+        if init_weight:
+            self._init_weight()
 
         if self.enable_sequence_parallelism:
             sp_group = get_sequence_parallel_group()
