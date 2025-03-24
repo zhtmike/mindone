@@ -24,6 +24,8 @@ from mindspore import Parameter, Tensor
 from mindspore.communication import get_group_size
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
+from mindone.models.utils import normal_, zeros_
+
 __all__ = [
     "CogVideoXTransformer3DModel",
     "CogVideoX_2B",
@@ -1077,6 +1079,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
             dtype=dtype,
         )
         self.proj_out = mint.nn.Linear(inner_dim, np.prod(patch_size).item() * out_channels, dtype=dtype)
+        self._init_weight()
 
         if self.enable_sequence_parallelism:
             sp_group = get_sequence_parallel_group()
@@ -1098,6 +1101,24 @@ class CogVideoXTransformer3DModel(nn.Cell):
                 # recompute the first N blocks
                 if i < num_recompute_blocks:
                     block.recompute()
+
+    def _init_weight(self):
+        def _basic_init(cell):
+            if isinstance(cell, (mint.nn.Linear, mint.nn.Conv2d)):
+                normal_(cell.weight, std=0.02)
+                if cell.bias is not None:
+                    zeros_(cell.bias)
+
+        self.apply(_basic_init)
+
+        # zero-out modulation layer
+        for block in self.transformer_blocks:
+            zeros_(block.norm1.linear.weight)
+            zeros_(block.norm2.linear.weight)
+
+        # zero-out last modulation layer & final layer
+        zeros_(self.norm_out.linear.weight)
+        zeros_(self.proj_out.weight)
 
     @property
     def dtype(self):
