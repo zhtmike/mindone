@@ -1,5 +1,6 @@
 # diffusers/models/transformers/cogvideox_transformer_3d.py -- v0.31.0
 import logging
+import math
 from functools import partial
 from typing import List, Literal, Optional, Tuple, Union
 
@@ -21,10 +22,11 @@ import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, Tensor
+from mindspore.common.initializer import XavierUniform, initializer
 from mindspore.communication import get_group_size
 from mindspore.ops.operations.nn_ops import FlashAttentionScore
 
-from mindone.models.utils import normal_, zeros_
+from mindone.models.utils import normal_, xavier_uniform_, zeros_
 
 __all__ = [
     "CogVideoXTransformer3DModel",
@@ -1104,12 +1106,31 @@ class CogVideoXTransformer3DModel(nn.Cell):
 
     def _init_weight(self):
         def _basic_init(cell):
-            if isinstance(cell, (mint.nn.Linear, mint.nn.Conv2d)):
-                normal_(cell.weight, std=0.02)
+            if isinstance(cell, mint.nn.Linear):
+                xavier_uniform_(cell.weight)
                 if cell.bias is not None:
                     zeros_(cell.bias)
 
         self.apply(_basic_init)
+
+        # initialize patch embedding as mind.nn.Linear
+        if isinstance(self.patch_embed.proj, mint.nn.Conv2d):
+            weight = self.patch_embed.proj.weight
+            flatten_shape = (weight.shape[0], math.prod(weight.shape[1:]))
+            self.patch_embed.proj.weight.set_data(
+                initializer(XavierUniform(), shape=flatten_shape, dtype=weight.dtype).reshape(weight.shape)
+            )
+            if self.patch_embed.proj.bias is not None:
+                zeros_(self.patch_embed.proj.bias)
+
+        # initialize time embedding mlp
+        normal_(self.time_embedding.linear_1.weight, std=0.02)
+        normal_(self.time_embedding.linear_2.weight, std=0.02)
+
+        # initialize ofs embedding mlp
+        if self.ofs_embedding is not None:
+            normal_(self.ofs_embedding.linear_1.weight, std=0.02)
+            normal_(self.ofs_embedding.linear_2.weight, std=0.02)
 
         # zero-out modulation layer
         for block in self.transformer_blocks:
