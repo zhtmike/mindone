@@ -17,6 +17,9 @@ from mindspore import nn
 from mindspore._c_expression import reset_op_id
 from mindspore.communication.management import get_group_size, get_rank, init
 
+from mindone.trainers.lr_schedule import create_scheduler
+from mindone.utils.amp import auto_mixed_precision
+
 # from mindspore.nn.utils import no_init_parameters
 
 # from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
@@ -29,13 +32,14 @@ sys.path.insert(0, mindone_lib_path)
 
 from janus.models import MultiModalityCausalLM, VLChatProcessor
 from janus.models.modeling_vlm import MultiModalityConfig
-from janus.train.lr_schedule import WarmupCosineDecayLR
 from janus.train.t2i_dataset import create_dataloader_t2i
 from janus.train.text_dataset import create_dataloader_text
 from janus.train.vqa_dataset import create_dataloader_vqa
 from janus.utils.io import set_model_param_dtype
 
+from mindone.trainers.adamw_mint import AdamW
 from mindone.trainers.checkpoint import CheckpointManager
+from mindone.trainers.muon import Muon
 
 # from mindone.trainers.lr_schedule import create_scheduler
 from mindone.trainers.recorder import PerfRecorder
@@ -113,7 +117,10 @@ def main(args):
     dtype_map = {"float16": ms.float16, "bfloat16": ms.bfloat16}
     dtype = dtype_map[args.dtype]
     if args.dtype != "float32":
-        vl_gpt = set_model_param_dtype(vl_gpt, dtype)
+        if args.mixed_precision:
+            vl_gpt = auto_mixed_precision(vl_gpt, amp_level="O2", dtype=dtype)
+        else:
+            vl_gpt = set_model_param_dtype(vl_gpt, dtype)
 
     # 1.2 set trainable parameters (refer to Janus paper)
     # TODO: use config.yaml to set traning strategy
@@ -218,21 +225,32 @@ def main(args):
 
     # 3. setup trainer and config hyper-params
     # loss_scaler = nn.FixedLossScaleUpdateCell(1024)  # tune
-    optimizer = ms.mint.optim.AdamW(
-        vl_gpt.trainable_params(),
-        lr=args.learning_rate,
-        betas=(0.9, 0.95),
-        weight_decay=args.weight_decay,
-        eps=1e-6,
-    )
     assert args.warmup_steps < args.train_steps
-    scheduler = WarmupCosineDecayLR(
-        optimizer,
-        lr_max=args.learning_rate,
-        lr_min=args.end_learning_rate,
+    scheduler = create_scheduler(
+        None,
+        lr=args.learning_rate,
         warmup_steps=args.warmup_steps,
-        decay_steps=args.train_steps - args.warmup_steps,
+        total_steps=args.train_steps,
     )
+
+    if args.optimizer == "adamw":
+        optimizer = AdamW(
+            vl_gpt.trainable_params(),
+            learning_rate=scheduler,
+            beta1=0.9,
+            beta2=0.95,
+            weight_decay=args.weight_decay,
+            eps=1e-6,
+        )
+    else:
+        optimizer = Muon(
+            vl_gpt.trainable_params(),
+            lr=scheduler,
+            adamw_betas=(0.9, 0.95),
+            adamw_eps=1e-6,
+            weight_decay=args.weight_decay,
+            adamw_parameter_names=("gen_embed", "embed_tokens", "lm_head"),
+        )
 
     use_value_and_grad = args.use_value_and_grad
     if use_value_and_grad:
@@ -321,8 +339,9 @@ def main(args):
             global_step += 1
             loss_val = float(loss.asnumpy())
 
-            scheduler.step()
-            cur_lr = scheduler.get_last_lr()[0].asnumpy()
+            # scheduler.step()
+            # cur_lr = scheduler.get_last_lr()[0].asnumpy()
+            cur_lr = optimizer.learning_rate(optimizer.global_step - 1)[0].item()
             # print("lr", [lr for lr in optimizer.lrs])
 
             logger.info(
@@ -349,9 +368,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--ms_mode", type=int, default=1, help="mindspore mode, 0: graph, 1: pynative")
     # TODO: support model_name "deepseek-ai/Janus-Pro-1B" for simplicity
-    parser.add_argument("--model_path", type=str, default="ckpts/Janus-Pro-1B", help="path to Janus model")
     parser.add_argument(
-        "--training_stage", type=int, default=3, choices=[1, 2, 3], help="model training stage, can be 1, 2, or 3"
+        "--model_path",
+        type=str,
+        default="ckpts/Janus-Pro-1B",
+        help="path to Janus model",
+    )
+    parser.add_argument(
+        "--training_stage",
+        type=int,
+        default=3,
+        choices=[1, 2, 3],
+        help="model training stage, can be 1, 2, or 3",
     )
     parser.add_argument(
         "--ckpt_path",
@@ -360,10 +388,17 @@ if __name__ == "__main__":
         help="path to model checkpoint in .ckpt format, if None, will use the pretrained weight in mode_path",
     )
     parser.add_argument(
-        "--load_weight", type=str2bool, default=True, help="if True, will not load pretrained weight in model_path"
+        "--load_weight",
+        type=str2bool,
+        default=True,
+        help="if True, will not load pretrained weight in model_path",
     )
     parser.add_argument(
-        "--dtype", type=str, default="bfloat16", choices=["bfloat16", "float16", "float32"], help="model dtype"
+        "--dtype",
+        type=str,
+        default="bfloat16",
+        choices=["bfloat16", "float16", "float32"],
+        help="model dtype",
     )
     parser.add_argument("--seed", type=int, default=42, help="random seed")
     parser.add_argument("--use_parallel", default=False, type=str2bool, help="use parallel")
@@ -380,12 +415,20 @@ if __name__ == "__main__":
         help="if Ture, freeze llm embedding table and gen embedding table (nn.Embedding)",
     )
     parser.add_argument(
-        "--output_path", default="outputs/janus-sft", type=str, help="output directory to save training results"
+        "--output_path",
+        default="outputs/janus-sft",
+        type=str,
+        help="output directory to save training results",
     )
 
     # training hyperparms
     parser.add_argument("--learning_rate", default=1e-4, type=float, help="learning rate")
-    parser.add_argument("--end_learning_rate", default=1e-5, type=float, help="end learning rate for cosine decay")
+    parser.add_argument(
+        "--end_learning_rate",
+        default=1e-5,
+        type=float,
+        help="end learning rate for cosine decay",
+    )
     parser.add_argument("--batch_size", default=1, type=int, help="batch size")
     parser.add_argument("--weight_decay", default=0.1, type=float, help="weight decay")
     parser.add_argument("--clip_grad", default=False, type=str2bool, help="clip graident")
@@ -399,12 +442,29 @@ if __name__ == "__main__":
     parser.add_argument("--train_steps", default=5000, type=int, help="training steps")
     parser.add_argument("--warmup_steps", default=50, type=int, help="lr warmup steps")
     parser.add_argument("--ckpt_save_steps", default=500, type=int, help="save ckpt every this step")
-    parser.add_argument("--ckpt_max_keep", default=3, type=int, help="num of checkpoints to keep during training")
+    parser.add_argument(
+        "--ckpt_max_keep",
+        default=3,
+        type=int,
+        help="num of checkpoints to keep during training",
+    )
     parser.add_argument(
         "--max_length",
         default=1024,
         type=int,
         help="sequence max length, input sequence will be padded (left pad) and truncated to this max length",
+    )
+    parser.add_argument(
+        "--mixed_precision",
+        default=False,
+        type=str2bool,
+        help="use mixed precision training instead",
+    )
+    parser.add_argument(
+        "--optimizer",
+        default="adamw",
+        choices=["adamw", "muon"],
+        help="optimizer to use",
     )
 
     # training data config
@@ -416,7 +476,10 @@ if __name__ == "__main__":
         help="path to csv annotation, contain `image_path` and `text_en` column for image path and caption respectively",
     )
     parser.add_argument(
-        "--dataset_name", default="", type=str, help="dataset name, used for the right vqa and text dataset loader"
+        "--dataset_name",
+        default="",
+        type=str,
+        help="dataset name, used for the right vqa and text dataset loader",
     )
     parser.add_argument(
         "--data_dir",
