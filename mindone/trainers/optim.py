@@ -14,6 +14,7 @@ from .adamw_mf import AdamW as AdamW_MF
 from .adamw_mint import AdamW as AdamW_Mint
 from .adamw_zero1 import AdamWeightDecayZeRO1
 from .came import CAME
+from .muon import Muon
 
 _logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ def create_optimizer(
     """
     if betas is None:
         betas = [0.9, 0.999]
+
+    if name.lower() == "muon":
+        group_strategy = "not_grouping"
 
     if group_strategy is not None:
         _logger.info("Applying `%s` strategy for weight decay.", group_strategy)
@@ -97,6 +101,8 @@ def create_optimizer(
         optim_cls = Momentum
     elif name.lower() == "came":
         optim_cls = CAME
+    elif name.lower() == "muon":
+        optim_cls = Muon
     else:
         raise ValueError("invalid optimizer")
 
@@ -104,6 +110,10 @@ def create_optimizer(
         optimizer = optim_cls(group_params, learning_rate=lr, momentum=0.9)
     elif name.lower() in ["adamw_mf", "came"]:
         optimizer = optim_cls(group_params, learning_rate=lr, betas=betas, eps=eps)
+    elif name.lower() == "muon":
+        optimizer = optim_cls(
+            group_params, lr=lr, adamw_betas=betas, adamw_eps=eps, adamw_parameter_names=("proj_out.")
+        )
     else:
         optimizer = optim_cls(group_params, learning_rate=lr, beta1=betas[0], beta2=betas[1], eps=eps)
 
