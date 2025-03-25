@@ -112,7 +112,7 @@ def create_optimizer(
         optimizer = optim_cls(group_params, learning_rate=lr, betas=betas, eps=eps)
     elif name.lower() == "muon":
         optimizer = optim_cls(
-            group_params, lr=lr, adamw_betas=betas, adamw_eps=eps, adamw_parameter_names=("proj_out.")
+            group_params, lr=lr, adamw_betas=betas, adamw_eps=eps, adamw_parameter_names=("proj_out.",)
         )
     else:
         optimizer = optim_cls(group_params, learning_rate=lr, beta1=betas[0], beta2=betas[1], eps=eps)
