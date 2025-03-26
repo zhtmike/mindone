@@ -13,12 +13,12 @@ _muon_opt = ops.MultitypeFuncGraph("muon_opt")
 
 
 @_muon_opt.register(
+    "Number",
+    "Number",
+    "Number",
     "Tensor",
     "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
-    "Tensor",
+    "Number",
     "Bool",
     "Number",
     "Tensor",
@@ -33,12 +33,12 @@ _muon_opt = ops.MultitypeFuncGraph("muon_opt")
     "Bool",
 )
 def _update_run_op(
-    mu: Tensor,
-    beta1: Tensor,
-    beta2: Tensor,
+    mu: float,
+    beta1: float,
+    beta2: float,
     beta1_t: Parameter,
     beta2_t: Parameter,
-    eps: Tensor,
+    eps: float,
     nesterov: bool,
     steps: int,
     lr: Parameter,
@@ -46,45 +46,41 @@ def _update_run_op(
     param: Parameter,
     m: Parameter,
     v: Parameter,
-    gradient: Tensor,
+    g: Tensor,
     ratio: float,
     use_muon: bool,
     decay_flag: bool,
     optim_filter: bool,
-) -> Tensor:
+) -> bool:
     if not optim_filter:
-        return gradient
-
-    dtype = param.dtype
-    param_ = ops.cast(param, ms.float32)
-    gradient = ops.cast(gradient, ms.float32)
+        return False
 
     if decay_flag:
-        param_ = param_ - lr * weight_decay * param_
+        param.add_(-lr * weight_decay * param)
 
     v_next = None
     if use_muon:
         # Muon branch
-        m_next = mu * m + gradient
+        m_next = mint.lerp(g, m, mu)
         if nesterov:
-            g = mu * m_next + gradient
+            g = mint.lerp(g, m_next, mu)
         else:
             g = m_next
-        u = zeropower_via_newtonschulz5(g, steps=steps)
-        param_ = param_ - lr * ratio * u
+        g = zeropower_via_newtonschulz5(g, steps=steps)
+        param.add_(-lr * ratio * g)
     else:
         # AdamW branch
-        m_next = beta1 * m + (1 - beta1) * gradient
-        v_next = beta2 * v + (1 - beta2) * mint.square(gradient)
+        m_next = mint.lerp(g, m, beta1)
+        v_next = mint.lerp(mint.square(g), v, beta2)
         m_hat = m_next / (1 - beta1_t)
         v_hat = v_next / (1 - beta2_t)
-        param_ = param_ - lr * m_hat / (mint.sqrt(v_hat) + eps)
-    param_ = ops.cast(param_, dtype)
-    ops.assign(param, param_)
+        g = m_hat / (mint.sqrt(v_hat) + eps)
+        param.add_(-lr * g)
+
     ops.assign(m, m_next)
     if not use_muon:
         ops.assign(v, v_next)
-    return param_
+    return True
 
 
 def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
@@ -140,6 +136,7 @@ class Muon(nn.Optimizer):
         nesterov: bool = True,
         weight_decay: float = 0.1,
         adamw_parameter_names: Optional[Tuple[str, ...]] = ("embed_tokens", "lm_head"),
+        rms_scale: float = 0.2,
     ) -> None:
         super().__init__(lr, params, weight_decay)
 
@@ -148,10 +145,10 @@ class Muon(nn.Optimizer):
         if adamw_parameter_names is None:
             adamw_parameter_names = tuple([])
 
-        self.momentum = Tensor(momentum, dtype=ms.float32)
-        self.adamw_beta1 = Tensor(adamw_betas[0], dtype=ms.float32)
-        self.adamw_beta2 = Tensor(adamw_betas[1], dtype=ms.float32)
-        self.adamw_eps = Tensor(adamw_eps, dtype=ms.float32)
+        self.momentum = momentum
+        self.adamw_beta1 = adamw_betas[0]
+        self.adamw_beta2 = adamw_betas[1]
+        self.adamw_eps = adamw_eps
         self.moments1 = ParameterTuple(
             [Parameter(np.zeros(x.shape, dtype=np.float32), name="m." + x.name) for x in self._parameters]
         )
@@ -176,20 +173,25 @@ class Muon(nn.Optimizer):
         self.ns_steps = ns_steps
         self.nesterov = nesterov
 
-        self.lr_ratio = tuple([self._cal_lr_ratio(x, use_muon) for x, use_muon in zip(self._parameters, self.use_muon)])
+        self.lr_ratio = tuple(
+            [
+                self._cal_lr_ratio(x, use_muon, rms_scale=rms_scale)
+                for x, use_muon in zip(self._parameters, self.use_muon)
+            ]
+        )
 
-    def _cal_lr_ratio(self, param: Parameter, use_muon: bool) -> float:
+    def _cal_lr_ratio(self, param: Parameter, use_muon: bool, rms_scale: float = 0.2) -> float:
         if not use_muon:
             return 1.0
 
         A, B = param.shape[:2]
         # We adjust the learning rate and weight decay based on the size of the parameter matrix
         # as describted in the paper
-        adjusted_ratio = 0.2 * math.sqrt(max(A, B))
+        adjusted_ratio = rms_scale * math.sqrt(max(A, B))
         return adjusted_ratio
 
     @ms.jit
-    def construct(self, gradients: List[Tensor]):
+    def construct(self, gradients: List[Tensor]) -> bool:
         weight_decay = self.get_weight_decay()
         lr = self.get_lr()
         self.assignadd(self.global_step, self.global_step_increase_tensor)
