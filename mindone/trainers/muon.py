@@ -1,5 +1,5 @@
 import math
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
@@ -8,6 +8,7 @@ import mindspore.mint as mint
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, ParameterTuple, Tensor
+from mindspore.communication import get_group_size, get_rank
 
 _muon_opt = ops.MultitypeFuncGraph("muon_opt")
 
@@ -20,6 +21,9 @@ _muon_opt = ops.MultitypeFuncGraph("muon_opt")
     "Tensor",
     "Number",
     "Bool",
+    "Number",
+    "Function",
+    "Number",
     "Number",
     "Tensor",
     "Tensor",
@@ -41,6 +45,9 @@ def _update_run_op(
     eps: float,
     nesterov: bool,
     steps: int,
+    allgather: Callable[[Tensor], Tensor],
+    rank_id: int,
+    group_size: int,
     lr: Parameter,
     weight_decay: Tensor,
     param: Parameter,
@@ -56,7 +63,7 @@ def _update_run_op(
         return False
 
     if decay_flag:
-        param.add_(-lr * weight_decay * param)
+        param.sub_(lr * weight_decay * param)
 
     v_next = None
     if use_muon:
@@ -66,8 +73,12 @@ def _update_run_op(
             g = mint.lerp(g, m_next, mu)
         else:
             g = m_next
+        if param.parallel_optimizer:
+            g = _allgather_along_first_dim(g, allgather)
         g = zeropower_via_newtonschulz5(g, steps=steps)
-        param.add_(-lr * ratio * g)
+        if param.parallel_optimizer:
+            g = _split_along_first_dim(g, rank_id, group_size)
+        param.sub_(lr * ratio * g)
     else:
         # AdamW branch
         m_next = mint.lerp(g, m, beta1)
@@ -75,7 +86,7 @@ def _update_run_op(
         m_hat = m_next / (1 - beta1_t)
         v_hat = v_next / (1 - beta2_t)
         g = m_hat / (mint.sqrt(v_hat) + eps)
-        param.add_(-lr * g)
+        param.sub_(lr * g)
 
     ops.assign(m, m_next)
     if not use_muon:
@@ -122,6 +133,18 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     return G.to(dtype)
 
 
+def _allgather_along_first_dim(x: Tensor, allgather: Callable[[Tensor], Tensor]) -> Tensor:
+    x = allgather(x)
+    x = mint.flatten(x, start_dim=0, end_dim=1)
+    return x
+
+
+def _split_along_first_dim(x: Tensor, rank_id: int, group_size: int) -> Tensor:
+    x = mint.reshape(x, (group_size, x.shape[0] // group_size, *x.shape[1:]))
+    x = x[rank_id]
+    return x
+
+
 class Muon(nn.Optimizer):
     """Following https://github.com/MoonshotAI/Moonlight"""
 
@@ -137,6 +160,7 @@ class Muon(nn.Optimizer):
         weight_decay: float = 0.1,
         adamw_parameter_names: Optional[Tuple[str, ...]] = ("embed_tokens", "lm_head"),
         rms_scale: float = 0.2,
+        optimizer_parallel_group: Optional[str] = None,
     ) -> None:
         super().__init__(lr, params, weight_decay)
 
@@ -180,6 +204,16 @@ class Muon(nn.Optimizer):
             ]
         )
 
+        self.optimizer_parallel_group = optimizer_parallel_group
+        if self.optimizer_parallel_group is not None:
+            self.allgather = ops.AllGather(group=self.optimizer_parallel_group)
+            self.group_size = get_group_size(self.optimizer_parallel_group)
+            self.rank_id = get_rank(self.optimizer_parallel_group)
+        else:
+            self.allgather = mint.nn.Identity()
+            self.group_size = 1
+            self.rank_id = 0
+
     def _cal_lr_ratio(self, param: Parameter, use_muon: bool, rms_scale: float = 0.2) -> float:
         if not use_muon:
             return 1.0
@@ -196,8 +230,8 @@ class Muon(nn.Optimizer):
         lr = self.get_lr()
         self.assignadd(self.global_step, self.global_step_increase_tensor)
 
-        ops.assign(self.adamw_beta1_t, self.adamw_beta1_t * self.adamw_beta1)
-        ops.assign(self.adamw_beta2_t, self.adamw_beta2_t * self.adamw_beta2)
+        self.adamw_beta1_t = self.adamw_beta1_t * self.adamw_beta1
+        self.adamw_beta2_t = self.adamw_beta2_t * self.adamw_beta2
 
         if self.is_group:
             if self.is_group_lr:
@@ -212,6 +246,9 @@ class Muon(nn.Optimizer):
                         self.adamw_eps,
                         self.nesterov,
                         self.ns_steps,
+                        self.allgather,
+                        self.rank_id,
+                        self.group_size,
                     ),
                     lr,
                     weight_decay,
@@ -236,6 +273,9 @@ class Muon(nn.Optimizer):
                         self.adamw_eps,
                         self.nesterov,
                         self.ns_steps,
+                        self.allgather,
+                        self.rank_id,
+                        self.group_size,
                         lr,
                     ),
                     weight_decay,
@@ -260,6 +300,9 @@ class Muon(nn.Optimizer):
                     self.adamw_eps,
                     self.nesterov,
                     self.ns_steps,
+                    self.allgather,
+                    self.rank_id,
+                    self.group_size,
                     lr,
                     weight_decay,
                 ),

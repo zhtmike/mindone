@@ -15,7 +15,7 @@ import yaml
 import mindspore as ms
 from mindspore import nn
 from mindspore._c_expression import reset_op_id
-from mindspore.communication.management import get_group_size, get_rank, init
+from mindspore.communication.management import GlobalComm, get_group_size, get_rank, init
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
 from mindspore.train.callback import TimeMonitor
 
@@ -844,6 +844,7 @@ def main(args):
         group_strategy=args.group_strategy,
         weight_decay=args.weight_decay,
         lr=lr,
+        optimizer_parallel_group=GlobalComm.WORLD_COMM_GROUP,
     )
 
     if args.loss_scaler_type == "dynamic":
@@ -879,6 +880,7 @@ def main(args):
         clip_norm=args.max_grad_norm,
         ema=ema,
         zero_stage=args.zero_stage,
+        optimizer_parallel_group=GlobalComm.WORLD_COMM_GROUP,
     )
 
     # resume train net states

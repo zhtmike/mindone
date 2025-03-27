@@ -27,6 +27,7 @@ def create_optimizer(
     weight_decay: float = 1e-6,
     eps: Union[float, List[float]] = 1e-6,
     group_strategy: Optional[str] = None,
+    optimizer_parallel_group: Optional[str] = None,
 ) -> Optimizer:
     """
     Build and return an instance of the Optimizer class based on the specified parameters.
@@ -112,7 +113,13 @@ def create_optimizer(
         optimizer = optim_cls(group_params, learning_rate=lr, betas=betas, eps=eps)
     elif name.lower() == "muon":
         optimizer = optim_cls(
-            group_params, lr=lr, adamw_betas=betas, adamw_eps=eps, adamw_parameter_names=("proj_out.",)
+            group_params,
+            lr=lr,
+            adamw_betas=betas,
+            adamw_eps=eps,
+            adamw_parameter_names=("proj_out.",),
+            rms_scale=0.5,
+            optimizer_parallel_group=optimizer_parallel_group,
         )
     else:
         optimizer = optim_cls(group_params, learning_rate=lr, beta1=betas[0], beta2=betas[1], eps=eps)
