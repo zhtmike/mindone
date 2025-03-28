@@ -101,8 +101,8 @@ class TrainOneStepWrapper(nn.TrainOneStepWithLossScaleCell):
             if hasattr(optimizer, "refresh_parallel_optimizer_states"):
                 optimizer.refresh_parallel_optimizer_states()
         else:
-            if hasattr(optimizer, "disable_parallel_optimizer"):
-                optimizer.disable_parallel_optimizer()
+            if hasattr(optimizer, "disable_distributed_mode"):
+                optimizer.disable_distributed_mode()
 
     def set_train(self, mode: bool = True):
         # Delegate the setting of training mode behavior to the network.

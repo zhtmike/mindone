@@ -49,6 +49,7 @@ def create_optimizer(
     if betas is None:
         betas = [0.9, 0.999]
 
+    # As paper mention, we add weight decay for all layers including LayerNorm
     if name.lower() == "muon":
         group_strategy = "not_grouping"
 
@@ -113,13 +114,7 @@ def create_optimizer(
         optimizer = optim_cls(group_params, learning_rate=lr, betas=betas, eps=eps)
     elif name.lower() == "muon":
         optimizer = optim_cls(
-            group_params,
-            lr=lr,
-            adamw_betas=betas,
-            adamw_eps=eps,
-            adamw_parameter_names=("proj_out", "pos_embedding"),
-            rms_scale=0.5,
-            optimizer_parallel_group=optimizer_parallel_group,
+            group_params, lr=lr, adamw_betas=betas, adamw_eps=eps, optimizer_parallel_group=optimizer_parallel_group
         )
     else:
         optimizer = optim_cls(group_params, learning_rate=lr, beta1=betas[0], beta2=betas[1], eps=eps)

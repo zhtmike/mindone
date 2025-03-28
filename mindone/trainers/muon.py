@@ -208,12 +208,12 @@ class Muon(nn.Optimizer):
             self.allgather = ops.AllGather(group=self.optimizer_parallel_group)
             self.group_size = get_group_size(self.optimizer_parallel_group)
             self.rank_id = get_rank(self.optimizer_parallel_group)
-            self.enable_parallel_optimizer()
+            self.enable_distributed_mode()
         else:
             self.allgather = ops.Identity()
             self.group_size = 1
             self.rank_id = 0
-            self.disable_parallel_optimizer()
+            self.disable_distributed_mode()
 
     def refresh_parallel_optimizer_states(self):
         """Update the parallel optimizer state for each parameter.
@@ -221,13 +221,13 @@ class Muon(nn.Optimizer):
         """
         self.parallel_optimizer_states = tuple([x.parallel_optimizer and GlobalComm.INITED for x in self._parameters])
 
-    def disable_parallel_optimizer(self):
+    def disable_distributed_mode(self):
         _logger.debug("Disable distributed mode for Muon optimizer.")
         for x in self._parameters:
             x.parallel_optimizer = False
         self.refresh_parallel_optimizer_states()
 
-    def enable_parallel_optimizer(self):
+    def enable_distributed_mode(self):
         _logger.debug("Enable distributed mode for Muon optimizer.")
         for x in self._parameters:
             x.parallel_optimizer = True
