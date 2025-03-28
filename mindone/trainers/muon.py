@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import Callable, List, Optional, Tuple
 
@@ -8,7 +9,9 @@ import mindspore.mint as mint
 import mindspore.nn as nn
 import mindspore.ops as ops
 from mindspore import Parameter, ParameterTuple, Tensor
-from mindspore.communication import get_group_size, get_rank
+from mindspore.communication import GlobalComm, get_group_size, get_rank
+
+_logger = logging.getLogger(__name__)
 
 _muon_opt = ops.MultitypeFuncGraph("muon_opt")
 
@@ -35,6 +38,7 @@ _muon_opt = ops.MultitypeFuncGraph("muon_opt")
     "Bool",
     "Bool",
     "Bool",
+    "Bool",
 )
 def _update_run_op(
     mu: float,
@@ -58,12 +62,13 @@ def _update_run_op(
     use_muon: bool,
     decay_flag: bool,
     optim_filter: bool,
+    parallel_optimizer: bool,
 ) -> bool:
     if not optim_filter:
         return False
 
     if decay_flag:
-        param.sub_(lr * weight_decay * param)
+        param.add_(-lr * weight_decay * param)
 
     v_next = None
     if use_muon:
@@ -73,12 +78,12 @@ def _update_run_op(
             g = mint.lerp(g, m_next, mu)
         else:
             g = m_next
-        if param.parallel_optimizer:
+        if parallel_optimizer:
             g = _allgather_along_first_dim(g, allgather)
         g = zeropower_via_newtonschulz5(g, steps=steps)
-        if param.parallel_optimizer:
+        if parallel_optimizer:
             g = _split_along_first_dim(g, rank_id, group_size)
-        param.sub_(lr * ratio * g)
+        param.add_(-lr * ratio * g)
     else:
         # AdamW branch
         m_next = mint.lerp(g, m, beta1)
@@ -86,7 +91,7 @@ def _update_run_op(
         m_hat = m_next / (1 - beta1_t)
         v_hat = v_next / (1 - beta2_t)
         g = m_hat / (mint.sqrt(v_hat) + eps)
-        param.sub_(lr * g)
+        param.add_(-lr * g)
 
     ops.assign(m, m_next)
     if not use_muon:
@@ -135,13 +140,12 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
 
 def _allgather_along_first_dim(x: Tensor, allgather: Callable[[Tensor], Tensor]) -> Tensor:
     x = allgather(x)
-    x = mint.flatten(x, start_dim=0, end_dim=1)
     return x
 
 
 def _split_along_first_dim(x: Tensor, rank_id: int, group_size: int) -> Tensor:
-    x = mint.reshape(x, (group_size, x.shape[0] // group_size, *x.shape[1:]))
-    x = x[rank_id]
+    chunk_size = x.shape[0] // group_size
+    x = mint.narrow(x, 0, chunk_size * rank_id, chunk_size)
     return x
 
 
@@ -176,12 +180,7 @@ class Muon(nn.Optimizer):
         self.moments1 = ParameterTuple(
             [Parameter(np.zeros(x.shape, dtype=np.float32), name="m." + x.name) for x in self._parameters]
         )
-        self.use_muon = tuple(
-            [
-                (True if len(x.shape) >= 2 and not any([p in x.name for p in adamw_parameter_names]) else False)
-                for x in self._parameters
-            ]
-        )
+        self.use_muon = tuple([self._use_muon(x, adamw_parameter_names) for x in self._parameters])
         self.moments2 = ParameterTuple(
             [
                 (
@@ -205,14 +204,43 @@ class Muon(nn.Optimizer):
         )
 
         self.optimizer_parallel_group = optimizer_parallel_group
-        if self.optimizer_parallel_group is not None:
+        if self.optimizer_parallel_group is not None and GlobalComm.INITED:
             self.allgather = ops.AllGather(group=self.optimizer_parallel_group)
             self.group_size = get_group_size(self.optimizer_parallel_group)
             self.rank_id = get_rank(self.optimizer_parallel_group)
         else:
-            self.allgather = mint.nn.Identity()
+            self.allgather = ops.Identity()
             self.group_size = 1
             self.rank_id = 0
+
+        self.refresh_parallel_optimizer_states()
+
+    def refresh_parallel_optimizer_states(self):
+        """Update the parallel optimizer state for each parameter.
+        It should be called after parameter split in ZeRO.
+        """
+        self.parallel_optimizer_states = tuple([x.parallel_optimizer and GlobalComm.INITED for x in self._parameters])
+
+    def disable_parallel_optimizer(self):
+        for x in self._parameters:
+            x.parallel_optimizer = False
+
+    def enable_parallel_optimizer(self):
+        for x in self._parameters:
+            x.parallel_optimizer = True
+
+    def _use_muon(self, param: Parameter, adamw_parameter_names: Tuple[str, ...]) -> bool:
+        for name in adamw_parameter_names:
+            if name in param.name:
+                return False
+        if len(param.shape) >= 2:
+            if "weight" not in param.name:
+                _logger.warning(
+                    f"Get unusual parameter under Muon optimizer group with name `{param.name}` and shape `{param.shape}`, "
+                    "perhaps you need to add the parameter name in the argument of `adamw_parameter_names`."
+                )
+            return True
+        return False
 
     def _cal_lr_ratio(self, param: Parameter, use_muon: bool, rms_scale: float = 0.2) -> float:
         if not use_muon:
@@ -260,6 +288,7 @@ class Muon(nn.Optimizer):
                     self.use_muon,
                     self.decay_flags,
                     self.optim_filter,
+                    self.parallel_optimizer_states,
                 )
             else:
                 optim_result = self.hyper_map(
@@ -287,6 +316,7 @@ class Muon(nn.Optimizer):
                     self.use_muon,
                     self.decay_flags,
                     self.optim_filter,
+                    self.parallel_optimizer_states,
                 )
         else:
             optim_result = self.hyper_map(
@@ -314,5 +344,6 @@ class Muon(nn.Optimizer):
                 self.use_muon,
                 self.decay_flags,
                 self.optim_filter,
+                self.parallel_optimizer_states,
             )
         return optim_result

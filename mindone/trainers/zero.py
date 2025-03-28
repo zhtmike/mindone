@@ -162,6 +162,7 @@ class ZeroHelper:
             else:
                 _logger.warning("optimizer_offload only take effect when optimizer is AdamWeightDecay.")
                 optimizer_offload = False
+
         _logger.info(
             f"Build TrainOneStepWrapper with ZeRO stage: {self.zero_stage}, "
             f"optimizer_offload: {optimizer_offload}, "
@@ -315,6 +316,7 @@ class ZeroHelper:
     def split_params(self):
         if not (self.zero_stage in [1, 2, 3] and self.is_parallel):
             return
+
         if self.zero_stage in [1, 2]:
             _logger.info("Clone optimizer.parameters, will increase memory.")
             # Because the first input of MindSpore optimizer must be ms.Parameter,

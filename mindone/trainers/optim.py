@@ -42,7 +42,7 @@ def create_optimizer(
         eps: epsilon in adam or adamw optimization, Default: 1e-6
         group_strategy: The specific grouping startegy for weight decay. If it is None,
                         then only the weight decays for parameters in layernorm and all bias will be set to 0.
-
+        optimizer_parallel_group: The optimizer group used in ZeRO. Only used for distributed optimizer like Muon
     Returns:
         Initialized optimizer.
     """
@@ -117,7 +117,7 @@ def create_optimizer(
             lr=lr,
             adamw_betas=betas,
             adamw_eps=eps,
-            adamw_parameter_names=("proj_out.",),
+            adamw_parameter_names=("proj_out", "pos_embedding"),
             rms_scale=0.5,
             optimizer_parallel_group=optimizer_parallel_group,
         )
