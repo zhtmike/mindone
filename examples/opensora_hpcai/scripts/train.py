@@ -845,6 +845,7 @@ def main(args):
         weight_decay=args.weight_decay,
         lr=lr,
         optimizer_parallel_group=GlobalComm.WORLD_COMM_GROUP,
+        rms_scale=args.rms_scale,
     )
 
     if args.loss_scaler_type == "dynamic":

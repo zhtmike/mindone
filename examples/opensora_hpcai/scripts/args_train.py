@@ -378,6 +378,7 @@ def parse_train_args(parser):
         type=int,
         help="save checkpoint every this steps. If -1, use ckpt_save_interval will be used.",
     )
+    parser.add_argument("--rms_scale", default=0.2, type=float, help="RMS Scale")
     parser.add_argument("--ckpt_max_keep", default=10, type=int, help="Maximum number of checkpoints to keep")
     parser.add_argument(
         "--step_mode",
