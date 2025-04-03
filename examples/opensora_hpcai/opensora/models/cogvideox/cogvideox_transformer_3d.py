@@ -1121,7 +1121,7 @@ class CogVideoXTransformer3DModel(nn.Cell):
             weight = self.patch_embed.proj.weight
             flatten_shape = (weight.shape[0], math.prod(weight.shape[1:]))
             self.patch_embed.proj.weight.set_data(
-                initializer(XavierUniform(), shape=flatten_shape, dtype=weight.dtype).reshape(weight.shape)
+                initializer(XavierUniform(), shape=flatten_shape, dtype=weight.dtype).init_data().reshape(weight.shape)
             )
             if self.patch_embed.proj.bias is not None:
                 zeros_(self.patch_embed.proj.bias)
