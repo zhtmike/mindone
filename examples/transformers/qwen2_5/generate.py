@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument("--seed", default=42, type=int, help="Training seed.")
     parser.add_argument("--mode", default=1, choices=[0, 1], help="Running in GRAPH_MODE(0) or PYNATIVE_MODE(1).")
     parser.add_argument("--jit_level", default="O1", choices=["O0", "O1"], help="Jit Level")
-    parser.add_argument("--model_name", default="Qwen/Qwen2.5-0.5B", help="Model name.")
+    parser.add_argument("--model_name", default="Qwen/Qwen2.5-0.5B-Instruct", help="Model name.")
     parser.add_argument("--output_path", default="./output", help="Output directory to save the inference result.")
     args = parser.parse_args()
     return args
