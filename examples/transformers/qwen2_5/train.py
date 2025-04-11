@@ -48,7 +48,7 @@ def parse_args():
     )
     parser.add_argument(
         "--dtype",
-        default="fp32",
+        default="bf16",
         choices=["fp32", "bf16"],
         help="If it is not fp32, then train with auto mixed precision.",
     )
@@ -59,7 +59,7 @@ def parse_args():
     parser.add_argument("--warmup_steps", default=100, type=int, help="Warmup steps.")
     parser.add_argument("--weight_decay", default=0.1, type=float, help="Weight decay.")
     parser.add_argument("--epochs", default=200, type=int, help="Number of total training epochs.")
-    parser.add_argument("--batch_size", default=64, type=int, help="Training batch size.")
+    parser.add_argument("--batch_size", default=4, type=int, help="Training batch size.")
     parser.add_argument("--ckpt_max_keep", default=3, type=int, help="Maximum number of checkpoints to keep.")
     parser.add_argument("--clip_grad", default=True, type=str2bool, help="Clip gradient.")
     parser.add_argument("--clip_grad_value", default=1.0, type=float, help="Clip gradient value.")
@@ -103,6 +103,7 @@ def main(args):
     model.set_train()
 
     if args.dtype != "fp32":
+        logger.info("Using AMP with data type %s", args.dtype)
         dtype = ms.bfloat16 if args.dtype == "bf16" else ms.float16
         model = auto_mixed_precision(model, amp_level="auto", dtype=dtype)
 
@@ -142,7 +143,6 @@ def main(args):
             if args.clip_grad:
                 grads = ops.clip_by_global_norm(grads, clip_norm=args.clip_grad_value)
             optimizer(grads)
-
             step_time = time.time() - start_time_s
             logger.info(
                 "epoch %d, step %d, loss %.8f, lr %.7f, step time %.2fms",
