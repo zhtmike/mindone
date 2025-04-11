@@ -12,7 +12,7 @@ class TextQADataset:
         dataset_name: Optional[str] = None,
         max_token_length: int = 1024,
         ignore_index: int = -100,
-        tokenizer_name: str = "Qwen/Qwen2.5-0.5B",
+        tokenizer_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
     ) -> None:
         data_dir = dataset_name if data_dir is None else data_dir
         if dataset_name == "pubmed_qa":
