@@ -15,6 +15,7 @@ mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 
 from mindone.transformers.models.qwen2 import Qwen2ForCausalLM
+from mindone.utils.config import str2bool
 from mindone.utils.logger import set_logger
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ def parse_args():
     parser.add_argument("--jit_level", default="O1", choices=["O0", "O1"], help="Jit Level")
     parser.add_argument("--model_name", default="Qwen/Qwen2.5-0.5B-Instruct", help="Model name.")
     parser.add_argument("--output_path", default="./output", help="Output directory to save the inference result.")
+    parser.add_argument("--use_parallel", default=False, type=str2bool, help="use parallel training.")
     args = parser.parse_args()
     return args
 
