@@ -9,14 +9,13 @@ from transformers import AutoTokenizer
 import mindspore as ms
 from mindspore.communication import get_group_size, get_rank, init
 
-from mindone.utils.logger import set_logger
-
 # TODO: remove in future when mindone is ready for install
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 mindone_lib_path = os.path.abspath(os.path.join(__dir__, "../../../"))
 sys.path.insert(0, mindone_lib_path)
 
 from mindone.transformers.models.qwen2 import Qwen2ForCausalLM
+from mindone.utils.logger import set_logger
 
 logger = logging.getLogger(__name__)
 
