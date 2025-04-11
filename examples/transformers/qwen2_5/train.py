@@ -42,7 +42,7 @@ def parse_args():
     parser.add_argument("--output_path", default="./output", help="Output directory to save the training result.")
     parser.add_argument("--dataset_name", default="pubmed_qa", help="Dataset Name.")
     parser.add_argument("--max_token_length", default=1024, type=int, help="Maximum token length.")
-    parser.add_argument("--model_name", default="Qwen/Qwen2.5-0.5B", help="Model name.")
+    parser.add_argument("--model_name", default="Qwen/Qwen2.5-0.5B-Instruct", help="Model name.")
     parser.add_argument(
         "--load_weight", default=True, type=str2bool, help="Load pretrained weight or random initialization."
     )
