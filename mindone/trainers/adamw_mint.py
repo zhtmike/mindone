@@ -209,6 +209,7 @@ class AdamW(Optimizer):
         validator.check_float_range(beta2, 0.0, 1.0, validator.INC_NEITHER, "beta2", prim_name)
         validator.check_positive_float(eps, "eps", prim_name)
 
+    @ms.jit
     def construct(self, gradients):
         gradients = self.flatten_gradients(gradients)
         weight_decay = self.get_weight_decay()
