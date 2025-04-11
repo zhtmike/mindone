@@ -7,6 +7,7 @@ from typing import Tuple
 from transformers import AutoTokenizer
 
 import mindspore as ms
+import mindspore.nn as nn
 from mindspore.communication import get_group_size, get_rank, init
 
 # TODO: remove in future when mindone is ready for install
@@ -58,8 +59,9 @@ def main(args):
 
     # prepare model
     logger.info("Creating model `%s`", args.model_name)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
-    model = Qwen2ForCausalLM.from_pretrained(args.model_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    with nn.no_init_parameters():
+        model = Qwen2ForCausalLM.from_pretrained(args.model_name)
 
     prompt = "Give me a short introduction to large language model."
     messages = [
