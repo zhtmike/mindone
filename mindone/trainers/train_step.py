@@ -1,4 +1,5 @@
 """Train step wrapper supporting setting drop overflow update, ema etc"""
+import numbers
 from typing import Optional
 
 from packaging import version
@@ -65,6 +66,9 @@ class TrainOneStepWrapper(nn.TrainOneStepWithLossScaleCell):
         verbose=False,
         zero_helper=None,
     ):
+        if isinstance(scale_sense, numbers.Number):
+            scale_sense = Tensor(scale_sense)
+
         super().__init__(network, optimizer, scale_sense)
         self.ema = ema
         self.drop_overflow_update = drop_overflow_update
@@ -103,10 +107,10 @@ class TrainOneStepWrapper(nn.TrainOneStepWithLossScaleCell):
         # Delegate the setting of training mode behavior to the network.
         self.network.set_train(mode)
 
-    def construct(self, *inputs):
+    def construct(self, *inputs, **kwargs):
         # compute loss
         weights = self.weights
-        loss = self.network(*inputs)  # mini-batch loss
+        loss = self.network(*inputs, **kwargs)  # mini-batch loss
         scaling_sens = self.scale_sense
 
         # check loss overflow. (after ms2.1, it's done together with gradient overflow checking)
