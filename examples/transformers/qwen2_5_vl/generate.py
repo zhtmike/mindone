@@ -17,7 +17,9 @@ def int64_to_int32(x: Tensor):
 def main():
     with nn.no_init_parameters():
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            "Qwen/Qwen2.5-VL-3B-Instruct", mindspore_dtype=ms.bfloat16, attn_implementation="flash_attention_2"
+            "Qwen/Qwen2.5-VL-3B-Instruct",
+            mindspore_dtype=ms.bfloat16,
+            attn_implementation="paged_attention",
         )
 
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")

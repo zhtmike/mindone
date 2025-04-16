@@ -16,6 +16,10 @@ from mindone.models.utils import normal_, zeros_
 from mindone.transformers.activations import ACT2FN
 from mindone.transformers.cache_utils import Cache, DynamicCache, StaticCache
 from mindone.transformers.generation import GenerationMixin
+from mindone.transformers.mindspore_adapter.block_tables import BlockTables
+from mindone.transformers.mindspore_adapter.freqs import FreqsMgr
+from mindone.transformers.mindspore_adapter.infer_attention import InferAttention
+from mindone.transformers.mindspore_adapter.mask import LowerTriangularMaskWithDynamic
 from mindone.transformers.modeling_attn_mask_utils import dtype_to_min
 from mindone.transformers.modeling_outputs import BaseModelOutputWithPast, ModelOutput
 from mindone.transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
@@ -785,9 +789,73 @@ class Qwen2_5_VLFlashAttention2(Qwen2_5_VLAttention):
         return attn_output, attn_weights, past_key_value
 
 
+class Qwen2_5_PagedAttention2(Qwen2_5_VLAttention):
+    def __init__(self, config: Qwen2_5_VLConfig, layer_idx: Optional[int] = None):
+        super().__init__(config, layer_idx)
+
+        self.infer_attention = InferAttention(
+            config.num_attention_heads,
+            config.hidden_size // config.num_attention_heads,
+            config.num_key_value_heads,
+            seq_length=config.max_position_embeddings,
+            pa_n_head_split=config.num_attention_heads,
+            pa_n_kv_head_split=config.hidden_size // config.num_attention_heads,
+            scale_value=1.0 / (math.sqrt(config.hidden_size // config.num_attention_heads)),
+            pre_tokens=2147483647,
+            next_tokens=0,
+            block_size=32,
+            num_blocks=1024,
+            is_dynamic=True,
+            use_flash_attention=True,
+            rotary_cos_format=2,
+            compute_dtype=config.mindspore_dtype,
+        )
+
+        self.is_first_iteration = True
+
+    def construct(
+        self,
+        hidden_states: ms.Tensor,
+        attention_mask: Optional[ms.Tensor] = None,
+        position_ids: Optional[ms.Tensor] = None,
+        past_key_value: Optional[Tuple[ms.Tensor, ms.Tensor]] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_position: Optional[ms.Tensor] = None,
+        block_tables=None,
+        slot_mapping=None,
+        freqs_cis=None,
+        mask=None,
+        batch_valid_length=None,
+        **kwargs,
+    ):
+        bsz, q_len, _ = hidden_states.shape
+
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
+        value_states = self.v_proj(hidden_states)
+
+        attn_output = self.infer_attention(
+            query_states,
+            key_states,
+            value_states,
+            batch_valid_length,
+            block_tables,
+            slot_mapping,
+            freqs_cis,
+            mask,
+            q_seq_lens=None,
+        )
+
+        attn_output = self.o_proj(attn_output)
+
+        return attn_output, None, past_key_value
+
+
 QWEN2_5_VL_ATTENTION_CLASSES = {
     "eager": Qwen2_5_VLAttention,
     "flash_attention_2": Qwen2_5_VLFlashAttention2,
+    "paged_attention": Qwen2_5_PagedAttention2,
 }
 
 
@@ -807,6 +875,8 @@ class Qwen2_5_VLDecoderLayer(nn.Cell):
         self.input_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
+        self.is_first_iteration = True
+
     def construct(
         self,
         hidden_states: Tensor,
@@ -817,6 +887,11 @@ class Qwen2_5_VLDecoderLayer(nn.Cell):
         use_cache: Optional[bool] = False,
         cache_position: Optional[Tensor] = None,
         position_embeddings: Optional[Tuple[Tensor, Tensor]] = None,  # necessary, but kept here for BC
+        block_tables: Optional[ms.Tensor] = None,
+        slot_mapping: Optional[ms.Tensor] = None,
+        freqs_cis: Optional[ms.Tensor] = None,
+        mask: Optional[ms.Tensor] = None,
+        batch_valid_length: Optional[ms.Tensor] = None,
         **kwargs,
     ) -> Tuple[ms.Tensor, Optional[Tuple[ms.Tensor, ms.Tensor]]]:
         """
@@ -846,16 +921,32 @@ class Qwen2_5_VLDecoderLayer(nn.Cell):
         hidden_states = self.input_layernorm(hidden_states)
 
         # Self Attention
-        hidden_states, self_attn_weights, present_key_value = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=past_key_value,
-            output_attentions=output_attentions,
-            use_cache=use_cache,
-            cache_position=cache_position,
-            position_embeddings=position_embeddings,
-        )
+        if block_tables is None:
+            hidden_states, self_attn_weights, present_key_value = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+            )
+        else:
+            hidden_states, self_attn_weights, present_key_value = self.self_attn(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                block_tables=block_tables,
+                slot_mapping=slot_mapping,
+                freqs_cis=freqs_cis,
+                mask=mask,
+                batch_valid_length=batch_valid_length,
+            )
         hidden_states = residual + hidden_states
 
         # Fully Connected
@@ -889,6 +980,8 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         self.norm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen2_5_VLRotaryEmbedding(config=config)
 
+        self.is_first_iteration = True
+
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
@@ -911,6 +1004,11 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[Tensor] = None,
+        block_tables: Optional[ms.Tensor] = None,
+        slot_mapping: Optional[ms.Tensor] = None,
+        freqs_cis: Optional[ms.Tensor] = None,
+        mask: Optional[ms.Tensor] = None,
+        batch_valid_length: Optional[ms.Tensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -946,9 +1044,12 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         elif position_ids.dim() == 2:
             position_ids = position_ids[None, ...].expand((3, position_ids.shape[0], -1))
 
-        causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
-        )
+        if block_tables is None:
+            causal_mask = self._update_causal_mask(
+                attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
+            )
+        else:
+            causal_mask = attention_mask
 
         hidden_states = inputs_embeds
 
@@ -976,6 +1077,11 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
+                    block_tables=block_tables,
+                    slot_mapping=slot_mapping,
+                    freqs_cis=freqs_cis,
+                    mask=mask,
+                    batch_valid_length=batch_valid_length,
                 )
 
             hidden_states = layer_outputs[0]
@@ -1174,6 +1280,31 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         # Initialize weights and apply final processing
         self.post_init()
 
+        if self.config._attn_implementation == "paged_attention":
+            self.freqs_mgr = FreqsMgr(
+                head_dim=config.hidden_size // config.num_attention_heads,
+                seq_length=config.max_position_embeddings,
+                max_position_embedding=config.max_position_embeddings,
+                rotary_dtype=config.mindspore_dtype,
+                theta=config.rope_theta,
+                is_dynamic=True,
+            )
+
+            self.casual_mask = LowerTriangularMaskWithDynamic(
+                seq_length=config.max_position_embeddings,
+                batch_size=1,
+                compute_type=config.mindspore_dtype,
+                is_dynamic=True,
+                pad_token_id=config.pad_token_id,
+                use_flash_attention=True,
+                use_attn_mask_compression=False,
+                use_past=True,
+                seq_split_num=1,
+                chunk_prefill=False,
+            )
+
+            self.is_first_iteration = True
+
     def get_input_embeddings(self):
         return self.model.embed_tokens
 
@@ -1368,6 +1499,16 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
 
             return position_ids, mrope_position_deltas
 
+    def add_flags_custom(self, is_first_iteration):
+        """Add customized attributes for specific cells in the model."""
+        self.add_flags(is_first_iteration=is_first_iteration)
+        self.model.add_flags(is_first_iteration=is_first_iteration)
+        for layer in self.model.layers:
+            layer.add_flags(is_first_iteration=is_first_iteration)
+            layer.self_attn.infer_attention.add_flags(is_first_iteration=is_first_iteration)
+            layer.self_attn.infer_attention.paged_attention_mgr.add_flags(is_first_iteration=is_first_iteration)
+
+    @ms.jit
     def construct(
         self,
         input_ids: Tensor = None,
@@ -1387,6 +1528,9 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         rope_deltas: Optional[Tensor] = None,
         cache_position: Optional[Tensor] = None,
         second_per_grid_ts: Optional[Tensor] = None,
+        block_tables: Optional[ms.Tensor] = None,
+        slot_mapping: Optional[ms.Tensor] = None,
+        batch_valid_length: Optional[ms.Tensor] = None,
     ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
         r"""
         Args:
@@ -1427,6 +1571,17 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "The image shows a street scene with a red stop sign in the foreground. In the background, there is a large red gate with Chinese characters ..."
         ```"""
+        if block_tables is not None:
+            bs, seq_len = input_ids.shape
+            mask = None
+            if self.is_first_iteration:
+                freqs_cis = self.freqs_mgr.prefill(bs, seq_len)
+                mask = self.casual_mask.prefill()
+            else:
+                freqs_cis = self.freqs_mgr.increment(batch_valid_length)
+        else:
+            freqs_cis = None
+            mask = None
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1512,6 +1667,11 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            block_tables=block_tables,
+            slot_mapping=slot_mapping,
+            freqs_cis=freqs_cis,
+            mask=mask,
+            batch_valid_length=batch_valid_length,
         )
 
         hidden_states = outputs[0]
@@ -1620,6 +1780,51 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 "second_per_grid_ts": second_per_grid_ts,
             }
         )
+        if self.config._attn_implementation == "paged_attention":
+            bs, seq_len = input_ids.shape
+            step = kwargs["step"]
+            if step == 0:
+                # init block tables
+                self.block_mgr = BlockTables(1024, 32, self.config.max_position_embeddings)
+                self.block_mgr.init_cache_engine(bs)
+
+                # get slot mapping and block tables
+                max_input_length = self.config.max_position_embeddings
+                self.valid_length_each_example = ms.tensor(seq_len).reshape(bs)
+                block_tables, slot_mapping = self.block_mgr.assemble_pa_full_inputs(
+                    max_input_length, self.valid_length_each_example, [False]
+                )
+                slot_mapping = np.delete(slot_mapping, np.where(slot_mapping == -1))
+
+                # set batch valid length
+                self.batch_valid_length = ms.tensor(seq_len).to(ms.int32).reshape(bs)
+
+                self.phase = "prefill"
+                self.add_flags_custom(True)
+            else:
+                model_inputs.update({"input_ids": input_ids[:, -1].reshape(bs, 1)})
+
+                # get slot mapping and block tables
+                self.valid_length_each_example += 1
+                block_tables, slot_mapping = self.block_mgr.assemble_pa_inc_inputs(
+                    self.valid_length_each_example, [False]
+                )
+
+                # set batch valid length
+                self.batch_valid_length += 1
+
+                if step == 1:
+                    self.phase = "increment"
+                    self.add_flags_custom(False)
+            slot_mapping = ms.tensor(slot_mapping)
+            block_tables = ms.tensor(block_tables)
+            model_inputs.update(
+                {
+                    "block_tables": block_tables,
+                    "slot_mapping": slot_mapping,
+                    "batch_valid_length": self.batch_valid_length,
+                }
+            )
         return model_inputs
 
     def _get_image_nums_and_video_nums(
