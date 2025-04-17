@@ -19,7 +19,7 @@ def main():
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             "Qwen/Qwen2.5-VL-3B-Instruct",
             mindspore_dtype=ms.bfloat16,
-            attn_implementation="paged_attention",
+            attn_implementation="paged_attention",  # flash_attention_2
         )
 
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
@@ -30,7 +30,7 @@ def main():
             "content": [
                 {
                     "type": "image",
-                    "image": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+                    "image": "demo.jpeg",
                 },
                 {"type": "text", "text": "Describe this image."},
             ],
@@ -49,7 +49,7 @@ def main():
     )
     inputs = {k: int64_to_int32(Tensor(v)) for k, v in inputs.items()}
 
-    generated_ids = model.generate(**inputs, max_new_tokens=128)
+    generated_ids = model.generate(**inputs, max_new_tokens=128, do_sample=False, use_cache=False)
 
     output_text = processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
     print(output_text)
