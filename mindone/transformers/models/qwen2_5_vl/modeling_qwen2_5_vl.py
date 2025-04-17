@@ -1531,6 +1531,26 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         slot_mapping: Optional[ms.Tensor] = None,
         batch_valid_length: Optional[ms.Tensor] = None,
     ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
+        debug(input_ids)
+        debug(attention_mask)
+        debug(position_ids)
+        debug(past_key_values)
+        debug(inputs_embeds)
+        debug(labels)
+        debug(use_cache)
+        debug(output_attentions)
+        debug(output_hidden_states)
+        debug(return_dict)
+        debug(pixel_values)
+        debug(pixel_values_videos)
+        debug(image_grid_thw)
+        debug(video_grid_thw)
+        debug(rope_deltas)
+        debug(cache_position)
+        debug(second_per_grid_ts)
+        debug(block_tables)
+        debug(slot_mapping)
+        debug(batch_valid_length)
         r"""
         Args:
             labels (`Tensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -1950,3 +1970,10 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
 
 
 __all__ = ["Qwen2_5_VLForConditionalGeneration", "Qwen2_5_VLModel", "Qwen2_5_VLPreTrainedModel"]
+
+
+def debug(x: Optional[Tensor]):
+    if x is None:
+        print(None, None)
+        return
+    print(x.shape, x.dtype)
