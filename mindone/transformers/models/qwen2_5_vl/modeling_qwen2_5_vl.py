@@ -1508,6 +1508,49 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             layer.self_attn.infer_attention.add_flags(is_first_iteration=is_first_iteration)
             layer.self_attn.infer_attention.paged_attention_mgr.add_flags(is_first_iteration=is_first_iteration)
 
+    def enable_dynamic_shape(self):
+        input_ids = Tensor(shape=[None, None], dtype=ms.int32)
+        attention_mask = Tensor(shape=[None, None], dtype=ms.int32)
+        position_ids = None
+        past_key_values = None
+        inputs_embeds = None
+        labels = None
+        use_cache = False
+        output_attentions = False
+        output_hidden_states = False
+        return_dict = False
+        pixel_values = Tensor(shape=(None, None), dtype=ms.float32)
+        pixel_values_videos = None
+        image_grid_thw = Tensor(shape=(None, None), dtype=ms.int32)
+        video_grid_thw = None
+        rope_deltas = None
+        cache_position = Tensor(shape=[None], dtype=ms.int64)
+        block_tables = Tensor(shape=[None, None], dtype=ms.int32)
+        slot_mapping = Tensor(shape=[None], dtype=ms.int32)
+        batch_valid_length = ms.mutable(Tensor(shape=[None], dtype=ms.int32))
+
+        self.set_inputs(
+            input_ids,
+            attention_mask,
+            position_ids,
+            past_key_values,
+            inputs_embeds,
+            labels,
+            use_cache,
+            output_attentions,
+            output_hidden_states,
+            return_dict,
+            pixel_values,
+            pixel_values_videos,
+            image_grid_thw,
+            video_grid_thw,
+            rope_deltas,
+            cache_position,
+            block_tables,
+            slot_mapping,
+            batch_valid_length,
+        )
+
     def construct(
         self,
         input_ids: Tensor = None,
@@ -1531,26 +1574,26 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         slot_mapping: Optional[ms.Tensor] = None,
         batch_valid_length: Optional[ms.Tensor] = None,
     ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
-        debug(input_ids)
-        debug(attention_mask)
-        debug(position_ids)
-        debug(past_key_values)
-        debug(inputs_embeds)
-        debug(labels)
-        debug(use_cache)
-        debug(output_attentions)
-        debug(output_hidden_states)
-        debug(return_dict)
-        debug(pixel_values)
-        debug(pixel_values_videos)
-        debug(image_grid_thw)
-        debug(video_grid_thw)
-        debug(rope_deltas)
-        debug(cache_position)
-        debug(second_per_grid_ts)
-        debug(block_tables)
-        debug(slot_mapping)
-        debug(batch_valid_length)
+        # debug(input_ids)
+        # debug(attention_mask)
+        # debug(position_ids)
+        # debug(past_key_values)
+        # debug(inputs_embeds)
+        # debug(labels)
+        # debug(use_cache)
+        # debug(output_attentions)
+        # debug(output_hidden_states)
+        # debug(return_dict)
+        # debug(pixel_values)
+        # debug(pixel_values_videos)
+        # debug(image_grid_thw)
+        # debug(video_grid_thw)
+        # debug(rope_deltas)
+        # debug(cache_position)
+        # debug(second_per_grid_ts)
+        # debug(block_tables)
+        # debug(slot_mapping)
+        # debug(batch_valid_length)
         r"""
         Args:
             labels (`Tensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -1803,6 +1846,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             bs, seq_len = input_ids.shape
             step = kwargs["step"]
             if step == 0:
+                self.enable_dynamic_shape()
+
                 # init block tables
                 self.block_mgr = BlockTables(1024, 32, self.config.max_position_embeddings)
                 self.block_mgr.init_cache_engine(bs)
@@ -1844,6 +1889,11 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                     "batch_valid_length": self.batch_valid_length,
                 }
             )
+        elif use_cache is False:
+            step = kwargs["step"]
+            if step == 0:
+                self.enable_dynamic_shape()
+
         return model_inputs
 
     def _get_image_nums_and_video_nums(
