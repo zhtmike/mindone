@@ -1508,7 +1508,6 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             layer.self_attn.infer_attention.add_flags(is_first_iteration=is_first_iteration)
             layer.self_attn.infer_attention.paged_attention_mgr.add_flags(is_first_iteration=is_first_iteration)
 
-    @ms.jit
     def construct(
         self,
         input_ids: Tensor = None,
@@ -1739,7 +1738,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             elif input_ids.shape[1] != cache_position.shape[0]:  # Default case (the "else", a no op, is Exception 2)
                 input_ids = input_ids[:, cache_position]
 
-        if cache_position[0] != 0:
+        if cache_position is not None and cache_position[0] != 0:
             pixel_values = None
             pixel_values_videos = None
 
