@@ -860,6 +860,7 @@ QWEN2_5_VL_ATTENTION_CLASSES = {
 
 
 class Qwen2_5_VLDecoderLayer(nn.Cell):
+    @ms.lazy_inline
     def __init__(self, config: Qwen2_5_VLConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size

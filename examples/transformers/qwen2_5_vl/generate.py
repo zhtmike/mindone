@@ -15,6 +15,8 @@ def int64_to_int32(x: Tensor):
 
 
 def main():
+    ms.set_context(mode=ms.GRAPH_MODE)
+
     with nn.no_init_parameters():
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             "Qwen/Qwen2.5-VL-3B-Instruct",
