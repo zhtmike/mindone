@@ -31,12 +31,22 @@ class InferRotaryEmbedding(Cell):
     def __init__(self, rotary_cos_format=0):
         super().__init__()
         self.rotary_cos_format = rotary_cos_format
-        self.rotary_embedding_op = ops.ApplyRotaryPosEmb(self.rotary_cos_format)
 
     def construct(self, query: Tensor, key: Tensor, freqs_cis, batch_valid_length):
         """Forward of rotary position embedding."""
         freqs_cos, freqs_sin, _ = freqs_cis
-        return self.rotary_embedding_op(query, key, freqs_cos, freqs_sin, batch_valid_length)
+        query_shape, key_shape = query.shape, key.shape
+        query = query.reshape(query.shape[0], query.shape[1], -1, freqs_cos.shape[-1])
+        key = key.reshape(key.shape[0], key.shape[1], -1, freqs_cos.shape[-1])
+        freqs_cos, freqs_sin = freqs_cos[None, :, None, :], freqs_sin[None, :, None, :]
+        query = ops.rotary_position_embedding(
+            query, freqs_cos[:, : query.shape[1]], freqs_sin[:, : query.shape[1]], mode=self.rotary_cos_format
+        )
+        key = ops.rotary_position_embedding(
+            key, freqs_cos[:, : key.shape[1]], freqs_sin[:, : key.shape[1]], mode=self.rotary_cos_format
+        )
+        query, key = query.reshape(query_shape), key.reshape(key_shape)
+        return query, key
 
 
 class InferAttention(Cell):

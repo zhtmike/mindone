@@ -1,17 +1,20 @@
 from transformers import AutoTokenizer
 
 import mindspore as ms
+import mindspore.nn as nn
 
 from mindone.transformers import Qwen2ForCausalLM
 
 ms.set_context(mode=0)
 
-model_name = "/mnt/disk2/wcr/Qwen2.5-14B-Instruct"
-model = Qwen2ForCausalLM.from_pretrained(
-    model_name,
-    mindspore_dtype=ms.bfloat16,
-    attn_implementation="paged_attention",
-)
+model_name = "Qwen/Qwen2.5-0.5B-Instruct"
+
+with nn.no_init_parameters():
+    model = Qwen2ForCausalLM.from_pretrained(
+        model_name,
+        mindspore_dtype=ms.bfloat16,
+        attn_implementation="paged_attention",
+    )
 
 # infer boost
 from mindspore import JitConfig
