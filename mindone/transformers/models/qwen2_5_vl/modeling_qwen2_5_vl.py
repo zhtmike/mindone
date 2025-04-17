@@ -1972,8 +1972,12 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
 __all__ = ["Qwen2_5_VLForConditionalGeneration", "Qwen2_5_VLModel", "Qwen2_5_VLPreTrainedModel"]
 
 
-def debug(x: Optional[Tensor]):
+def debug(x: Any):
     if x is None:
         print(None, None)
         return
-    print(x.shape, x.dtype)
+    if isinstance(x, Tensor):
+        print(x.shape, x.dtype)
+        return
+    print(x)
+    return

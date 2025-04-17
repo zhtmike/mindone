@@ -19,7 +19,7 @@ def main():
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             "Qwen/Qwen2.5-VL-3B-Instruct",
             mindspore_dtype=ms.bfloat16,
-            attn_implementation="paged_attention",  # flash_attention_2
+            attn_implementation="flash_attention_2",  # paged_attention
         )
 
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
