@@ -860,7 +860,6 @@ QWEN2_5_VL_ATTENTION_CLASSES = {
 
 
 class Qwen2_5_VLDecoderLayer(nn.Cell):
-    @ms.lazy_inline
     def __init__(self, config: Qwen2_5_VLConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -1509,7 +1508,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             layer.self_attn.infer_attention.add_flags(is_first_iteration=is_first_iteration)
             layer.self_attn.infer_attention.paged_attention_mgr.add_flags(is_first_iteration=is_first_iteration)
 
-    def enable_dynamic_shape(self):
+    def enable_dynamic_shape(self, use_paged_attention=False):
         input_ids = Tensor(shape=[None, None], dtype=ms.int32)
         attention_mask = Tensor(shape=[None, None], dtype=ms.int32)
         position_ids = None
@@ -1525,10 +1524,16 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         image_grid_thw = Tensor(shape=(None, None), dtype=ms.int32)
         video_grid_thw = None
         rope_deltas = None
-        cache_position = Tensor(shape=[None], dtype=ms.int64)
-        block_tables = Tensor(shape=[None, None], dtype=ms.int32)
-        slot_mapping = Tensor(shape=[None], dtype=ms.int32)
-        batch_valid_length = ms.mutable(Tensor(shape=[None], dtype=ms.int32))
+        second_per_grid_ts = None
+        cache_position = None
+        if use_paged_attention:
+            block_tables = Tensor(shape=[None, None], dtype=ms.int32)
+            slot_mapping = Tensor(shape=[None], dtype=ms.int32)
+            batch_valid_length = ms.mutable(Tensor(shape=[None], dtype=ms.int32))
+        else:
+            block_tables = None
+            slot_mapping = None
+            batch_valid_length = None
 
         self.set_inputs(
             input_ids,
@@ -1546,6 +1551,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             image_grid_thw,
             video_grid_thw,
             rope_deltas,
+            second_per_grid_ts,
             cache_position,
             block_tables,
             slot_mapping,
@@ -1847,7 +1853,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             bs, seq_len = input_ids.shape
             step = kwargs["step"]
             if step == 0:
-                self.enable_dynamic_shape()
+                self.enable_dynamic_shape(use_paged_attention=True)
 
                 # init block tables
                 self.block_mgr = BlockTables(1024, 32, self.config.max_position_embeddings)
@@ -1893,7 +1899,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         elif use_cache is False:
             step = kwargs["step"]
             if step == 0:
-                self.enable_dynamic_shape()
+                self.enable_dynamic_shape(use_paged_attention=False)
 
         return model_inputs
 
