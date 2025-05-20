@@ -1111,13 +1111,9 @@ class DeepseekV3Attention(nn.Cell):
 
         q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
-        query_states = k_pe.new_empty((bsz, self.num_heads, q_len, self.q_head_dim))
-        query_states[:, :, :, : self.qk_nope_head_dim] = q_nope
-        query_states[:, :, :, self.qk_nope_head_dim :] = q_pe
+        query_states = mint.cat([q_nope, mint.broadcast_to(q_pe, q_nope.shape[:-1] + (-1,))], dim=3)
+        key_states = mint.cat([k_nope, mint.broadcast_to(k_pe, k_nope.shape[:-1] + (-1,))], dim=3)
 
-        key_states = k_pe.new_empty((bsz, self.num_heads, q_len, self.q_head_dim))
-        key_states[:, :, :, : self.qk_nope_head_dim] = k_nope
-        key_states[:, :, :, self.qk_nope_head_dim :] = k_pe
         if past_key_value is not None:
             cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
@@ -1212,13 +1208,8 @@ class DeepseekV3FlashAttention2(DeepseekV3Attention):
 
         q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
 
-        query_states = k_pe.new_empty((bsz, self.num_heads, q_len, self.q_head_dim))
-        query_states[:, :, :, : self.qk_nope_head_dim] = q_nope
-        query_states[:, :, :, self.qk_nope_head_dim :] = q_pe
-
-        key_states = k_pe.new_empty((bsz, self.num_heads, q_len, self.q_head_dim))
-        key_states[:, :, :, : self.qk_nope_head_dim] = k_nope
-        key_states[:, :, :, self.qk_nope_head_dim :] = k_pe
+        query_states = mint.cat([q_nope, mint.broadcast_to(q_pe, q_nope.shape[:-1] + (-1,))], dim=3)
+        key_states = mint.cat([k_nope, mint.broadcast_to(k_pe, k_nope.shape[:-1] + (-1,))], dim=3)
 
         if self.q_head_dim != self.v_head_dim:
             value_states = F.pad(value_states, [0, self.q_head_dim - self.v_head_dim])
