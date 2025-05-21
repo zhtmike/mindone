@@ -698,10 +698,12 @@ def apply_rotary_pos_emb(
     sin = sin[position_ids].unsqueeze(unsqueeze_dim)
 
     b, h, s, d = q.shape
-    q = q.view(b, h, s, d // 2, 2).transpose(4, 3).reshape(b, h, s, d)
+    q = q.view(b, h, s, d // 2, 2)
+    q = mint.transpose(q, 4, 3).reshape(b, h, s, d)
 
     b, h, s, d = k.shape
-    k = k.view(b, h, s, d // 2, 2).transpose(4, 3).reshape(b, h, s, d)
+    k = k.view(b, h, s, d // 2, 2)
+    k = mint.transpose(k, 4, 3).reshape(b, h, s, d)
 
     q_embed = ops.rotary_position_embedding(q, cos, sin)
     k_embed = ops.rotary_position_embedding(k, cos, sin)
@@ -1082,17 +1084,18 @@ class DeepseekV3Attention(nn.Cell):
             q = self.q_proj(hidden_states)
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
-        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
+        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim)
+        q = mint.transpose(q, 1, 2)
         q_nope, q_pe = mint.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv, k_pe = mint.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
-        kv = (
-            self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
-            .view(bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
-            .transpose(1, 2)
+        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim)
+        k_pe = mint.transpose(k_pe, 1, 2)
+        kv = self.kv_b_proj(self.kv_a_layernorm(compressed_kv)).view(
+            bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
         )
+        kv = mint.transpose(kv, (1, 2))
 
         k_nope, value_states = mint.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
         kv_seq_len = value_states.shape[-2]
@@ -1115,7 +1118,7 @@ class DeepseekV3Attention(nn.Cell):
             cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
-        attn_weights = mint.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
+        attn_weights = mint.matmul(query_states, mint.transpose(key_states, 2, 3)) * self.softmax_scale
 
         if attn_weights.shape != (bsz, self.num_heads, q_len, kv_seq_len):
             raise ValueError(
@@ -1140,7 +1143,7 @@ class DeepseekV3Attention(nn.Cell):
                 f" {attn_output.shape}"
             )
 
-        attn_output = attn_output.transpose(1, 2)
+        attn_output = mint.transpose(attn_output, 1, 2)
 
         attn_output = attn_output.reshape(bsz, q_len, self.num_heads * self.v_head_dim)
 
@@ -1179,17 +1182,18 @@ class DeepseekV3FlashAttention2(DeepseekV3Attention):
             q = self.q_proj(hidden_states)
         else:
             q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states)))
-        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
+        q = q.view(bsz, q_len, self.num_heads, self.q_head_dim)
+        q = mint.transpose(q, 1, 2)
         q_nope, q_pe = mint.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
 
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
         compressed_kv, k_pe = mint.split(compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim).transpose(1, 2)
-        kv = (
-            self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
-            .view(bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
-            .transpose(1, 2)
+        k_pe = k_pe.view(bsz, q_len, 1, self.qk_rope_head_dim)
+        k_pe = mint.transpose(k_pe, 1, 2)
+        kv = self.kv_b_proj(self.kv_a_layernorm(compressed_kv)).view(
+            bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
         )
+        kv = mint.transpose(kv, 1, 2)
 
         k_nope, value_states = mint.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
         kv_seq_len = value_states.shape[-2]
@@ -1235,7 +1239,7 @@ class DeepseekV3FlashAttention2(DeepseekV3Attention):
         if self.q_head_dim != self.v_head_dim:
             attn_output = attn_output[:, :, :, : self.v_head_dim]
 
-        attn_output = attn_output.transpose(1, 2)
+        attn_output = mint.transpose(attn_output, 1, 2)
 
         attn_output = attn_output.reshape(bsz, q_len, self.num_heads * self.v_head_dim)
 
