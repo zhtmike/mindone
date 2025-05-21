@@ -477,7 +477,7 @@ def patch_merger(
         kernel_height, kernel_width = merge_kernel_size
         new_height, new_width = height // kernel_height, width // kernel_width
         reshaped_seq = seq.view(new_height, kernel_height, new_width, kernel_width, d_model)
-        reshaped_seq = reshaped_seq.permute(0, 2, 1, 3, 4).contiguous()
+        reshaped_seq = reshaped_seq.permute(0, 2, 1, 3, 4)
         padded_seq = reshaped_seq.view(new_height * new_width, kernel_height * kernel_width, -1)
         outputs.append(padded_seq)
         pre_sum += height * width
@@ -1062,9 +1062,6 @@ class DeepseekV3Attention(nn.Cell):
             else:
                 raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
 
-    def _shape(self, tensor: ms.Tensor, seq_len: int, bsz: int):
-        return tensor.view(bsz, seq_len, self.num_heads, self.v_head_dim).transpose(1, 2).contiguous()
-
     def construct(
         self,
         hidden_states: ms.Tensor,
@@ -1143,7 +1140,7 @@ class DeepseekV3Attention(nn.Cell):
                 f" {attn_output.shape}"
             )
 
-        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.transpose(1, 2)
 
         attn_output = attn_output.reshape(bsz, q_len, self.num_heads * self.v_head_dim)
 
@@ -1238,7 +1235,7 @@ class DeepseekV3FlashAttention2(DeepseekV3Attention):
         if self.q_head_dim != self.v_head_dim:
             attn_output = attn_output[:, :, :, : self.v_head_dim]
 
-        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.transpose(1, 2)
 
         attn_output = attn_output.reshape(bsz, q_len, self.num_heads * self.v_head_dim)
 
@@ -1583,8 +1580,8 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel, GenerationMixin):
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
+            shift_logits = logits[..., :-1, :]
+            shift_labels = labels[..., 1:]
             # Flatten the tokens
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
             shift_labels = shift_labels.view(-1)
@@ -1954,11 +1951,11 @@ class KimiVLForConditionalGeneration(KimiVLPreTrainedModel, GenerationMixin):
             # Shift so that tokens < n predict n
             if attention_mask is not None:
                 shift_attention_mask = attention_mask[..., 1:]
-                shift_logits = logits[..., :-1, :][shift_attention_mask != 0].contiguous()
-                shift_labels = labels[..., 1:][shift_attention_mask != 0].contiguous()
+                shift_logits = logits[..., :-1, :][shift_attention_mask != 0]
+                shift_labels = labels[..., 1:][shift_attention_mask != 0]
             else:
-                shift_logits = logits[..., :-1, :].contiguous()
-                shift_labels = labels[..., 1:].contiguous()
+                shift_logits = logits[..., :-1, :]
+                shift_labels = labels[..., 1:]
             # Flatten the tokens
             loss = F.cross_entropy(
                 shift_logits.view(-1, shift_logits.shape[-1]),
