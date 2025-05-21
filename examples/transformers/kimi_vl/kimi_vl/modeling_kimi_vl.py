@@ -57,7 +57,7 @@ from mindspore.common.initializer import HeUniform, Normal, initializer
 
 from mindone.models.utils import normal_, zeros_
 from mindone.transformers.activations import ClassInstantier
-from mindone.transformers.cache_utils import Cache
+from mindone.transformers.cache_utils import Cache, get_max_length, get_seq_length, get_usable_length, update
 from mindone.transformers.generation.utils import GenerationMixin
 from mindone.transformers.mindspore_adapter import dtype_to_min
 from mindone.transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
@@ -74,6 +74,23 @@ logger = logging.get_logger(__name__)
 
 ACT2CLS = {"silu": mint.nn.SiLU}
 ACT2FN = ClassInstantier(ACT2CLS)
+TupleStaticCache = Tuple[Tuple[ms.Tensor, ms.Tensor], ...]
+
+
+def get_seq_length_single_layer(past_key_values: Tuple[ms.Tensor, ms.Tensor]) -> int:
+    return (past_key_values[0][0, 0].any(dim=-1)).sum().item()
+
+
+def get_max_length_single_layer(past_key_values: Tuple[ms.Tensor, ms.Tensor]) -> int:
+    return past_key_values[0].shape[2]
+
+
+def get_usable_length_single_layer(past_key_values, new_seq_length: int) -> int:
+    max_length = get_max_length_single_layer(past_key_values)
+    previous_seq_length = get_seq_length_single_layer(past_key_values)
+    if previous_seq_length + new_seq_length > max_length:
+        return max_length - new_seq_length
+    return previous_seq_length
 
 
 class GELUActivation(nn.Cell):
@@ -958,17 +975,10 @@ class DeepseekV3MoE(nn.Cell):
 class DeepseekV3Attention(nn.Cell):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: DeepseekV3Config, layer_idx: Optional[int] = None):
+    def __init__(self, config: DeepseekV3Config, layer_idx: int):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
-        if layer_idx is None:
-            logger.warning_once(
-                f"Instantiating {self.__class__.__name__} without passing `layer_idx` is not recommended and will "
-                "to errors during the construct call, if caching is used. Please make sure to provide a `layer_idx` "
-                "when creating this class."
-            )
-
         self.attention_dropout = config.attention_dropout
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
@@ -1069,7 +1079,7 @@ class DeepseekV3Attention(nn.Cell):
         hidden_states: ms.Tensor,
         attention_mask: Optional[ms.Tensor] = None,
         position_ids: Optional[ms.Tensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_value: Union[Cache, Tuple[ms.Tensor, ms.Tensor], None] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         **kwargs,
@@ -1106,7 +1116,10 @@ class DeepseekV3Attention(nn.Cell):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+            if isinstance(past_key_value, Cache):
+                kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+            else:
+                kv_seq_len += get_usable_length_single_layer(past_key_value, kv_seq_len)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
         q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
@@ -1115,8 +1128,14 @@ class DeepseekV3Attention(nn.Cell):
         key_states = mint.cat([k_nope, mint.broadcast_to(k_pe, k_nope.shape[:-1] + (-1,))], dim=3)
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if isinstance(past_key_value, Cache):
+                cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                past_seen_tokens = get_seq_length_single_layer(past_key_value)
+                cache_position = mint.arange(past_seen_tokens, (past_seen_tokens + query_states.shape[2]))
+                key_states, value_states = update(past_key_value, key_states, value_states, cache_position)
+                past_key_value = (key_states, value_states)
 
         attn_weights = mint.matmul(query_states, mint.transpose(key_states, 2, 3)) * self.softmax_scale
 
@@ -1167,7 +1186,7 @@ class DeepseekV3FlashAttention2(DeepseekV3Attention):
         hidden_states: ms.Tensor,
         attention_mask: Optional[ms.Tensor] = None,
         position_ids: Optional[ms.Tensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_value: Union[Cache, Tuple[ms.Tensor, ms.Tensor], None] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         **kwargs,
@@ -1204,7 +1223,10 @@ class DeepseekV3FlashAttention2(DeepseekV3Attention):
                     "for auto-regressive decoding with k/v caching, please make sure to initialize the attention class "
                     "with a layer index."
                 )
-            kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+            if isinstance(past_key_value, Cache):
+                kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
+            else:
+                kv_seq_len += get_usable_length_single_layer(past_key_value, kv_seq_len)
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
 
         q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin, position_ids)
@@ -1216,8 +1238,14 @@ class DeepseekV3FlashAttention2(DeepseekV3Attention):
             value_states = F.pad(value_states, [0, self.q_head_dim - self.v_head_dim])
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            if isinstance(past_key_value, Cache):
+                cache_kwargs = {"sin": sin, "cos": cos}  # Specific to RoPE models
+                key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            else:
+                past_seen_tokens = get_seq_length_single_layer(past_key_value)
+                cache_position = mint.arange(past_seen_tokens, (past_seen_tokens + query_states.shape[2]))
+                key_states, value_states = update(past_key_value, key_states, value_states, cache_position)
+                past_key_value = (key_states, value_states)
 
         if self.is_causal and attention_mask is None:
             if q_len > 1:
@@ -1278,7 +1306,7 @@ class DeepseekV3DecoderLayer(nn.Cell):
         hidden_states: ms.Tensor,
         attention_mask: Optional[ms.Tensor] = None,
         position_ids: Optional[ms.Tensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_value: Union[Cache, Tuple[ms.Tensor, ms.Tensor], None] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         **kwargs,
@@ -1390,7 +1418,7 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         input_ids: ms.Tensor = None,
         attention_mask: Optional[ms.Tensor] = None,
         position_ids: Optional[ms.Tensor] = None,
-        past_key_values: Optional[List[ms.Tensor]] = None,
+        past_key_values: Union[Cache, TupleStaticCache, None] = None,
         inputs_embeds: Optional[ms.Tensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -1417,7 +1445,10 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
 
         past_key_values_length = 0
         if use_cache:
-            past_key_values_length = past_key_values.get_usable_length(seq_length)
+            if isinstance(past_key_values, Cache):
+                past_key_values_length = past_key_values.get_usable_length(seq_length)
+            else:
+                past_key_values_length = get_usable_length(past_key_values, seq_length)
 
         if position_ids is None:
             position_ids = mint.arange(past_key_values_length, seq_length + past_key_values_length, dtype=ms.int64)
@@ -1427,8 +1458,8 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         if self._use_flash_attention_2:
-            # 2d mask is passed through the layers
-            attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
+            # it is causual mask
+            attention_mask = None
         else:
             # 4d mask is passed through the layers
             if past_key_values_length == 0:
@@ -1446,19 +1477,25 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
         hidden_states = inputs_embeds
 
         # decoder layers
+        use_tuple_cache = isinstance(past_key_values, Tuple)
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        next_decoder_cache = None
+        next_decoder_cache = () if use_tuple_cache else None
 
-        for decoder_layer in self.layers:
+        for layer_idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
+
+            if use_tuple_cache:
+                past_key_value = past_key_values[layer_idx]
+            else:
+                past_key_value = past_key_values
 
             layer_outputs = decoder_layer(
                 hidden_states,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
-                past_key_value=past_key_values,
+                past_key_value=past_key_value,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
             )
@@ -1466,7 +1503,11 @@ class DeepseekV3Model(DeepseekV3PreTrainedModel):
             hidden_states = layer_outputs[0]
 
             if use_cache:
-                next_decoder_cache = layer_outputs[2 if output_attentions else 1]
+                cache = layer_outputs[2 if output_attentions else 1]
+                if use_tuple_cache:
+                    next_decoder_cache += (cache,)
+                else:
+                    next_decoder_cache = cache
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
@@ -1525,7 +1566,7 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel, GenerationMixin):
         input_ids: ms.Tensor = None,
         attention_mask: Optional[ms.Tensor] = None,
         position_ids: Optional[ms.Tensor] = None,
-        past_key_values: Optional[List[ms.Tensor]] = None,
+        past_key_values: Union[Cache, TupleStaticCache, None] = None,
         inputs_embeds: Optional[ms.Tensor] = None,
         labels: Optional[ms.Tensor] = None,
         use_cache: Optional[bool] = None,
@@ -1606,15 +1647,19 @@ class DeepseekV3ForCausalLM(DeepseekV3PreTrainedModel, GenerationMixin):
     def prepare_inputs_for_generation(
         self,
         input_ids: ms.Tensor,
-        past_key_values: Optional[Cache] = None,
+        past_key_values: Union[Cache, TupleStaticCache, None] = None,
         attention_mask: Optional[ms.Tensor] = None,
         inputs_embeds: Optional[ms.Tensor] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         if past_key_values is not None:
-            cache_length = past_key_values.get_seq_length()
-            past_length = past_key_values.seen_tokens
-            max_cache_length = past_key_values.get_seq_length()
+            if isinstance(past_key_values, Cache):
+                cache_length = past_key_values.get_seq_length()
+                past_length = past_key_values.seen_tokens
+                max_cache_length = past_key_values.get_seq_length()
+            else:
+                cache_length = past_length = get_seq_length(past_key_values)
+                max_cache_length = get_max_length(past_key_values)
 
             # Keep only the unprocessed tokens:
             # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
@@ -1894,7 +1939,7 @@ class KimiVLForConditionalGeneration(KimiVLPreTrainedModel, GenerationMixin):
         input_ids: Optional[ms.Tensor] = None,
         attention_mask: Optional[ms.Tensor] = None,
         position_ids: Optional[ms.Tensor] = None,
-        past_key_values: Optional[List[ms.Tensor]] = None,
+        past_key_values: Union[Cache, TupleStaticCache, None] = None,
         inputs_embeds: Optional[ms.Tensor] = None,
         labels: Optional[ms.Tensor] = None,
         use_cache: Optional[bool] = None,

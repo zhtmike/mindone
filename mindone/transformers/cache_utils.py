@@ -15,8 +15,12 @@ from mindspore import nn, ops
 
 def init_static_cache(config: PretrainedConfig, max_batch_size: int, max_cache_len: int, dtype=None):
     max_cache_len = config.max_position_embeddings if max_cache_len is None else max_cache_len
-    # Some model define a custom `head_dim` != config.hidden_size // config.num_attention_heads
-    head_dim = config.head_dim if hasattr(config, "head_dim") else config.hidden_size // config.num_attention_heads
+    # Some model define a custom `head_dim` != config.hidden_size // config.num_attention_head
+    config = getattr(config, "text_config", config)
+    if hasattr(config, "qk_nope_head_dim"):  # deepseek
+        head_dim = config.qk_nope_head_dim + config.qk_rope_head_dim
+    else:
+        head_dim = config.head_dim if hasattr(config, "head_dim") else config.hidden_size // config.num_attention_heads
 
     dtype = dtype if dtype is not None else ms.float32
     num_key_value_heads = (
@@ -100,7 +104,7 @@ def update(
     return k_out, v_out
 
 
-def get_seq_length(past_key_values, layer_idx: Optional[int] = 0) -> int:
+def get_seq_length(past_key_values, layer_idx: int = 0) -> ms.Tensor:
     """Returns the sequence length of the cached states that were seen by the model."""
     # Occupied cache == any slot in the 3rd dim (sequence length) holds a non-zero value. To save on compute, let's
     # limit the check to the first batch member and head dimension.
@@ -108,9 +112,17 @@ def get_seq_length(past_key_values, layer_idx: Optional[int] = 0) -> int:
     return (past_key_values[layer_idx][0][0, 0].any(axis=-1)).sum()
 
 
-def get_max_length(past_key_values) -> Optional[int]:
+def get_max_length(past_key_values) -> int:
     """Returns the maximum sequence length of the cached states."""
     return past_key_values[0][0].shape[2]
+
+
+def get_usable_length(past_key_values, new_seq_length: int, layer_idx: int = 0) -> int:
+    max_length = get_max_length(past_key_values)
+    previous_seq_length = get_seq_length(past_key_values, layer_idx=layer_idx).item()
+    if previous_seq_length + new_seq_length > max_length:
+        return max_length - new_seq_length
+    return previous_seq_length
 
 
 def reset(past_key_values):
