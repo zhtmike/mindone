@@ -261,14 +261,57 @@ class Qwen2_5_VLVisionAttention(nn.Cell):
         return attn_output
 
 
+class Qwen2_5_VLVisionSdpaAttention(nn.Cell):
+    def __init__(self, dim: int, num_heads: int = 16) -> None:
+        super().__init__()
+        self.num_heads = num_heads
+        self.qkv = mint.nn.Linear(dim, dim * 3, bias=True)
+        self.proj = mint.nn.Linear(dim, dim)
+
+    def construct(
+        self,
+        hidden_states: Tensor,
+        cu_seqlens: Tensor,
+        rotary_pos_emb: Optional[Tensor] = None,
+        position_embeddings: Optional[Tuple[Tensor, Tensor]] = None,
+    ) -> Tensor:
+        seq_length = hidden_states.shape[0]
+        q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        if position_embeddings is None:
+            logger.warning_once(
+                "The attention layers in this model are transitioning from computing the RoPE embeddings internally "
+                "through `rotary_pos_emb` (2D tensor of RoPE theta values), to using externally computed "
+                "`position_embeddings` (Tuple of tensors, containing cos and sin). In v4.54 `rotary_pos_emb` will be "
+                "removed and `position_embeddings` will be mandatory."
+            )
+            emb = mint.cat((rotary_pos_emb, rotary_pos_emb), dim=-1)
+            cos = emb.cos()
+            sin = emb.sin()
+        else:
+            cos, sin = position_embeddings
+        q, k = apply_rotary_pos_emb_vision(q, k, cos, sin)
+
+        attention_mask = mint.ones([seq_length, seq_length], dtype=ms.bool_)
+        for i in range(1, len(cu_seqlens)):
+            attention_mask[cu_seqlens[i - 1] : cu_seqlens[i], cu_seqlens[i - 1] : cu_seqlens[i]] = False
+
+        attn_output = ops.speed_fusion_attention(
+            q, k, v, self.num_heads, "SBH", atten_mask=attention_mask, scale=1 / math.sqrt(q.shape[-1]), keep_prob=1.0
+        )[0]
+        attn_output = attn_output.reshape(seq_length, -1)
+        attn_output = self.proj(attn_output)
+        return attn_output
+
+
 QWEN2_5_VL_VISION_ATTENTION_CLASSES = {
     "eager": Qwen2_5_VLVisionAttention,
     "flash_attention_2": Qwen2_5_VLVisionFlashAttention2,
+    "sdpa": Qwen2_5_VLVisionSdpaAttention,
 }
 
 
 class Qwen2_5_VLVisionBlock(nn.Cell):
-    def __init__(self, config, attn_implementation: str = "flash_attention_2") -> None:
+    def __init__(self, config, attn_implementation: str = "sdpa") -> None:
         super().__init__()
         self.norm1 = Qwen2RMSNorm(config.hidden_size, eps=1e-6)
         self.norm2 = Qwen2RMSNorm(config.hidden_size, eps=1e-6)
@@ -301,7 +344,7 @@ class Qwen2_5_VLPreTrainedModel(MSPreTrainedModel):
     _no_split_modules = ["Qwen2_5_VLDecoderLayer", "Qwen2_5_VLVisionBlock"]
     _skip_keys_device_placement = "past_key_values"
     _supports_flash_attn_2 = True
-    _supports_sdpa = False
+    _supports_sdpa = True
     _supports_cache_class = True
     _supports_static_cache = False
 
@@ -707,6 +750,25 @@ class Qwen2_5_VLFlashAttention2(Qwen2_5_VLAttention):
         cache_position: Optional[Tensor] = None,
         position_embeddings: Optional[Tuple[Tensor, Tensor]] = None,  # necessary, but kept here for BC
     ):
+        if output_attentions:
+            # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
+            logger.warning_once(
+                "Qwen2_5_VLModel is using Qwen2_5_VLFlashAttention2, but `ops.flash_attention_score` does not support "
+                "`output_attentions=True`. Falling back to the manual attention implementation, "
+                "but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. "
+                'This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+            )
+            return super().construct(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+            )
+
         bsz, q_len, _ = hidden_states.shape
 
         query_states = self.q_proj(hidden_states)
@@ -793,15 +855,106 @@ class Qwen2_5_VLFlashAttention2(Qwen2_5_VLAttention):
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
         attn_output = self.o_proj(attn_output)
 
-        if not output_attentions:
-            attn_weights = None
+        return attn_output, None, past_key_value
 
-        return attn_output, attn_weights, past_key_value
+
+class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
+    """
+    Qwen2 attention module using ops.speed_fusion_attention. This module inherits from
+    `Qwen2Attention` as the weights of the module stays untouched. The only changes are on the forward pass to adapt to
+    SDPA API.
+    """
+
+    # Adapted from Qwen2Attention.construct
+    def construct(
+        self,
+        hidden_states: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        past_key_value: Optional[Cache] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_position: Optional[Tensor] = None,
+        position_embeddings: Optional[Tuple[Tensor, Tensor]] = None,  # necessary, but kept here for BC
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tuple[Tensor]]]:
+        if output_attentions:
+            # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
+            logger.warning_once(
+                "Qwen2_5_VLModel is using Qwen2_5_VLSdpaAttention, but `ops.speed_fusion_attention` does not support "
+                "`output_attentions=True`. Falling back to the manual attention implementation, "
+                "but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. "
+                'This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+            )
+            return super().construct(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+            )
+
+        bsz, q_len, _ = hidden_states.shape
+
+        query_states = self.q_proj(hidden_states)
+        key_states = self.k_proj(hidden_states)
+        value_states = self.v_proj(hidden_states)
+
+        query_states = query_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, -1, self.head_dim).transpose(1, 2)
+
+        cos, sin = position_embeddings
+        query_states, key_states = apply_multimodal_rotary_pos_emb(
+            query_states, key_states, cos, sin, self.rope_scaling["mrope_section"]
+        )
+
+        if past_key_value is not None:
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+
+        key_states = repeat_kv(key_states, self.num_key_value_groups)
+        value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+        if self.is_causal:
+            causal_mask = ~mint.tril(mint.ones((bsz, 1, q_len, q_len), dtype=ms.bool_))
+        else:
+            causal_mask = None
+
+        if attention_mask is not None:
+            attention_mask = ~attention_mask[:, None, None, :].to(ms.bool_)
+            if self.is_causal:
+                attention_mask = attention_mask | causal_mask
+            else:
+                attention_mask = mint.tile(attention_mask, (1, 1, q_len, 1))
+        else:
+            attention_mask = causal_mask
+
+        attn_output = ops.speed_fusion_attention(
+            query_states,
+            key_states,
+            value_states,
+            self.num_heads,
+            "BNSD",
+            atten_mask=attention_mask,
+            scale=1 / math.sqrt(query_states.shape[-1]),
+            keep_prob=1 - self.attention_dropout if self.training else 1.0,
+        )[0]
+
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.view(bsz, q_len, self.hidden_size)
+
+        attn_output = self.o_proj(attn_output)
+
+        return attn_output, None, past_key_value
 
 
 QWEN2_5_VL_ATTENTION_CLASSES = {
     "eager": Qwen2_5_VLAttention,
     "flash_attention_2": Qwen2_5_VLFlashAttention2,
+    "sdpa": Qwen2_5_VLSdpaAttention,
 }
 
 
@@ -1025,13 +1178,13 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         past_key_values: Cache,
         output_attentions: bool = False,
     ):
-        if self.config._attn_implementation == "flash_attention_2":
+        if self.config._attn_implementation in ["flash_attention_2", "sdpa"]:
             if attention_mask is not None and past_key_values is not None:
                 is_padding_right = attention_mask[:, -1].sum().item() != input_tensor.shape[0]
                 if is_padding_right:
                     raise ValueError(
                         "You are attempting to perform batched generation with padding_side='right'"
-                        " this may lead to unexpected behaviour for Flash Attention version of Qwen2_5_VL. Make sure to "
+                        " this may lead to unexpected behaviour for Flash Attention / SPDA version of Qwen2_5_VL. Make sure to "
                         " call `tokenizer.padding_side  = 'left'` before tokenizing the input. "
                     )
             if attention_mask is not None and 0.0 in attention_mask:
