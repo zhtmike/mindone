@@ -695,6 +695,9 @@ class LlavaNextVideoForConditionalGeneration(LlavaNextVideoPreTrainedModel, Gene
         logits_to_keep=None,
         **kwargs,
     ):
+        # TODO: remove this once it is fixed in pipeline.
+        if logits_to_keep is None:
+            logits_to_keep = 1
         # Overwritten -- extra custom processing
 
         model_inputs = self.language_model.prepare_inputs_for_generation(

@@ -701,6 +701,10 @@ class LlavaOnevisionForConditionalGeneration(LlavaOnevisionPreTrainedModel, Gene
         logits_to_keep=None,
         **kwargs,
     ):
+        # TODO: remove this once it is fixed in pipeline.
+        if logits_to_keep is None:
+            logits_to_keep = 1
+
         # Overwritten -- in specific circumstances we don't want to construct image inputs to the model
 
         model_inputs = self.language_model.prepare_inputs_for_generation(
