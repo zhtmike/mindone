@@ -258,7 +258,7 @@ class LlavaOnevisionForConditionalGeneration(LlavaOnevisionPreTrainedModel, Gene
         super().__init__(config)
         # TODO: remove the config fix once they are fixed.
         config.vision_config._attn_implementation = config._attn_implementation
-        config.vision_config.torch_dtype = getattr(config, "mindspore_dtype", None)
+        config.vision_config.mindspore_dtype = getattr(config, "mindspore_dtype", None)
         self.vision_tower = AutoModel.from_config(config.vision_config)
 
         self.multi_modal_projector = LlavaOnevisionMultiModalProjector(config)
@@ -268,7 +268,7 @@ class LlavaOnevisionForConditionalGeneration(LlavaOnevisionPreTrainedModel, Gene
         self.vocab_size = config.text_config.vocab_size
         # TODO: remove the config fix once they are fixed.
         config.text_config._attn_implementation = config._attn_implementation
-        config.text_config.torch_dtype = getattr(config, "mindspore_dtype", None)
+        config.text_config.mindspore_dtype = getattr(config, "mindspore_dtype", None)
         self.language_model = AutoModelForCausalLM.from_config(config.text_config)
         if self.language_model._tied_weights_keys is not None:
             self._tied_weights_keys = [f"language_model.{k}" for k in self.language_model._tied_weights_keys]
@@ -537,7 +537,7 @@ class LlavaOnevisionForConditionalGeneration(LlavaOnevisionPreTrainedModel, Gene
         >>> import mindspore as ms
         >>> from transformers import LlavaOnevisionProcessor, LlavaOnevisionForConditionalGeneration
 
-        >>> model = LlavaOnevisionForConditionalGeneration.from_pretrained("llava-hf/llava-onevision-qwen2-7b-ov-hf", torch_dtype="float16")
+        >>> model = LlavaOnevisionForConditionalGeneration.from_pretrained("llava-hf/llava-onevision-qwen2-7b-ov-hf", mindspore_dtype="float16")
         >>> processor = LlavaOnevisionProcessor.from_pretrained("llava-hf/llava-onevision-qwen2-7b-ov-hf")
 
         >>> conversation = [
