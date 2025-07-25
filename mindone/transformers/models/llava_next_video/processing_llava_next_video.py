@@ -39,7 +39,7 @@ class LlavaNextVideoProcessorKwargs(ProcessingKwargs, total=False):
             "padding": False,
         },
         "common_kwargs": {
-            "return_tensors": "pt",
+            "return_tensors": "ms",
         },
     }
 
@@ -86,7 +86,7 @@ class LlavaNextVideoProcessor(ProcessorMixin):
         "video_token",
         "num_additional_image_tokens",
     ]
-    image_processor_class = ("LlavaNextImageProcessor", "LlavaNextImageProcessorFast")
+    image_processor_class = "LlavaNextImageProcessor"
     video_processor_class = "LlavaNextVideoImageProcessor"
     tokenizer_class = ("LlamaTokenizer", "LlamaTokenizerFast")
 
@@ -141,10 +141,8 @@ class LlavaNextVideoProcessor(ProcessorMixin):
             return_tensors (`str` or [`~utils.TensorType`], *optional*):
                 If set, will return tensors of a particular framework. Acceptable values are:
 
-                - `'tf'`: Return TensorFlow `tf.constant` objects.
-                - `'pt'`: Return PyTorch `mindspore.Tensor` objects.
+                - `'ns'`: Return PyTorch `mindspore.Tensor` objects.
                 - `'np'`: Return NumPy `np.ndarray` objects.
-                - `'jax'`: Return JAX `jnp.ndarray` objects.
 
         Returns:
             [`BatchFeature`]: A [`BatchFeature`] with the following fields:
