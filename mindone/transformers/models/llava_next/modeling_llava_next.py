@@ -23,7 +23,7 @@ from transformers import LlavaNextConfig
 
 import mindspore as ms
 import mindspore.mint as mint
-from mindspore import nn
+import mindspore.nn as nn
 
 from mindone.models.utils import normal_, zeros_
 
@@ -468,7 +468,7 @@ class LlavaNextForConditionalGeneration(LlavaNextPreTrainedModel, GenerationMixi
         ```python
         >>> from PIL import Image
         >>> import requests
-        >>> from transformers import AutoProcessor, LlavaNextForConditionalGeneration
+        >>> from mindone.transformers import AutoProcessor, LlavaNextForConditionalGeneration
 
         >>> model = LlavaNextForConditionalGeneration.from_pretrained("llava-hf/llava-v1.6-mistral-7b-hf")
         >>> processor = AutoProcessor.from_pretrained("llava-hf/llava-v1.6-mistral-7b-hf")
@@ -477,7 +477,7 @@ class LlavaNextForConditionalGeneration(LlavaNextPreTrainedModel, GenerationMixi
         >>> url = "https://www.ilankelman.org/stopsigns/australia.jpg"
         >>> image = Image.open(requests.get(url, stream=True).raw)
 
-        >>> inputs = processor(images=image, text=prompt, return_tensors="pt")
+        >>> inputs = processor(images=image, text=prompt, return_tensors="ms")
 
         >>> # Generate
         >>> generate_ids = model.generate(**inputs, max_length=30)
@@ -550,7 +550,7 @@ class LlavaNextForConditionalGeneration(LlavaNextPreTrainedModel, GenerationMixi
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
-            # logits_to_keep=logits_to_keep,  # TODO: add back once llama is updated to >=4.50.0
+            logits_to_keep=logits_to_keep,
             **lm_kwargs,
         )
 
