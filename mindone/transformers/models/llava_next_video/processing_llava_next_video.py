@@ -21,6 +21,8 @@ from typing import List, Union
 import numpy as np
 from transformers.tokenization_utils_base import PreTokenizedInput, TextInput
 
+import mindspore as ms
+
 from ...feature_extraction_utils import BatchFeature
 from ...image_processing_utils import select_best_resolution
 from ...image_utils import ImageInput, VideoInput, get_image_size, to_numpy_array
@@ -213,7 +215,11 @@ class LlavaNextVideoProcessor(ProcessorMixin):
                 prompt_strings.append(sample)
             text = prompt_strings
 
-        text_inputs = self.tokenizer(text, **output_kwargs["text_kwargs"])
+        output_kwargs["text_kwargs"].pop("return_tensors", None)
+        text_inputs = self.tokenizer(text, **output_kwargs["text_kwargs"], return_tensors="np")
+        for k, v in text_inputs.items():
+            text_inputs[k] = ms.tensor(v)
+
         return BatchFeature(data={**text_inputs, **image_inputs, **videos_inputs})
 
     # Copied from transformers.models.llava_next.processing_llava_next.LlavaNextProcessor._get_number_of_features

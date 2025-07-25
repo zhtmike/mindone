@@ -23,6 +23,8 @@ from typing import Iterable, List, Union
 import numpy as np
 from transformers.tokenization_utils_base import PreTokenizedInput, TextInput
 
+import mindspore as ms
+
 from ...feature_extraction_utils import BatchFeature
 from ...image_processing_utils import select_best_resolution
 from ...image_utils import ImageInput, VideoInput, get_image_size, to_numpy_array
@@ -179,7 +181,11 @@ class LlavaOnevisionProcessor(ProcessorMixin):
             num_video_tokens = (num_frames * pooled_height_width * pooled_height_width) + 1  # +1 for newline token
             text = [sample.replace(self.video_token, self.video_token * num_video_tokens) for sample in text]
 
-        text_inputs = self.tokenizer(text, **output_kwargs["text_kwargs"])
+        output_kwargs["text_kwargs"].pop("return_tensors", None)
+        text_inputs = self.tokenizer(text, **output_kwargs["text_kwargs"], return_tensors="np")
+        for k, v in text_inputs.items():
+            text_inputs[k] = ms.tensor(v)
+
         return BatchFeature(data={**text_inputs, **image_inputs, **video_inputs})
 
     def _expand_image_tokens(

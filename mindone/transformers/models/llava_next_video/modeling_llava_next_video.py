@@ -548,12 +548,12 @@ class LlavaNextVideoForConditionalGeneration(LlavaNextVideoPreTrainedModel, Gene
         >>> inputs_image = processor(text=prompt, images=image, return_tensors="ms").to(model.device)
 
         >>> # Generate from video
-        >>> generate_ids = model.generate(**inputs_video, max_length=50)
+        >>> generate_ids = model.generate(**inputs_video, max_new_tokens=50)
         >>> processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "USER:\nWhy is this video funny? ASSISTANT: The humor in this video comes from the unexpected and endearing sight of a baby wearing glasses and (...)"
 
         >>> # Generate from image
-        >>> generate_ids = model.generate(**inputs_image, max_length=30)
+        >>> generate_ids = model.generate(**inputs_image, max_new_tokens=30)
         >>> processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "USER: \nWhat's the content of the image? ASSISTANT: The image shows a red stop sign on a pole, with a traditional Chinese archway (...)"
         ```"""
