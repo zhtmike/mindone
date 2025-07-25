@@ -54,6 +54,7 @@ else:
             ("dpt", ("DPTImageProcessor",)),
             ("llava_next", ("LlavaNextImageProcessor")),
             ("llava_next_video", ("LlavaNextVideoImageProcessor",)),
+            ("llava_onevision", ("LlavaOnevisionImageProcessor")),
         ]
     )
 

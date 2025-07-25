@@ -290,7 +290,13 @@ from .models.llava_next_video import (
     LlavaNextVideoPreTrainedModel,
     LlavaNextVideoProcessor,
 )
-from .models.llava_onevision import LlavaOnevisionForConditionalGeneration, LlavaOnevisionPreTrainedModel
+from .models.llava_onevision import (
+    LlavaOnevisionForConditionalGeneration,
+    LlavaOnevisionImageProcessor,
+    LlavaOnevisionPreTrainedModel,
+    LlavaOnevisionProcessor,
+    LlavaOnevisionVideoProcessor,
+)
 from .models.m2m_100 import M2M100ForConditionalGeneration, M2M100Model, M2M100PreTrainedModel
 from .models.megatron_bert import (
     MegatronBertForCausalLM,
