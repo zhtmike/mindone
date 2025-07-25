@@ -289,7 +289,7 @@ class LlavaNextVideoForConditionalGeneration(LlavaNextVideoPreTrainedModel, Gene
     ):
         super().__init__(config)
         # TODO: remove the config fix once they are fixed.
-        config.vusion_config._attn_implementation = config._attn_implementation
+        config.vision_config._attn_implementation = config._attn_implementation
         config.vision_config.mindspore_dtype = getattr(config, "mindspore_dtype", None)
         self.vision_tower = AutoModel.from_config(config.vision_config)
 
