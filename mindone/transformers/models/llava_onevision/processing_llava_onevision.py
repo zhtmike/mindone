@@ -21,12 +21,12 @@ import os
 from typing import Iterable, List, Union
 
 import numpy as np
+from transformers.tokenization_utils_base import PreTokenizedInput, TextInput
 
 from ...feature_extraction_utils import BatchFeature
 from ...image_processing_utils import select_best_resolution
 from ...image_utils import ImageInput, VideoInput, get_image_size, to_numpy_array
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
-from ...tokenization_utils_base import PreTokenizedInput, TextInput
 from ...utils import logging
 from ..auto import AutoImageProcessor
 
