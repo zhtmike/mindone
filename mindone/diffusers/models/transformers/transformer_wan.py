@@ -27,12 +27,20 @@ from ...utils import logging
 from ..attention import FeedForward
 from ..attention_processor import Attention
 from ..embeddings import PixArtAlphaTextProjection, TimestepEmbedding, Timesteps, get_1d_rotary_pos_embed
-from ..layers_compat import unflatten, view_as_complex
+from ..layers_compat import unflatten
 from ..modeling_outputs import Transformer2DModelOutput
 from ..modeling_utils import ModelMixin
 from ..normalization import FP32LayerNorm
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+def complex_mult(a: ms.Tensor, b: ms.Tensor) -> ms.Tensor:
+    a_real, a_complex = mint.unbind(a, dim=-1)
+    b_real, b_complex = mint.unbind(b, dim=-1)
+    out_real = a_real * b_real - a_complex * b_complex
+    out_complex = a_real * b_complex + b_real * a_complex
+    return mint.stack([out_real, out_complex], dim=-1)
 
 
 class WanAttnProcessor2_0:
@@ -71,9 +79,8 @@ class WanAttnProcessor2_0:
             def apply_rotary_emb(hidden_states: ms.Tensor, freqs: ms.Tensor):
                 # TODO: use float32 here since float64 has performance issue
                 # x_rotated = view_as_complex(unflatten(hidden_states.to(ms.float64), 3, (-1, 2)))
-                dtype = ms.float32
-                x_rotated = view_as_complex(unflatten(hidden_states.to(dtype), 3, (-1, 2)))
-                x_out = ops.view_as_real(x_rotated * freqs).flatten(3, 4)
+                x_rotated = unflatten(hidden_states.to(ms.float32), 3, (-1, 2))
+                x_out = complex_mult(x_rotated, freqs).flatten(3, 4)
                 return x_out.type_as(hidden_states)
 
             query = apply_rotary_emb(query, rotary_emb)
@@ -197,6 +204,7 @@ class WanRotaryPosEmbed(nn.Cell):
             freq = get_1d_rotary_pos_embed(
                 dim, max_seq_len, theta, use_real=False, repeat_interleave_real=False, freqs_dtype=freqs_dtype
             )
+            freq = ops.view_as_real(freq)
             freqs.append(freq)
         self.freqs = mint.cat(freqs, dim=1)
 
@@ -219,10 +227,10 @@ class WanRotaryPosEmbed(nn.Cell):
         # freqs_w = freqs[2][:ppw].view(1, 1, ppw, -1).expand(ppf, pph, ppw, -1)
         # FIXME: we use tile since `tensor.broadcast_to` will thrown an issue (complex input is not supported) in graph
         #  mode
-        freqs_f = freqs[0][:ppf].view(ppf, 1, 1, -1).tile((1, pph, ppw, 1))
-        freqs_h = freqs[1][:pph].view(1, pph, 1, -1).tile((ppf, 1, ppw, 1))
-        freqs_w = freqs[2][:ppw].view(1, 1, ppw, -1).tile((ppf, pph, 1, 1))
-        freqs = mint.cat([freqs_f, freqs_h, freqs_w], dim=-1).reshape(1, 1, ppf * pph * ppw, -1)
+        freqs_f = freqs[0][:ppf].view(ppf, 1, 1, -1, 2).tile((1, pph, ppw, 1, 1))
+        freqs_h = freqs[1][:pph].view(1, pph, 1, -1, 2).tile((ppf, 1, ppw, 1, 1))
+        freqs_w = freqs[2][:ppw].view(1, 1, ppw, -1, 2).tile((ppf, pph, 1, 1, 1))
+        freqs = mint.cat([freqs_f, freqs_h, freqs_w], dim=-2).reshape(1, 1, ppf * pph * ppw, -1, 2)
         return freqs
 
 
