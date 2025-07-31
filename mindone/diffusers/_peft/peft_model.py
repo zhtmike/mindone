@@ -296,7 +296,7 @@ class PeftModel(PushToHubMixin, nn.Cell):
         raise NotImplementedError
 
     def _prepare_model_for_gradient_checkpointing(self, model):
-        raise NotImplementedError
+        return model
 
     def get_prompt_embedding_to_save(self, adapter_name: str) -> ms.Tensor:
         raise NotImplementedError
