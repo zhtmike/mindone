@@ -405,6 +405,9 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
         self.config_patch_size = self.config.patch_size
 
+    def _set_gradient_checkpointing(self, enable=False):
+        self.gradient_checkpointing = enable
+
     def construct(
         self,
         hidden_states: ms.Tensor,
@@ -447,7 +450,10 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
         # 4. Transformer blocks
         for block in self.blocks:
-            hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+            if self.gradient_checkpointing:
+                hidden_states = ms.recompute(block, hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
+            else:
+                hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, rotary_emb)
 
         # 5. Output norm, projection & unpatchify
         shift, scale = (self.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)
