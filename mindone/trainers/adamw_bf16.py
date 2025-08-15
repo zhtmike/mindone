@@ -16,7 +16,7 @@ update_ = MultitypeFuncGraph("update_")
 
 @update_.register("Tensor", "Tensor")
 def update_param(source_param: Tensor, target_param: Tensor) -> None:
-    ops.assign(target_param, ops.cast(source_param, target_param.dtype))
+    target_param.copy_(source_param.to(target_param.dtype))
 
 
 class BF16AdamW(AdamW):
@@ -65,6 +65,7 @@ class BF16AdamW(AdamW):
             if x.dtype == ms.float32:
                 _logger.warning(f"model parameter {x.name} should be `bfloat16`, but got `{x.dtype}`.")
 
+    @ms.jit
     def construct(self, gradients):
         gradients = self.flatten_gradients(gradients)
         weight_decay = self.get_weight_decay()
