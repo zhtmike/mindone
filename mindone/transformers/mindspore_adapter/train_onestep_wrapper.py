@@ -3,7 +3,6 @@ from typing import Dict, Optional
 import mindspore as ms
 from mindspore import ParallelMode, Tensor, context, mint, nn, ops
 from mindspore.ops import composite as C
-from mindspore.ops import operations as P
 
 from mindone.trainers.zero import ZeroHelper
 
@@ -21,8 +20,7 @@ _grad_accum_op = C.MultitypeFuncGraph("gradient_accumulation_op")
 @_grad_accum_op.register("Int64", "Tensor", "Tensor")
 def cumulative_grad_process(cumulative_grad, grad):
     """Apply gradient accumulation to cumulative grad."""
-    P.AssignAdd()(cumulative_grad, grad)
-    return cumulative_grad
+    cumulative_grad.add_(grad)
 
 
 _grad_clear_op = C.MultitypeFuncGraph("gradient_clear_op")
@@ -32,7 +30,7 @@ _grad_clear_op = C.MultitypeFuncGraph("gradient_clear_op")
 def clear_grad(cumulative_grad):
     """Clear grad."""
     zero_grad = mint.zeros_like(cumulative_grad)
-    return ops.assign(cumulative_grad, zero_grad)
+    ops.assign(cumulative_grad, zero_grad)
 
 
 def _is_pynative_parallel():
