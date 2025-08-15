@@ -69,7 +69,7 @@ class BF16AdamW(AdamW):
         gradients = self.flatten_gradients(gradients)
         weight_decay = self.get_weight_decay()
         lr = self.get_lr()
-        self.assignadd(self.global_step, self.global_step_increase_tensor)
+        self.global_step.add_(self.global_step_increase_tensor)
         state_step = self.global_step.astype(ms.float32)
         if self.amsgrad:
             if self.is_group:

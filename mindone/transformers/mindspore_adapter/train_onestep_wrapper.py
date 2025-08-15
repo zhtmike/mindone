@@ -231,7 +231,7 @@ class TrainOneStepWrapper(nn.Cell):
                 self.ema.ema_update()
         else:
             loss = ops.depend(loss, self.hyper_map(_grad_accum_op, self.accumulated_grads, grads))
-            loss = ops.depend(loss, ops.assign_add(self.cur_accum_step, ms.Tensor(1, ms.int32)))
+            loss = ops.depend(loss, self.cur_accum_step.add_(1))
             if self.cur_accum_step % self.accum_steps == 0:
                 if self.clip_grad_fn is not None:
                     if self.is_zero and self.is_clip_norm:
@@ -251,9 +251,7 @@ class TrainOneStepWrapper(nn.Cell):
                     self.ema.ema_update()
             else:
                 # update the optimizer global step and learning rate, do not update the parameter
-                loss = ops.depend(
-                    loss, ops.assign_add(self.optimizer.global_step, self.optimizer.global_step_increase_tensor)
-                )
+                loss = ops.depend(loss, self.optimizer.global_step.add_(self.optimizer.global_step_increase_tensor))
 
             # unscaling loss for grad accum
             loss = loss * self.accum_steps
