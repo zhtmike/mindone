@@ -17,7 +17,7 @@ except ImportError:
 _grad_accum_op = C.MultitypeFuncGraph("gradient_accumulation_op")
 
 
-@_grad_accum_op.register("Int64", "Tensor", "Tensor")
+@_grad_accum_op.register("Tensor", "Tensor")
 def cumulative_grad_process(cumulative_grad, grad):
     """Apply gradient accumulation to cumulative grad."""
     cumulative_grad.add_(grad)
