@@ -2,14 +2,144 @@
 import argparse
 import binascii
 import logging
+import math
 import os
 import os.path as osp
+import pathlib
+from typing import Any, BinaryIO, List, Optional, Tuple, Union
 
 import imageio
-import torch
-import torchvision
+import tqdm
+from PIL import Image
 
-__all__ = ["save_video", "save_image", "str2bool"]
+import mindspore as ms
+import mindspore.mint as mint
+
+__all__ = ["save_video", "save_image", "str2bool", "load_pth"]
+
+
+def _make_grid(
+    tensor: Union[ms.Tensor, List[ms.Tensor]],
+    nrow: int = 8,
+    padding: int = 2,
+    normalize: bool = False,
+    value_range: Optional[Tuple[int, int]] = None,
+    scale_each: bool = False,
+    pad_value: float = 0.0,
+) -> ms.Tensor:
+    """
+    Make a grid of images.
+
+    Args:
+        tensor (Tensor or list): 4D mini-batch Tensor of shape (B x C x H x W)
+            or a list of images all of the same size.
+        nrow (int, optional): Number of images displayed in each row of the grid.
+            The final grid size is ``(B / nrow, nrow)``. Default: ``8``.
+        padding (int, optional): amount of padding. Default: ``2``.
+        normalize (bool, optional): If True, shift the image to the range (0, 1),
+            by the min and max values specified by ``value_range``. Default: ``False``.
+        value_range (tuple, optional): tuple (min, max) where min and max are numbers,
+            then these numbers are used to normalize the image. By default, min and max
+            are computed from the tensor.
+        scale_each (bool, optional): If ``True``, scale each image in the batch of
+            images separately rather than the (min, max) over all images. Default: ``False``.
+        pad_value (float, optional): Value for the padded pixels. Default: ``0``.
+
+    Returns:
+        grid (Tensor): the tensor containing grid of images.
+    """
+    if not ms.is_tensor(tensor):
+        if isinstance(tensor, list):
+            for t in tensor:
+                if not ms.is_tensor(t):
+                    raise TypeError(f"tensor or list of tensors expected, got a list containing {type(t)}")
+        else:
+            raise TypeError(f"tensor or list of tensors expected, got {type(tensor)}")
+
+    # if list of tensors, convert to a 4D mini-batch Tensor
+    if isinstance(tensor, list):
+        tensor = mint.stack(tensor, dim=0)
+
+    if len(tensor.shape) == 2:  # single image H x W
+        tensor = tensor.unsqueeze(0)
+    if len(tensor.shape) == 3:  # single image
+        if tensor.shape[0] == 1:  # if single-channel, convert to 3-channel
+            tensor = mint.cat((tensor, tensor, tensor), 0)
+        tensor = tensor.unsqueeze(0)
+
+    if len(tensor.shape) == 4 and tensor.shape[1] == 1:  # single-channel images
+        tensor = mint.cat((tensor, tensor, tensor), 1)
+
+    if normalize is True:
+        tensor = tensor.clone()  # avoid modifying tensor in-place
+        if value_range is not None and not isinstance(value_range, tuple):
+            raise TypeError("value_range has to be a tuple (min, max) if specified. min and max are numbers")
+
+        def norm_ip(img, low, high):
+            img.clamp_(min=low, max=high)
+            img.sub_(low).div_(max(high - low, 1e-5))
+
+        def norm_range(t, value_range):
+            if value_range is not None:
+                norm_ip(t, value_range[0], value_range[1])
+            else:
+                norm_ip(t, float(t.min()), float(t.max()))
+
+        if scale_each is True:
+            for t in tensor:  # loop over mini-batch dimension
+                norm_range(t, value_range)
+        else:
+            norm_range(tensor, value_range)
+
+    if not isinstance(tensor, ms.Tensor):
+        raise TypeError("tensor should be of type mindspore.Tensor")
+    if tensor.shape[0] == 1:
+        return tensor.squeeze(0)
+
+    # make the mini-batch of images into a grid
+    nmaps = tensor.shape[0]
+    xmaps = min(nrow, nmaps)
+    ymaps = int(math.ceil(float(nmaps) / xmaps))
+    height, width = int(tensor.shape[2] + padding), int(tensor.shape[3] + padding)
+    num_channels = tensor.shape[1]
+    grid = tensor.new_full((num_channels, height * ymaps + padding, width * xmaps + padding), pad_value)
+    k = 0
+    for y in range(ymaps):
+        for x in range(xmaps):
+            if k >= nmaps:
+                break
+            # Tensor.copy_() is a valid method but seems to be missing from the stubs
+            # https://pytorch.org/docs/stable/tensors.html#ms.Tensor.copy_
+            grid.narrow(1, y * height + padding, height - padding).narrow(  # type: ignore[attr-defined]
+                2, x * width + padding, width - padding
+            ).copy_(tensor[k])
+            k = k + 1
+    return grid
+
+
+def _save_image(
+    tensor: Union[ms.Tensor, List[ms.Tensor]],
+    fp: Union[str, pathlib.Path, BinaryIO],
+    format: Optional[str] = None,
+    **kwargs,
+) -> None:
+    """
+    Save a given Tensor into an image file.
+
+    Args:
+        tensor (Tensor or list): Image to be saved. If given a mini-batch tensor,
+            saves the tensor as a grid of images by calling ``make_grid``.
+        fp (string or file object): A filename or a file object
+        format(Optional):  If omitted, the format to use is determined from the filename extension.
+            If a file object was used instead of a filename, this parameter should always be used.
+        **kwargs: Other arguments are documented in ``make_grid``.
+    """
+
+    grid = _make_grid(tensor, **kwargs)
+    # Add 0.5 after unnormalizing to [0, 255] to round to the nearest integer
+    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to(ms.uint8).numpy()
+    im = Image.fromarray(ndarr)
+    im.save(fp, format=format)
 
 
 def rand_name(length=8, suffix=""):
@@ -29,14 +159,11 @@ def save_video(tensor, save_file=None, fps=30, suffix=".mp4", nrow=8, normalize=
     try:
         # preprocess
         tensor = tensor.clamp(min(value_range), max(value_range))
-        tensor = torch.stack(
-            [
-                torchvision.utils.make_grid(u, nrow=nrow, normalize=normalize, value_range=value_range)
-                for u in tensor.unbind(2)
-            ],
+        tensor = mint.stack(
+            [_make_grid(u, nrow=nrow, normalize=normalize, value_range=value_range) for u in tensor.unbind(2)],
             dim=1,
         ).permute(1, 2, 3, 0)
-        tensor = (tensor * 255).type(torch.uint8).cpu()
+        tensor = (tensor * 255).type(ms.uint8).cpu()
 
         # write video
         writer = imageio.get_writer(cache_file, fps=fps, codec="libx264", quality=8)
@@ -56,7 +183,7 @@ def save_image(tensor, save_file, nrow=8, normalize=True, value_range=(-1, 1)):
     # save to cache
     try:
         tensor = tensor.clamp(min(value_range), max(value_range))
-        torchvision.utils.save_image(tensor, save_file, nrow=nrow, normalize=normalize, value_range=value_range)
+        _save_image(tensor, save_file, nrow=nrow, normalize=normalize, value_range=value_range)
         return save_file
     except Exception as e:
         logging.info(f"save_image failed, error: {e}")
@@ -91,28 +218,28 @@ def str2bool(v):
 
 def masks_like(tensor, zero=False, generator=None, p=0.2):
     assert isinstance(tensor, list)
-    out1 = [torch.ones(u.shape, dtype=u.dtype, device=u.device) for u in tensor]
+    out1 = [mint.ones(u.shape, dtype=u.dtype, device=u.device) for u in tensor]
 
-    out2 = [torch.ones(u.shape, dtype=u.dtype, device=u.device) for u in tensor]
+    out2 = [mint.ones(u.shape, dtype=u.dtype, device=u.device) for u in tensor]
 
     if zero:
         if generator is not None:
             for u, v in zip(out1, out2):
-                random_num = torch.rand(1, generator=generator, device=generator.device).item()
+                random_num = mint.rand(1, generator=generator, device=generator.device).item()
                 if random_num < p:
                     u[:, 0] = (
-                        torch.normal(mean=-3.5, std=0.5, size=(1,), device=u.device, generator=generator)
+                        mint.normal(mean=-3.5, std=0.5, size=(1,), device=u.device, generator=generator)
                         .expand_as(u[:, 0])
                         .exp()
                     )
-                    v[:, 0] = torch.zeros_like(v[:, 0])
+                    v[:, 0] = mint.zeros_like(v[:, 0])
                 else:
                     u[:, 0] = u[:, 0]
                     v[:, 0] = v[:, 0]
         else:
             for u, v in zip(out1, out2):
-                u[:, 0] = torch.zeros_like(u[:, 0])
-                v[:, 0] = torch.zeros_like(v[:, 0])
+                u[:, 0] = mint.zeros_like(u[:, 0])
+                v[:, 0] = mint.zeros_like(v[:, 0])
 
     return out1, out2
 
@@ -140,3 +267,13 @@ def best_output_size(w, h, dw, dh, expected_area):
         return ow1, oh1
     else:
         return ow2, oh2
+
+
+def load_pth(pth_path: str, dtype: Any = ms.bfloat16):
+    import torch
+
+    torch_data = torch.load(pth_path, map_location="cpu")
+    mindspore_data = dict()
+    for name, value in tqdm.tqdm(torch_data.items(), desc="converting to MindSpore format"):
+        mindspore_data[name] = ms.Parameter(ms.from_numpy(value.numpy(), dtype=dtype))
+    return mindspore_data

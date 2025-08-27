@@ -1,41 +1,48 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import math
+from typing import Any, List, Optional, Tuple
 
-import torch
-import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.models.modeling_utils import ModelMixin
+import numpy as np
+
+import mindspore as ms
+import mindspore.mint as mint
+import mindspore.nn as nn
+import mindspore.ops as ops
+from mindspore.common.initializer import XavierUniform, initializer
+
+from mindone.diffusers.configuration_utils import ConfigMixin, register_to_config
+from mindone.diffusers.models.layers_compat import unflatten, view_as_complex
+from mindone.diffusers.models.modeling_utils import ModelMixin
+from mindone.models.utils import normal_, xavier_uniform_, zeros_
 
 from .attention import flash_attention
 
 __all__ = ["WanModel"]
 
 
-def sinusoidal_embedding_1d(dim, position):
+def sinusoidal_embedding_1d(dim: int, position: ms.Tensor) -> ms.Tensor:
     # preprocess
     assert dim % 2 == 0
     half = dim // 2
-    position = position.type(torch.float64)
+    position = position.type(ms.float64)
 
     # calculation
-    sinusoid = torch.outer(position, torch.pow(10000, -torch.arange(half).to(position).div(half)))
-    x = torch.cat([torch.cos(sinusoid), torch.sin(sinusoid)], dim=1)
+    sinusoid = mint.outer(position, mint.pow(10000, -mint.arange(half).to(position.dtype).div(half)))
+    x = mint.cat([mint.cos(sinusoid), mint.sin(sinusoid)], dim=1)
     return x
 
 
-@torch.amp.autocast("cuda", enabled=False)
-def rope_params(max_seq_len, dim, theta=10000):
+# @torch.amp.autocast("cuda", enabled=False)
+def rope_params(max_seq_len: int, dim: int, theta: int = 10000) -> ms.Tensor:
     assert dim % 2 == 0
-    freqs = torch.outer(
-        torch.arange(max_seq_len), 1.0 / torch.pow(theta, torch.arange(0, dim, 2).to(torch.float64).div(dim))
-    )
-    freqs = torch.polar(torch.ones_like(freqs), freqs)
+    freqs = mint.outer(mint.arange(max_seq_len), 1.0 / mint.pow(theta, mint.arange(0, dim, 2).to(ms.float64).div(dim)))
+    freqs = mint.polar(mint.ones_like(freqs), freqs)
     return freqs
 
 
-@torch.amp.autocast("cuda", enabled=False)
-def rope_apply(x, grid_sizes, freqs):
-    n, c = x.size(2), x.size(3) // 2
+# @torch.amp.autocast("cuda", enabled=False)
+def rope_apply(x: ms.Tensor, grid_sizes: ms.Tensor, freqs: ms.Tensor) -> ms.Tensor:
+    n, c = x.shape[2], x.shape[3] // 2
 
     # split freqs
     freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
@@ -46,57 +53,65 @@ def rope_apply(x, grid_sizes, freqs):
         seq_len = f * h * w
 
         # precompute multipliers
-        x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float64).reshape(seq_len, n, -1, 2))
-        freqs_i = torch.cat(
+        x_i = view_as_complex(x[i, :seq_len].to(ms.float64).reshape(seq_len, n, -1, 2))
+        freqs_i = mint.cat(
             [
-                freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
-                freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
-                freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1),
+                freqs[0][:f].view(f, 1, 1, -1).expand((f, h, w, -1)),
+                freqs[1][:h].view(1, h, 1, -1).expand((f, h, w, -1)),
+                freqs[2][:w].view(1, 1, w, -1).expand((f, h, w, -1)),
             ],
             dim=-1,
         ).reshape(seq_len, 1, -1)
 
         # apply rotary embedding
-        x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
-        x_i = torch.cat([x_i, x[i, seq_len:]])
+        x_i = ops.view_as_real(x_i * freqs_i).flatten(2)
+        x_i = mint.cat([x_i, x[i, seq_len:]])
 
         # append to collection
         output.append(x_i)
-    return torch.stack(output).float()
+    return mint.stack(output).float()
 
 
-class WanRMSNorm(nn.Module):
-    def __init__(self, dim, eps=1e-5):
+class WanRMSNorm(nn.Cell):
+    def __init__(self, dim: int, eps: float = 1e-5, dtype: Any = ms.float32):
         super().__init__()
         self.dim = dim
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
+        self.weight = ms.Parameter(ms.Tensor(np.ones(dim), dtype=dtype))
 
-    def forward(self, x):
+    def construct(self, x: ms.Tensor) -> ms.Tensor:
         r"""
         Args:
             x(Tensor): Shape [B, L, C]
         """
         return self._norm(x.float()).type_as(x) * self.weight
 
-    def _norm(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+    def _norm(self, x: ms.Tensor) -> ms.Tensor:
+        return x * mint.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
 
 
-class WanLayerNorm(nn.LayerNorm):
-    def __init__(self, dim, eps=1e-6, elementwise_affine=False):
-        super().__init__(dim, elementwise_affine=elementwise_affine, eps=eps)
+class WanLayerNorm(mint.nn.LayerNorm):
+    def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine: bool = False, dtype: Any = ms.float32):
+        super().__init__(dim, elementwise_affine=elementwise_affine, eps=eps, dtype=dtype)
 
-    def forward(self, x):
+    def construct(self, x: ms.Tensor) -> ms.Tensor:
         r"""
         Args:
             x(Tensor): Shape [B, L, C]
         """
-        return super().forward(x.float()).type_as(x)
+        return super().construct(x.float()).type_as(x)
 
 
-class WanSelfAttention(nn.Module):
-    def __init__(self, dim, num_heads, window_size=(-1, -1), qk_norm=True, eps=1e-6):
+class WanSelfAttention(nn.Cell):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        window_size: Tuple[int, int] = (-1, -1),
+        qk_norm: bool = True,
+        eps: float = 1e-6,
+        dtype: Any = ms.float32,
+    ):
         assert dim % num_heads == 0
         super().__init__()
         self.dim = dim
@@ -107,14 +122,14 @@ class WanSelfAttention(nn.Module):
         self.eps = eps
 
         # layers
-        self.q = nn.Linear(dim, dim)
-        self.k = nn.Linear(dim, dim)
-        self.v = nn.Linear(dim, dim)
-        self.o = nn.Linear(dim, dim)
-        self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
-        self.norm_k = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
+        self.q = mint.nn.Linear(dim, dim, dtype=dtype)
+        self.k = mint.nn.Linear(dim, dim, dtype=dtype)
+        self.v = mint.nn.Linear(dim, dim, dtype=dtype)
+        self.o = mint.nn.Linear(dim, dim, dtype=dtype)
+        self.norm_q = WanRMSNorm(dim, eps=eps, dtype=dtype) if qk_norm else mint.nn.Identity()
+        self.norm_k = WanRMSNorm(dim, eps=eps, dtype=dtype) if qk_norm else mint.nn.Identity()
 
-    def forward(self, x, seq_lens, grid_sizes, freqs):
+    def construct(self, x: ms.Tensor, seq_lens: ms.Tensor, grid_sizes: ms.Tensor, freqs: ms.Tensor) -> ms.Tensor:
         r"""
         Args:
             x(Tensor): Shape [B, L, num_heads, C / num_heads]
@@ -125,7 +140,7 @@ class WanSelfAttention(nn.Module):
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
         # query, key, value function
-        def qkv_fn(x):
+        def qkv_fn(x: ms.Tensor) -> Tuple[ms.Tensor, ms.Tensor, ms.Tensor]:
             q = self.norm_q(self.q(x)).view(b, s, n, d)
             k = self.norm_k(self.k(x)).view(b, s, n, d)
             v = self.v(x).view(b, s, n, d)
@@ -148,14 +163,14 @@ class WanSelfAttention(nn.Module):
 
 
 class WanCrossAttention(WanSelfAttention):
-    def forward(self, x, context, context_lens):
+    def construct(self, x: ms.Tensor, context: ms.Tensor, context_lens: Optional[ms.Tensor]) -> ms.Tensor:
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
             context(Tensor): Shape [B, L2, C]
             context_lens(Tensor): Shape [B]
         """
-        b, n, d = x.size(0), self.num_heads, self.head_dim
+        b, n, d = x.shape[0], self.num_heads, self.head_dim
 
         # compute query, key, value
         q = self.norm_q(self.q(x)).view(b, -1, n, d)
@@ -171,8 +186,18 @@ class WanCrossAttention(WanSelfAttention):
         return x
 
 
-class WanAttentionBlock(nn.Module):
-    def __init__(self, dim, ffn_dim, num_heads, window_size=(-1, -1), qk_norm=True, cross_attn_norm=False, eps=1e-6):
+class WanAttentionBlock(nn.Cell):
+    def __init__(
+        self,
+        dim: int,
+        ffn_dim: int,
+        num_heads: int,
+        window_size: Tuple[int, int] = (-1, -1),
+        qk_norm: bool = True,
+        cross_attn_norm: bool = False,
+        eps: float = 1e-6,
+        dtype: Any = ms.float32,
+    ):
         super().__init__()
         self.dim = dim
         self.ffn_dim = ffn_dim
@@ -183,26 +208,32 @@ class WanAttentionBlock(nn.Module):
         self.eps = eps
 
         # layers
-        self.norm1 = WanLayerNorm(dim, eps)
-        self.self_attn = WanSelfAttention(dim, num_heads, window_size, qk_norm, eps)
-        self.norm3 = WanLayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else nn.Identity()
-        self.cross_attn = WanCrossAttention(dim, num_heads, (-1, -1), qk_norm, eps)
-        self.norm2 = WanLayerNorm(dim, eps)
-        self.ffn = nn.Sequential(nn.Linear(dim, ffn_dim), nn.GELU(approximate="tanh"), nn.Linear(ffn_dim, dim))
+        self.norm1 = WanLayerNorm(dim, eps, dtype=dtype)
+        self.self_attn = WanSelfAttention(dim, num_heads, window_size, qk_norm, eps, dtype=dtype)
+        self.norm3 = (
+            WanLayerNorm(dim, eps, elementwise_affine=True, dtype=dtype) if cross_attn_norm else mint.nn.Identity()
+        )
+        self.cross_attn = WanCrossAttention(dim, num_heads, (-1, -1), qk_norm, eps, dtype=dtype)
+        self.norm2 = WanLayerNorm(dim, eps, dtype=dtype)
+        self.ffn = nn.SequentialCell(
+            mint.nn.Linear(dim, ffn_dim, dtype=dtype),
+            mint.nn.GELU(approximate="tanh"),
+            mint.nn.Linear(ffn_dim, dim, dtype=dtype),
+        )
 
         # modulation
-        self.modulation = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
+        self.modulation = ms.Parameter(ms.Tensor(np.random.randn(1, 6, dim) / dim**0.5, dtype=dtype))
 
-    def forward(
+    def construct(
         self,
-        x,
-        e,
-        seq_lens,
-        grid_sizes,
-        freqs,
-        context,
-        context_lens,
-    ):
+        x: ms.Tensor,
+        e: ms.Tensor,
+        seq_lens: ms.Tensor,
+        grid_sizes: ms.Tensor,
+        freqs: ms.Tensor,
+        context: ms.Tensor,
+        context_lens: Optional[ms.Tensor],
+    ) -> ms.Tensor:
         r"""
         Args:
             x(Tensor): Shape [B, L, C]
@@ -211,30 +242,32 @@ class WanAttentionBlock(nn.Module):
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
-        assert e.dtype == torch.float32
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
-        assert e[0].dtype == torch.float32
+        assert e.dtype == ms.float32
+        # with torch.amp.autocast("cuda", dtype=torch.float32):
+        e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
+        assert e[0].dtype == ms.float32
 
         # self-attention
         y = self.self_attn(self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2), seq_lens, grid_sizes, freqs)
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            x = x + y * e[2].squeeze(2)
+        # with torch.amp.autocast("cuda", dtype=torch.float32):
+        x = x + y * e[2].squeeze(2)
 
         # cross-attention & ffn function
-        def cross_attn_ffn(x, context, context_lens, e):
+        def cross_attn_ffn(x: ms.Tensor, context: ms.Tensor, context_lens: ms.Tensor, e: ms.Tensor) -> ms.Tensor:
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
             y = self.ffn(self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
-            with torch.amp.autocast("cuda", dtype=torch.float32):
-                x = x + y * e[5].squeeze(2)
+            # with torch.amp.autocast("cuda", dtype=torch.float32):
+            x = x + y * e[5].squeeze(2)
             return x
 
         x = cross_attn_ffn(x, context, context_lens, e)
         return x
 
 
-class Head(nn.Module):
-    def __init__(self, dim, out_dim, patch_size, eps=1e-6):
+class Head(nn.Cell):
+    def __init__(
+        self, dim: int, out_dim: int, patch_size: Tuple[int, int, int], eps: float = 1e-6, dtype: Any = ms.float32
+    ):
         super().__init__()
         self.dim = dim
         self.out_dim = out_dim
@@ -243,22 +276,22 @@ class Head(nn.Module):
 
         # layers
         out_dim = math.prod(patch_size) * out_dim
-        self.norm = WanLayerNorm(dim, eps)
-        self.head = nn.Linear(dim, out_dim)
+        self.norm = WanLayerNorm(dim, eps, dtype=dtype)
+        self.head = mint.nn.Linear(dim, out_dim, dtype=dtype)
 
         # modulation
-        self.modulation = nn.Parameter(torch.randn(1, 2, dim) / dim**0.5)
+        self.modulation = ms.Parameter(ms.Tensor(np.random.randn(1, 2, dim) / dim**0.5, dtype=dtype))
 
-    def forward(self, x, e):
+    def construct(self, x: ms.Tensor, e: ms.Tensor) -> ms.Tensor:
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
             e(Tensor): Shape [B, L1, C]
         """
-        assert e.dtype == torch.float32
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
-            x = self.head(self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
+        assert e.dtype == ms.float32
+        # with torch.amp.autocast("cuda", dtype=ms.float32):
+        e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
+        x = self.head(self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
         return x
 
 
@@ -273,21 +306,22 @@ class WanModel(ModelMixin, ConfigMixin):
     @register_to_config
     def __init__(
         self,
-        model_type="t2v",
-        patch_size=(1, 2, 2),
-        text_len=512,
-        in_dim=16,
-        dim=2048,
-        ffn_dim=8192,
-        freq_dim=256,
-        text_dim=4096,
-        out_dim=16,
-        num_heads=16,
-        num_layers=32,
-        window_size=(-1, -1),
-        qk_norm=True,
-        cross_attn_norm=True,
-        eps=1e-6,
+        model_type: str = "t2v",
+        patch_size: Tuple[int, int, int] = (1, 2, 2),
+        text_len: int = 512,
+        in_dim: int = 16,
+        dim: int = 2048,
+        ffn_dim: int = 8192,
+        freq_dim: int = 256,
+        text_dim: int = 4096,
+        out_dim: int = 16,
+        num_heads: int = 16,
+        num_layers: int = 32,
+        window_size: Tuple[int, int] = (-1, -1),
+        qk_norm: bool = True,
+        cross_attn_norm: bool = True,
+        eps: float = 1e-6,
+        dtype: Any = ms.float32,
     ):
         r"""
         Initialize the diffusion model backbone.
@@ -323,6 +357,8 @@ class WanModel(ModelMixin, ConfigMixin):
                 Enable cross-attention normalization
             eps (`float`, *optional*, defaults to 1e-6):
                 Epsilon value for normalization layers
+            dtype (`mindspore.dtype`, *optional*, defaults to ms.float32):
+                Data type for model parameters and computations
         """
 
         super().__init__()
@@ -346,27 +382,33 @@ class WanModel(ModelMixin, ConfigMixin):
         self.eps = eps
 
         # embeddings
-        self.patch_embedding = nn.Conv3d(in_dim, dim, kernel_size=patch_size, stride=patch_size)
-        self.text_embedding = nn.Sequential(nn.Linear(text_dim, dim), nn.GELU(approximate="tanh"), nn.Linear(dim, dim))
+        self.patch_embedding = mint.nn.Conv3d(in_dim, dim, kernel_size=patch_size, stride=patch_size, dtype=dtype)
+        self.text_embedding = nn.SequentialCell(
+            mint.nn.Linear(text_dim, dim, dtype=dtype),
+            mint.nn.GELU(approximate="tanh"),
+            mint.nn.Linear(dim, dim, dtype=dtype),
+        )
 
-        self.time_embedding = nn.Sequential(nn.Linear(freq_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
-        self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))
+        self.time_embedding = nn.SequentialCell(
+            mint.nn.Linear(freq_dim, dim, dtype=dtype), mint.nn.SiLU(), mint.nn.Linear(dim, dim, dtype=dtype)
+        )
+        self.time_projection = nn.SequentialCell(mint.nn.SiLU(), mint.nn.Linear(dim, dim * 6, dtype=dtype))
 
         # blocks
-        self.blocks = nn.ModuleList(
+        self.blocks = nn.CellList(
             [
-                WanAttentionBlock(dim, ffn_dim, num_heads, window_size, qk_norm, cross_attn_norm, eps)
+                WanAttentionBlock(dim, ffn_dim, num_heads, window_size, qk_norm, cross_attn_norm, eps, dtype=dtype)
                 for _ in range(num_layers)
             ]
         )
 
         # head
-        self.head = Head(dim, out_dim, patch_size, eps)
+        self.head = Head(dim, out_dim, patch_size, eps, dtype=dtype)
 
         # buffers (don't use register_buffer otherwise dtype will be changed in to())
         assert (dim % num_heads) == 0 and (dim // num_heads) % 2 == 0
         d = dim // num_heads
-        self.freqs = torch.cat(
+        self.freqs = mint.cat(
             [rope_params(1024, d - 4 * (d // 6)), rope_params(1024, 2 * (d // 6)), rope_params(1024, 2 * (d // 6))],
             dim=1,
         )
@@ -374,14 +416,14 @@ class WanModel(ModelMixin, ConfigMixin):
         # initialize weights
         self.init_weights()
 
-    def forward(
+    def construct(
         self,
-        x,
-        t,
-        context,
-        seq_len,
-        y=None,
-    ):
+        x: List[ms.Tensor],
+        t: ms.Tensor,
+        context: List[ms.Tensor],
+        seq_len: int,
+        y: Optional[List[ms.Tensor]] = None,
+    ) -> List[ms.Tensor]:
         r"""
         Forward pass through the diffusion model
 
@@ -403,36 +445,32 @@ class WanModel(ModelMixin, ConfigMixin):
         """
         if self.model_type == "i2v":
             assert y is not None
-        # params
-        device = self.patch_embedding.weight.device
-        if self.freqs.device != device:
-            self.freqs = self.freqs.to(device)
 
         if y is not None:
-            x = [torch.cat([u, v], dim=0) for u, v in zip(x, y)]
+            x = [mint.cat([u, v], dim=0) for u, v in zip(x, y)]
 
         # embeddings
         x = [self.patch_embedding(u.unsqueeze(0)) for u in x]
-        grid_sizes = torch.stack([torch.tensor(u.shape[2:], dtype=torch.long) for u in x])
+        grid_sizes = mint.stack([ms.tensor(u.shape[2:], dtype=ms.int64) for u in x])
         x = [u.flatten(2).transpose(1, 2) for u in x]
-        seq_lens = torch.tensor([u.size(1) for u in x], dtype=torch.long)
+        seq_lens = ms.tensor([u.shape[1] for u in x], dtype=ms.int64)
         assert seq_lens.max() <= seq_len
-        x = torch.cat([torch.cat([u, u.new_zeros(1, seq_len - u.size(1), u.size(2))], dim=1) for u in x])
+        x = mint.cat([mint.cat([u, u.new_zeros((1, seq_len - u.shape[1], u.shape[2]))], dim=1) for u in x])
 
         # time embeddings
-        if t.dim() == 1:
-            t = t.expand(t.size(0), seq_len)
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            bt = t.size(0)
-            t = t.flatten()
-            e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).unflatten(0, (bt, seq_len)).float())
-            e0 = self.time_projection(e).unflatten(2, (6, self.dim))
-            assert e.dtype == torch.float32 and e0.dtype == torch.float32
+        if len(t.shape) == 1:
+            t = t.expand((t.shape[0], seq_len))
+        # with torch.amp.autocast("cuda", dtype=ms.float32):
+        bt = t.shape[0]
+        t = t.flatten()
+        e = self.time_embedding(unflatten(sinusoidal_embedding_1d(self.freq_dim, t), 0, (bt, seq_len)).float())
+        e0 = unflatten(self.time_projection(e), 2, (6, self.dim))
+        assert e.dtype == ms.float32 and e0.dtype == ms.float32
 
         # context
         context_lens = None
         context = self.text_embedding(
-            torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context])
+            mint.stack([mint.cat([u, u.new_zeros((self.text_len - u.shape[0], u.shape[1]))]) for u in context])
         )
 
         # arguments
@@ -450,7 +488,7 @@ class WanModel(ModelMixin, ConfigMixin):
         x = self.unpatchify(x, grid_sizes)
         return [u.float() for u in x]
 
-    def unpatchify(self, x, grid_sizes):
+    def unpatchify(self, x: List[ms.Tensor], grid_sizes: ms.Tensor) -> List[ms.Tensor]:
         r"""
         Reconstruct video tensors from patch embeddings.
 
@@ -470,31 +508,36 @@ class WanModel(ModelMixin, ConfigMixin):
         out = []
         for u, v in zip(x, grid_sizes.tolist()):
             u = u[: math.prod(v)].view(*v, *self.patch_size, c)
-            u = torch.einsum("fhwpqrc->cfphqwr", u)
+            u = mint.einsum("fhwpqrc->cfphqwr", u)
             u = u.reshape(c, *[i * j for i, j in zip(v, self.patch_size)])
             out.append(u)
         return out
 
-    def init_weights(self):
+    def init_weights(self) -> None:
         r"""
         Initialize model parameters using Xavier initialization.
         """
 
         # basic init
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
+        for _, m in self.cells_and_names():
+            if isinstance(m, mint.nn.Linear):
+                xavier_uniform_(m.weight)
                 if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+                    zeros_(m.bias)
 
         # init embeddings
-        nn.init.xavier_uniform_(self.patch_embedding.weight.flatten(1))
-        for m in self.text_embedding.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, std=0.02)
-        for m in self.time_embedding.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, std=0.02)
+        patch_embedding_shape = self.patch_embedding.weight.shape
+        patch_embedding_shape_flatten = (patch_embedding_shape[0], math.prod(patch_embedding_shape[1:]))
+        data = initializer(
+            XavierUniform(), patch_embedding_shape_flatten, self.patch_embedding.weight.dtype
+        ).init_data()
+        self.patch_embedding.weight.set_data(data.reshape(patch_embedding_shape))
+        for _, m in self.text_embedding.cells_and_names():
+            if isinstance(m, mint.nn.Linear):
+                normal_(m.weight, std=0.02)
+        for _, m in self.time_embedding.cells_and_names():
+            if isinstance(m, mint.nn.Linear):
+                normal_(m.weight, std=0.02)
 
         # init output layer
-        nn.init.zeros_(self.head.head.weight)
+        zeros_(self.head.head.weight)

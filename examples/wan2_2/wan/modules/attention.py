@@ -1,43 +1,28 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
-import torch
+from typing import Any, Optional, Tuple
 
-try:
-    import flash_attn_interface
+import mindspore as ms
+import mindspore.mint as mint
+import mindspore.ops as ops
 
-    FLASH_ATTN_3_AVAILABLE = True
-except ModuleNotFoundError:
-    FLASH_ATTN_3_AVAILABLE = False
-
-try:
-    import flash_attn
-
-    FLASH_ATTN_2_AVAILABLE = True
-except ModuleNotFoundError:
-    FLASH_ATTN_2_AVAILABLE = False
-
-import warnings
-
-__all__ = [
-    "flash_attention",
-    "attention",
-]
+__all__ = ["flash_attention", "attention"]
 
 
 def flash_attention(
-    q,
-    k,
-    v,
-    q_lens=None,
-    k_lens=None,
-    dropout_p=0.0,
-    softmax_scale=None,
-    q_scale=None,
-    causal=False,
-    window_size=(-1, -1),
-    deterministic=False,
-    dtype=torch.bfloat16,
-    version=None,
-):
+    q: ms.Tensor,
+    k: ms.Tensor,
+    v: ms.Tensor,
+    q_lens: Optional[ms.Tensor] = None,
+    k_lens: Optional[ms.Tensor] = None,
+    dropout_p: float = 0.0,
+    softmax_scale: Optional[float] = None,
+    q_scale: Optional[float] = None,
+    causal: bool = False,
+    window_size: Tuple[int, int] = (-1, -1),
+    deterministic: bool = False,
+    dtype: Any = ms.bfloat16,
+    version: Optional[Any] = None,
+) -> ms.Tensor:
     """
     q:              [B, Lq, Nq, C1].
     k:              [B, Lk, Nk, C1].
@@ -51,31 +36,33 @@ def flash_attention(
     deterministic:  bool. If True, slightly slower and uses more memory.
     dtype:          torch.dtype. Apply when dtype of q/k/v is not float16/bfloat16.
     """
-    half_dtypes = (torch.float16, torch.bfloat16)
+    half_dtypes = (ms.float16, ms.bfloat16)
     assert dtype in half_dtypes
-    assert q.device.type == "cuda" and q.size(-1) <= 256
+    assert q.shape[-1] <= 256
+    assert not causal
+    assert window_size == (-1, -1)
 
     # params
-    b, lq, lk, out_dtype = q.size(0), q.size(1), k.size(1), q.dtype
+    b, lq, lk, head_num, out_dtype = q.shape[0], q.shape[1], k.shape[1], q.shape[2], q.dtype
 
-    def half(x):
+    def half(x: ms.Tensor) -> ms.Tensor:
         return x if x.dtype in half_dtypes else x.to(dtype)
 
     # preprocess query
     if q_lens is None:
         q = half(q.flatten(0, 1))
-        q_lens = torch.tensor([lq] * b, dtype=torch.int32).to(device=q.device, non_blocking=True)
+        q_lens = ms.tensor([lq] * b, dtype=ms.int32)
     else:
-        q = half(torch.cat([u[:v] for u, v in zip(q, q_lens)]))
+        q = half(mint.cat([u[:v] for u, v in zip(q, q_lens)]))
 
     # preprocess key, value
     if k_lens is None:
         k = half(k.flatten(0, 1))
         v = half(v.flatten(0, 1))
-        k_lens = torch.tensor([lk] * b, dtype=torch.int32).to(device=k.device, non_blocking=True)
+        k_lens = ms.tensor([lk] * b, dtype=ms.int32)
     else:
-        k = half(torch.cat([u[:v] for u, v in zip(k, k_lens)]))
-        v = half(torch.cat([u[:v] for u, v in zip(v, k_lens)]))
+        k = half(mint.cat([u[:v] for u, v in zip(k, k_lens)]))
+        v = half(mint.cat([u[:v] for u, v in zip(v, k_lens)]))
 
     q = q.to(v.dtype)
     k = k.to(v.dtype)
@@ -83,100 +70,50 @@ def flash_attention(
     if q_scale is not None:
         q = q * q_scale
 
-    if version is not None and version == 3 and not FLASH_ATTN_3_AVAILABLE:
-        warnings.warn("Flash attention 3 is not available, use flash attention 2 instead.")
-
     # apply attention
-    if (version is None or version == 3) and FLASH_ATTN_3_AVAILABLE:
-        # Note: dropout_p, window_size are not supported in FA3 now.
-        x = flash_attn_interface.flash_attn_varlen_func(
-            q=q,
-            k=k,
-            v=v,
-            cu_seqlens_q=torch.cat([q_lens.new_zeros([1]), q_lens])
-            .cumsum(0, dtype=torch.int32)
-            .to(q.device, non_blocking=True),
-            cu_seqlens_k=torch.cat([k_lens.new_zeros([1]), k_lens])
-            .cumsum(0, dtype=torch.int32)
-            .to(q.device, non_blocking=True),
-            seqused_q=None,
-            seqused_k=None,
-            max_seqlen_q=lq,
-            max_seqlen_k=lk,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            deterministic=deterministic,
-        )[0].unflatten(0, (b, lq))
-    else:
-        assert FLASH_ATTN_2_AVAILABLE
-        x = flash_attn.flash_attn_varlen_func(
-            q=q,
-            k=k,
-            v=v,
-            cu_seqlens_q=torch.cat([q_lens.new_zeros([1]), q_lens])
-            .cumsum(0, dtype=torch.int32)
-            .to(q.device, non_blocking=True),
-            cu_seqlens_k=torch.cat([k_lens.new_zeros([1]), k_lens])
-            .cumsum(0, dtype=torch.int32)
-            .to(q.device, non_blocking=True),
-            max_seqlen_q=lq,
-            max_seqlen_k=lk,
-            dropout_p=dropout_p,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            window_size=window_size,
-            deterministic=deterministic,
-        ).unflatten(0, (b, lq))
+    x = ops.flash_attention_score(
+        q,
+        k,
+        v,
+        head_num,
+        actual_seq_qlen=mint.cat([q_lens.new_zeros([1]), q_lens]).cumsum(0, dtype=ms.int32),
+        actual_seq_kvlen=mint.cat([k_lens.new_zeros([1]), k_lens]).cumsum(0, dtype=ms.int32),
+        scalar_value=softmax_scale,
+        keep_prob=1.0 - dropout_p,
+        input_layout="BSND",
+    ).unflatten(0, (b, lq))
 
     # output
     return x.type(out_dtype)
 
 
 def attention(
-    q,
-    k,
-    v,
-    q_lens=None,
-    k_lens=None,
-    dropout_p=0.0,
-    softmax_scale=None,
-    q_scale=None,
-    causal=False,
-    window_size=(-1, -1),
-    deterministic=False,
-    dtype=torch.bfloat16,
-    fa_version=None,
-):
-    if FLASH_ATTN_2_AVAILABLE or FLASH_ATTN_3_AVAILABLE:
-        return flash_attention(
-            q=q,
-            k=k,
-            v=v,
-            q_lens=q_lens,
-            k_lens=k_lens,
-            dropout_p=dropout_p,
-            softmax_scale=softmax_scale,
-            q_scale=q_scale,
-            causal=causal,
-            window_size=window_size,
-            deterministic=deterministic,
-            dtype=dtype,
-            version=fa_version,
-        )
-    else:
-        if q_lens is not None or k_lens is not None:
-            warnings.warn(
-                "Padding mask is disabled when using scaled_dot_product_attention. It can have a significant impact on performance."
-            )
-        attn_mask = None
-
-        q = q.transpose(1, 2).to(dtype)
-        k = k.transpose(1, 2).to(dtype)
-        v = v.transpose(1, 2).to(dtype)
-
-        out = torch.nn.functional.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask, is_causal=causal, dropout_p=dropout_p
-        )
-
-        out = out.transpose(1, 2).contiguous()
-        return out
+    q: ms.Tensor,
+    k: ms.Tensor,
+    v: ms.Tensor,
+    q_lens: Optional[ms.Tensor] = None,
+    k_lens: Optional[ms.Tensor] = None,
+    dropout_p: float = 0.0,
+    softmax_scale: Optional[float] = None,
+    q_scale: Optional[float] = None,
+    causal: bool = False,
+    window_size: Tuple[int, int] = (-1, -1),
+    deterministic: bool = False,
+    dtype: Any = ms.bfloat16,
+    fa_version: Optional[Any] = None,
+) -> ms.Tensor:
+    return flash_attention(
+        q=q,
+        k=k,
+        v=v,
+        q_lens=q_lens,
+        k_lens=k_lens,
+        dropout_p=dropout_p,
+        softmax_scale=softmax_scale,
+        q_scale=q_scale,
+        causal=causal,
+        window_size=window_size,
+        deterministic=deterministic,
+        dtype=dtype,
+        version=fa_version,
+    )

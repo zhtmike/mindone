@@ -1,27 +1,30 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import html
 import string
+from typing import Any
 
 import ftfy
 import regex as re
 from transformers import AutoTokenizer
 
+import mindspore as ms
+
 __all__ = ["HuggingfaceTokenizer"]
 
 
-def basic_clean(text):
+def basic_clean(text: str) -> str:
     text = ftfy.fix_text(text)
     text = html.unescape(html.unescape(text))
     return text.strip()
 
 
-def whitespace_clean(text):
+def whitespace_clean(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     text = text.strip()
     return text
 
 
-def canonicalize(text, keep_punctuation_exact_string=None):
+def canonicalize(text: str, keep_punctuation_exact_string: str = None) -> str:
     text = text.replace("_", " ")
     if keep_punctuation_exact_string:
         text = keep_punctuation_exact_string.join(
@@ -36,7 +39,7 @@ def canonicalize(text, keep_punctuation_exact_string=None):
 
 
 class HuggingfaceTokenizer:
-    def __init__(self, name, seq_len=None, clean=None, **kwargs):
+    def __init__(self, name: str, seq_len: int = None, clean: str = None, **kwargs: Any):
         assert clean in (None, "whitespace", "lower", "canonicalize")
         self.name = name
         self.seq_len = seq_len
@@ -46,11 +49,11 @@ class HuggingfaceTokenizer:
         self.tokenizer = AutoTokenizer.from_pretrained(name, **kwargs)
         self.vocab_size = self.tokenizer.vocab_size
 
-    def __call__(self, sequence, **kwargs):
+    def __call__(self, sequence: str | list[str], **kwargs) -> ms.Tensor:
         return_mask = kwargs.pop("return_mask", False)
 
         # arguments
-        _kwargs = {"return_tensors": "pt"}
+        _kwargs = {"return_tensors": "np"}
         if self.seq_len is not None:
             _kwargs.update({"padding": "max_length", "truncation": True, "max_length": self.seq_len})
         _kwargs.update(**kwargs)
@@ -64,11 +67,11 @@ class HuggingfaceTokenizer:
 
         # output
         if return_mask:
-            return ids.input_ids, ids.attention_mask
+            return ms.Tensor(ids.input_ids), ms.Tensor(ids.attention_mask)
         else:
-            return ids.input_ids
+            return ms.Tensor(ids.input_ids)
 
-    def _clean(self, text):
+    def _clean(self, text: str) -> str:
         if self.clean == "whitespace":
             text = whitespace_clean(basic_clean(text))
         elif self.clean == "lower":
