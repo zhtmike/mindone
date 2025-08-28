@@ -540,7 +540,7 @@ class T5EncoderModel:
             param.requires_grad = False
 
         logging.info(f"loading {checkpoint_path}")
-        param_dict = load_pth(checkpoint_path, dtype=model.dtype)
+        param_dict = load_pth(checkpoint_path)
         ms.load_param_into_net(model, param_dict, strict_load=True)
 
         self.model = model

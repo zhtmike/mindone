@@ -24,7 +24,7 @@ def sinusoidal_embedding_1d(dim: int, position: ms.Tensor) -> ms.Tensor:
     # preprocess
     assert dim % 2 == 0
     half = dim // 2
-    position = position.type(ms.float64)
+    position = position.type(ms.float32)
 
     # calculation
     sinusoid = mint.outer(position, mint.pow(10000, -mint.arange(half).to(position.dtype).div(half)))
@@ -35,7 +35,7 @@ def sinusoidal_embedding_1d(dim: int, position: ms.Tensor) -> ms.Tensor:
 # @torch.amp.autocast("cuda", enabled=False)
 def rope_params(max_seq_len: int, dim: int, theta: int = 10000) -> ms.Tensor:
     assert dim % 2 == 0
-    freqs = mint.outer(mint.arange(max_seq_len), 1.0 / mint.pow(theta, mint.arange(0, dim, 2).to(ms.float64).div(dim)))
+    freqs = mint.outer(mint.arange(max_seq_len), 1.0 / mint.pow(theta, mint.arange(0, dim, 2).to(ms.float32).div(dim)))
     freqs = mint.polar(mint.ones_like(freqs), freqs)
     return freqs
 
@@ -53,7 +53,7 @@ def rope_apply(x: ms.Tensor, grid_sizes: ms.Tensor, freqs: ms.Tensor) -> ms.Tens
         seq_len = f * h * w
 
         # precompute multipliers
-        x_i = view_as_complex(x[i, :seq_len].to(ms.float64).reshape(seq_len, n, -1, 2))
+        x_i = view_as_complex(x[i, :seq_len].to(ms.float32).reshape(seq_len, n, -1, 2))
         freqs_i = mint.cat(
             [
                 freqs[0][:f].view(f, 1, 1, -1).expand((f, h, w, -1)),

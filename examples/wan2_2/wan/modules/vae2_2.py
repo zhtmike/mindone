@@ -772,7 +772,7 @@ def _video_vae(
 
     # load checkpoint
     logging.info(f"loading {pretrained_path}")
-    param_dict = load_pth(pretrained_path, dtype=model.dtype)
+    param_dict = load_pth(pretrained_path)
     ms.load_param_into_net(model, param_dict, strict_load=True)
 
     return model

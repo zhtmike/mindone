@@ -112,7 +112,7 @@ class WanTI2V:
 
     def _configure_model(
         self,
-        model: nn.Cell,
+        model: WanModel,
         use_sp: bool,
         dit_fsdp: bool,
         shard_fn: Callable[[nn.Cell], nn.Cell],
@@ -369,7 +369,7 @@ class WanTI2V:
                 timestep = mint.stack(timestep)
 
                 temp_ts = (mask2[0][0][:, ::2, ::2] * timestep).flatten()
-                temp_ts = mint.cat([temp_ts, temp_ts.new_ones(seq_len - temp_ts.size(0)) * timestep])
+                temp_ts = mint.cat([temp_ts, temp_ts.new_ones(seq_len - temp_ts.shape[0]) * timestep])
                 timestep = temp_ts.unsqueeze(0)
 
                 noise_pred_cond = self.model(latent_model_input, t=timestep, **arg_c)[0]
@@ -547,7 +547,7 @@ class WanTI2V:
                 timestep = mint.stack(timestep)
 
                 temp_ts = (mask2[0][0][:, ::2, ::2] * timestep).flatten()
-                temp_ts = mint.cat([temp_ts, temp_ts.new_ones(seq_len - temp_ts.size(0)) * timestep])
+                temp_ts = mint.cat([temp_ts, temp_ts.new_ones(seq_len - temp_ts.shape[0]) * timestep])
                 timestep = temp_ts.unsqueeze(0)
 
                 noise_pred_cond = self.model(latent_model_input, t=timestep, **arg_c)[0]

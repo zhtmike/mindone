@@ -6,9 +6,10 @@ import math
 import os
 import os.path as osp
 import pathlib
-from typing import Any, BinaryIO, List, Optional, Tuple, Union
+from typing import BinaryIO, Dict, List, Optional, Tuple, Union
 
 import imageio
+import ml_dtypes
 import tqdm
 from PIL import Image
 
@@ -142,7 +143,7 @@ def _save_image(
     im.save(fp, format=format)
 
 
-def rand_name(length=8, suffix=""):
+def rand_name(length: int = 8, suffix: str = "") -> str:
     name = binascii.b2a_hex(os.urandom(length)).decode("utf-8")
     if suffix:
         if not suffix.startswith("."):
@@ -151,7 +152,15 @@ def rand_name(length=8, suffix=""):
     return name
 
 
-def save_video(tensor, save_file=None, fps=30, suffix=".mp4", nrow=8, normalize=True, value_range=(-1, 1)):
+def save_video(
+    tensor: ms.Tensor,
+    save_file: Optional[str] = None,
+    fps: int = 30,
+    suffix: str = ".mp4",
+    nrow: int = 8,
+    normalize: bool = True,
+    value_range: Tuple[float, float] = (-1, 1),
+) -> None:
     # cache file
     cache_file = osp.join("/tmp", rand_name(suffix=suffix)) if save_file is None else save_file
 
@@ -174,7 +183,13 @@ def save_video(tensor, save_file=None, fps=30, suffix=".mp4", nrow=8, normalize=
         logging.info(f"save_video failed, error: {e}")
 
 
-def save_image(tensor, save_file, nrow=8, normalize=True, value_range=(-1, 1)):
+def save_image(
+    tensor: ms.Tensor,
+    save_file: str,
+    nrow: int = 8,
+    normalize: bool = True,
+    value_range: Tuple[float, float] = (-1, 1),
+) -> Optional[str]:
     # cache file
     suffix = osp.splitext(save_file)[1]
     if suffix.lower() not in [".jpg", ".jpeg", ".png", ".tiff", ".gif", ".webp"]:
@@ -189,7 +204,7 @@ def save_image(tensor, save_file, nrow=8, normalize=True, value_range=(-1, 1)):
         logging.info(f"save_image failed, error: {e}")
 
 
-def str2bool(v):
+def str2bool(v: Union[str, bool]) -> bool:
     """
     Convert a string to a boolean.
 
@@ -216,22 +231,23 @@ def str2bool(v):
         raise argparse.ArgumentTypeError("Boolean value expected (True/False)")
 
 
-def masks_like(tensor, zero=False, generator=None, p=0.2):
+def masks_like(
+    tensor: List[ms.Tensor],
+    zero: bool = False,
+    generator: Optional[ms.Generator] = None,
+    p: float = 0.2,
+) -> Tuple[List[ms.Tensor], List[ms.Tensor]]:
     assert isinstance(tensor, list)
-    out1 = [mint.ones(u.shape, dtype=u.dtype, device=u.device) for u in tensor]
+    out1 = [mint.ones(u.shape, dtype=u.dtype) for u in tensor]
 
-    out2 = [mint.ones(u.shape, dtype=u.dtype, device=u.device) for u in tensor]
+    out2 = [mint.ones(u.shape, dtype=u.dtype) for u in tensor]
 
     if zero:
         if generator is not None:
             for u, v in zip(out1, out2):
-                random_num = mint.rand(1, generator=generator, device=generator.device).item()
+                random_num = mint.rand(1, generator=generator).item()
                 if random_num < p:
-                    u[:, 0] = (
-                        mint.normal(mean=-3.5, std=0.5, size=(1,), device=u.device, generator=generator)
-                        .expand_as(u[:, 0])
-                        .exp()
-                    )
+                    u[:, 0] = mint.normal(mean=-3.5, std=0.5, size=(1,), generator=generator).expand_as(u[:, 0]).exp()
                     v[:, 0] = mint.zeros_like(v[:, 0])
                 else:
                     u[:, 0] = u[:, 0]
@@ -244,7 +260,7 @@ def masks_like(tensor, zero=False, generator=None, p=0.2):
     return out1, out2
 
 
-def best_output_size(w, h, dw, dh, expected_area):
+def best_output_size(w: int, h: int, dw: int, dh: int, expected_area: int) -> Tuple[int, int]:
     # float output size
     ratio = w / h
     ow = (expected_area * ratio) ** 0.5
@@ -269,11 +285,16 @@ def best_output_size(w, h, dw, dh, expected_area):
         return ow2, oh2
 
 
-def load_pth(pth_path: str, dtype: Any = ms.bfloat16):
+def load_pth(pth_path: str) -> Dict[str, ms.Parameter]:
     import torch
 
     torch_data = torch.load(pth_path, map_location="cpu")
     mindspore_data = dict()
     for name, value in tqdm.tqdm(torch_data.items(), desc="converting to MindSpore format"):
-        mindspore_data[name] = ms.Parameter(ms.from_numpy(value.numpy(), dtype=dtype))
+        if value.dtype == torch.bfloat16:
+            mindspore_data[name] = ms.Parameter(
+                ms.Tensor(value.view(dtype=torch.uint16).numpy().view(ml_dtypes.bfloat16))
+            )
+        else:
+            mindspore_data[name] = ms.Parameter(ms.from_numpy(value.numpy()))
     return mindspore_data

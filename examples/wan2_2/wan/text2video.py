@@ -117,7 +117,7 @@ class WanT2V:
 
     def _configure_model(
         self,
-        model: nn.Cell,
+        model: WanModel,
         use_sp: bool,
         dit_fsdp: bool,
         shard_fn: Callable[[nn.Cell], nn.Cell],
