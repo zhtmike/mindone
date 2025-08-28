@@ -172,7 +172,7 @@ def save_video(
             [_make_grid(u, nrow=nrow, normalize=normalize, value_range=value_range) for u in tensor.unbind(2)],
             dim=1,
         ).permute(1, 2, 3, 0)
-        tensor = (tensor * 255).type(ms.uint8).cpu()
+        tensor = (tensor * 255).type(ms.uint8)
 
         # write video
         writer = imageio.get_writer(cache_file, fps=fps, codec="libx264", quality=8)

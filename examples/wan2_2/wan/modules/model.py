@@ -7,11 +7,10 @@ import numpy as np
 import mindspore as ms
 import mindspore.mint as mint
 import mindspore.nn as nn
-import mindspore.ops as ops
 from mindspore.common.initializer import XavierUniform, initializer
 
 from mindone.diffusers.configuration_utils import ConfigMixin, register_to_config
-from mindone.diffusers.models.layers_compat import unflatten, view_as_complex
+from mindone.diffusers.models.layers_compat import unflatten
 from mindone.diffusers.models.modeling_utils import ModelMixin
 from mindone.models.utils import normal_, xavier_uniform_, zeros_
 
@@ -33,18 +32,24 @@ def sinusoidal_embedding_1d(dim: int, position: ms.Tensor) -> ms.Tensor:
     return x
 
 
-# @torch.amp.autocast("cuda", enabled=False)
 def rope_params(max_seq_len: int, dim: int, theta: int = 10000) -> ms.Tensor:
     assert dim % 2 == 0
     freqs = mint.outer(mint.arange(max_seq_len), 1.0 / mint.pow(theta, mint.arange(0, dim, 2).to(ms.float32).div(dim)))
-    freqs = mint.polar(mint.ones_like(freqs), freqs)
+    freqs = mint.stack([mint.cos(freqs), mint.sin(freqs)], dim=-1)
     return freqs
 
 
-# @torch.amp.autocast("cuda", enabled=False)
+def complex_mult(a: ms.Tensor, b: ms.Tensor) -> ms.Tensor:
+    a_real, a_complex = mint.unbind(a, dim=-1)
+    b_real, b_complex = mint.unbind(b, dim=-1)
+    out_real = a_real * b_real - a_complex * b_complex
+    out_complex = a_real * b_complex + b_real * a_complex
+    return mint.stack([out_real, out_complex], dim=-1)
+
+
 def rope_apply(x: ms.Tensor, grid_sizes: ms.Tensor, freqs: ms.Tensor) -> ms.Tensor:
-    assert x.dtype == ms.float32
-    assert freqs.dtype == ms.float32
+    dtype = x.dtype
+    x = x.to(ms.float32)
     n, c = x.shape[2], x.shape[3] // 2
 
     # split freqs
@@ -56,23 +61,23 @@ def rope_apply(x: ms.Tensor, grid_sizes: ms.Tensor, freqs: ms.Tensor) -> ms.Tens
         seq_len = f * h * w
 
         # precompute multipliers
-        x_i = view_as_complex(x[i, :seq_len].to(ms.float32).reshape(seq_len, n, -1, 2))
+        x_i = x[i, :seq_len].to(ms.float32).reshape(seq_len, n, -1, 2)
         freqs_i = mint.cat(
             [
-                freqs[0][:f].view(f, 1, 1, -1).expand((f, h, w, -1)),
-                freqs[1][:h].view(1, h, 1, -1).expand((f, h, w, -1)),
-                freqs[2][:w].view(1, 1, w, -1).expand((f, h, w, -1)),
+                freqs[0][:f].view(f, 1, 1, -1, 2).expand((f, h, w, -1, 2)),
+                freqs[1][:h].view(1, h, 1, -1, 2).expand((f, h, w, -1, 2)),
+                freqs[2][:w].view(1, 1, w, -1, 2).expand((f, h, w, -1, 2)),
             ],
-            dim=-1,
-        ).reshape(seq_len, 1, -1)
+            dim=-2,
+        ).reshape(seq_len, 1, -1, 2)
 
         # apply rotary embedding
-        x_i = ops.view_as_real(x_i * freqs_i).flatten(2)
+        x_i = complex_mult(x_i, freqs_i).flatten(2)
         x_i = mint.cat([x_i, x[i, seq_len:]])
 
         # append to collection
         output.append(x_i)
-    return mint.stack(output).float()
+    return mint.stack(output).to(dtype)
 
 
 class WanRMSNorm(nn.Cell):
@@ -102,7 +107,10 @@ class WanLayerNorm(mint.nn.LayerNorm):
         Args:
             x(Tensor): Shape [B, L, C]
         """
-        return super().construct(x.float()).type_as(x)
+        dtype = x.dtype
+        with autocast(dtype=ms.float32):
+            x = super().construct(x)
+        return x.to(dtype)
 
 
 class WanSelfAttention(nn.Cell):
@@ -251,20 +259,24 @@ class WanAttentionBlock(nn.Cell):
         assert e[0].dtype == ms.float32
 
         # self-attention
-        y = self.self_attn(self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2), seq_lens, grid_sizes, freqs)
+        dtype = x.dtype
+        y = self.self_attn(
+            (self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)).to(dtype), seq_lens, grid_sizes, freqs
+        )
         with autocast(dtype=ms.float32):
             x = x + y * e[2].squeeze(2)
+        x = x.to(dtype)
 
         # cross-attention & ffn function
         def cross_attn_ffn(x: ms.Tensor, context: ms.Tensor, context_lens: ms.Tensor, e: ms.Tensor) -> ms.Tensor:
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
-            y = self.ffn(self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
+            y = self.ffn((self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2)).to(dtype))
             with autocast(dtype=ms.float32):
                 x = x + y * e[5].squeeze(2)
             return x
 
         x = cross_attn_ffn(x, context, context_lens, e)
-        return x
+        return x.to(dtype)
 
 
 class Head(nn.Cell):
@@ -481,6 +493,7 @@ class WanModel(ModelMixin, ConfigMixin):
             e=e0, seq_lens=seq_lens, grid_sizes=grid_sizes, freqs=self.freqs, context=context, context_lens=context_lens
         )
 
+        x = x.to(self.dtype)
         for block in self.blocks:
             x = block(x, **kwargs)
 

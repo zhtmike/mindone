@@ -9,7 +9,6 @@ import mindspore as ms
 import mindspore.mint as mint
 import mindspore.mint.nn.functional as F
 import mindspore.nn as nn
-import mindspore.ops as ops
 
 from mindone.models.utils import zeros_
 
@@ -75,12 +74,12 @@ class Resample(nn.Cell):
         # layers
         if mode == "upsample2d":
             self.resample = nn.SequentialCell(
-                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                Upsample(scale_factor=(2.0, 2.0), mode="nearest"),
                 mint.nn.Conv2d(dim, dim, 3, padding=1, dtype=dtype),
             )
         elif mode == "upsample3d":
             self.resample = nn.SequentialCell(
-                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                Upsample(scale_factor=(2.0, 2.0), mode="nearest"),
                 mint.nn.Conv2d(dim, dim, 3, padding=1, dtype=dtype),
             )
             self.time_conv = CausalConv3d(dim, dim * 2, (3, 1, 1), padding=(1, 0, 0), dtype=dtype)
@@ -210,7 +209,8 @@ class AttentionBlock(nn.Cell):
         q, k, v = self.to_qkv(x).reshape(b * t, 1, c * 3, -1).permute(0, 1, 3, 2).contiguous().chunk(3, dim=-1)
 
         # apply attention
-        x = ops.flash_attention_score(q, k, v, 1, scalar_value=1 / math.sqrt(q.shape[-1]), input_layout="BNSD")
+        x = q @ k.transpose(-2, -1) / math.sqrt(q.shape[-1])
+        x = mint.softmax(x, dim=-1) @ v
         x = x.squeeze(1).permute(0, 2, 1).reshape(b * t, c, h, w)
 
         # output

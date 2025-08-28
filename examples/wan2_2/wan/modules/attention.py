@@ -1,9 +1,12 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
+import math
 from typing import Any, Optional, Tuple
 
 import mindspore as ms
 import mindspore.mint as mint
 import mindspore.ops as ops
+
+from mindone.diffusers.models.layers_compat import unflatten
 
 __all__ = ["flash_attention", "attention"]
 
@@ -70,6 +73,9 @@ def flash_attention(
     if q_scale is not None:
         q = q * q_scale
 
+    if softmax_scale is None:
+        softmax_scale = 1.0 / math.sqrt(q.shape[-1])
+
     # apply attention
     x = ops.flash_attention_score(
         q,
@@ -80,8 +86,9 @@ def flash_attention(
         actual_seq_kvlen=mint.cat([k_lens.new_zeros([1]), k_lens]).cumsum(0, dtype=ms.int32),
         scalar_value=softmax_scale,
         keep_prob=1.0 - dropout_p,
-        input_layout="BSND",
-    ).unflatten(0, (b, lq))
+        input_layout="TND",
+    )
+    x = unflatten(x, 0, (b, lq))
 
     # output
     return x.type(out_dtype)
