@@ -75,12 +75,12 @@ class Resample(nn.Cell):
         # layers
         if mode == "upsample2d":
             self.resample = nn.SequentialCell(
-                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                Upsample(scale_factor=(2.0, 2.0), mode="nearest"),
                 mint.nn.Conv2d(dim, dim // 2, 3, padding=1, dtype=dtype),
             )
         elif mode == "upsample3d":
             self.resample = nn.SequentialCell(
-                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                Upsample(scale_factor=(2.0, 2.0), mode="nearest"),
                 mint.nn.Conv2d(dim, dim // 2, 3, padding=1, dtype=dtype),
             )
             self.time_conv = CausalConv3d(dim, dim * 2, (3, 1, 1), padding=(1, 0, 0), dtype=dtype)

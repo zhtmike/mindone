@@ -231,7 +231,7 @@ def patchify(x: ms.Tensor, patch_size: int) -> ms.Tensor:
         # b c f (h q) (w r) -> b (c r q) f h w
         x = x.reshape(*x.shape[:3], x.shape[3] // patch_size, patch_size, x.shape[4] // patch_size, patch_size)
         x = x.transpose(0, 1, 6, 4, 2, 3, 5)
-        x = x.reshape(x.shape[0], x.shape[1] * patch_size * patch_size * patch_size, *x.shape[4:])
+        x = x.reshape(x.shape[0], x.shape[1] * patch_size * patch_size, *x.shape[4:])
     else:
         raise ValueError(f"Invalid input shape: {x.shape}")
 

@@ -297,14 +297,14 @@ class WanT2V:
                 sample_scheduler = FlowUniPCMultistepScheduler(
                     num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False
                 )
-                sample_scheduler.set_timesteps(sampling_steps, device=self.device, shift=shift)
+                sample_scheduler.set_timesteps(sampling_steps, shift=shift)
                 timesteps = sample_scheduler.timesteps
             elif sample_solver == "dpm++":
                 sample_scheduler = FlowDPMSolverMultistepScheduler(
                     num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False
                 )
                 sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
-                timesteps, _ = retrieve_timesteps(sample_scheduler, device=self.device, sigmas=sampling_sigmas)
+                timesteps, _ = retrieve_timesteps(sample_scheduler, sigmas=sampling_sigmas)
             else:
                 raise NotImplementedError("Unsupported solver.")
 

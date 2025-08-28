@@ -10,10 +10,12 @@ from typing import BinaryIO, Dict, List, Optional, Tuple, Union
 
 import imageio
 import ml_dtypes
+import numpy as np
 import tqdm
 from PIL import Image
 
 import mindspore as ms
+import mindspore.dataset.vision.py_transforms_util as py_transforms_util
 import mindspore.mint as mint
 
 __all__ = ["save_video", "save_image", "str2bool", "load_pth"]
@@ -298,3 +300,9 @@ def load_pth(pth_path: str) -> Dict[str, ms.Parameter]:
         else:
             mindspore_data[name] = ms.Parameter(ms.from_numpy(value.numpy()))
     return mindspore_data
+
+
+def to_tensor(pic: Union[Image.Image, np.ndarray]) -> ms.Tensor:
+    tensor = py_transforms_util.to_tensor(pic, np.float32)
+    tensor = ms.tensor(tensor)
+    return tensor

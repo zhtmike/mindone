@@ -13,7 +13,6 @@ from PIL import Image
 from tqdm import tqdm
 
 import mindspore as ms
-import mindspore.dataset.vision.py_transforms_util as TF
 import mindspore.mint as mint
 import mindspore.mint.distributed as dist
 import mindspore.nn as nn
@@ -26,7 +25,7 @@ from .modules.t5 import T5EncoderModel
 from .modules.vae2_2 import Wan2_2_VAE
 from .utils.fm_solvers import FlowDPMSolverMultistepScheduler, get_sampling_sigmas, retrieve_timesteps
 from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
-from .utils.utils import best_output_size, masks_like
+from .utils.utils import best_output_size, masks_like, to_tensor
 
 
 class WanTI2V:
@@ -462,7 +461,7 @@ class WanTI2V:
         assert img.width == ow and img.height == oh
 
         # to tensor
-        img = TF.to_tensor(img).sub_(0.5).div_(0.5).unsqueeze(1)
+        img = to_tensor(img).sub_(0.5).div_(0.5).unsqueeze(1)
 
         F = frame_num
         seq_len = (
@@ -517,14 +516,14 @@ class WanTI2V:
                 sample_scheduler = FlowUniPCMultistepScheduler(
                     num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False
                 )
-                sample_scheduler.set_timesteps(sampling_steps, device=self.device, shift=shift)
+                sample_scheduler.set_timesteps(sampling_steps, shift=shift)
                 timesteps = sample_scheduler.timesteps
             elif sample_solver == "dpm++":
                 sample_scheduler = FlowDPMSolverMultistepScheduler(
                     num_train_timesteps=self.num_train_timesteps, shift=1, use_dynamic_shifting=False
                 )
                 sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
-                timesteps, _ = retrieve_timesteps(sample_scheduler, device=self.device, sigmas=sampling_sigmas)
+                timesteps, _ = retrieve_timesteps(sample_scheduler, sigmas=sampling_sigmas)
             else:
                 raise NotImplementedError("Unsupported solver.")
 
