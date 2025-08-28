@@ -15,6 +15,7 @@ from mindone.diffusers.models.layers_compat import unflatten, view_as_complex
 from mindone.diffusers.models.modeling_utils import ModelMixin
 from mindone.models.utils import normal_, xavier_uniform_, zeros_
 
+from ..utils.amp import autocast
 from .attention import flash_attention
 
 __all__ = ["WanModel"]
@@ -42,6 +43,8 @@ def rope_params(max_seq_len: int, dim: int, theta: int = 10000) -> ms.Tensor:
 
 # @torch.amp.autocast("cuda", enabled=False)
 def rope_apply(x: ms.Tensor, grid_sizes: ms.Tensor, freqs: ms.Tensor) -> ms.Tensor:
+    assert x.dtype == ms.float32
+    assert freqs.dtype == ms.float32
     n, c = x.shape[2], x.shape[3] // 2
 
     # split freqs
@@ -243,21 +246,21 @@ class WanAttentionBlock(nn.Cell):
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
         assert e.dtype == ms.float32
-        # with torch.amp.autocast("cuda", dtype=torch.float32):
-        e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
+        with autocast(dtype=ms.float32):
+            e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
         assert e[0].dtype == ms.float32
 
         # self-attention
         y = self.self_attn(self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2), seq_lens, grid_sizes, freqs)
-        # with torch.amp.autocast("cuda", dtype=torch.float32):
-        x = x + y * e[2].squeeze(2)
+        with autocast(dtype=ms.float32):
+            x = x + y * e[2].squeeze(2)
 
         # cross-attention & ffn function
         def cross_attn_ffn(x: ms.Tensor, context: ms.Tensor, context_lens: ms.Tensor, e: ms.Tensor) -> ms.Tensor:
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
             y = self.ffn(self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
-            # with torch.amp.autocast("cuda", dtype=torch.float32):
-            x = x + y * e[5].squeeze(2)
+            with autocast(dtype=ms.float32):
+                x = x + y * e[5].squeeze(2)
             return x
 
         x = cross_attn_ffn(x, context, context_lens, e)
@@ -289,9 +292,9 @@ class Head(nn.Cell):
             e(Tensor): Shape [B, L1, C]
         """
         assert e.dtype == ms.float32
-        # with torch.amp.autocast("cuda", dtype=ms.float32):
-        e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
-        x = self.head(self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
+        with autocast(dtype=ms.float32):
+            e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
+            x = self.head(self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
         return x
 
 
@@ -460,12 +463,12 @@ class WanModel(ModelMixin, ConfigMixin):
         # time embeddings
         if len(t.shape) == 1:
             t = t.expand((t.shape[0], seq_len))
-        # with torch.amp.autocast("cuda", dtype=ms.float32):
-        bt = t.shape[0]
-        t = t.flatten()
-        e = self.time_embedding(unflatten(sinusoidal_embedding_1d(self.freq_dim, t), 0, (bt, seq_len)).float())
-        e0 = unflatten(self.time_projection(e), 2, (6, self.dim))
-        assert e.dtype == ms.float32 and e0.dtype == ms.float32
+        with autocast(dtype=ms.float32):
+            bt = t.shape[0]
+            t = t.flatten()
+            e = self.time_embedding(unflatten(sinusoidal_embedding_1d(self.freq_dim, t), 0, (bt, seq_len)).float())
+            e0 = unflatten(self.time_projection(e), 2, (6, self.dim))
+            assert e.dtype == ms.float32 and e0.dtype == ms.float32
 
         # context
         context_lens = None
