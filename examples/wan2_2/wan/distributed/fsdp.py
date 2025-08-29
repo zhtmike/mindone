@@ -11,7 +11,7 @@ from mindone.trainers.zero import prepare_network
 
 def shard_model(
     model: nn.Cell,
-    device_id: int,
+    device_id: Optional[int] = None,
     param_dtype: ms.dtype = ms.bfloat16,
     reduce_dtype: ms.dtype = ms.float32,
     buffer_dtype: ms.dtype = ms.float32,

@@ -3,19 +3,19 @@ from typing import List, Optional, Tuple
 
 import mindspore as ms
 import mindspore.mint as mint
-import mindspore.ops as ops
 
-from mindone.diffusers.models.layers_compat import unflatten, view_as_complex
+from mindone.diffusers.models.layers_compat import unflatten
 
-from ..modules.model import WanModel, WanSelfAttention, sinusoidal_embedding_1d
+from ..modules.model import WanModel, WanSelfAttention, complex_mult, sinusoidal_embedding_1d
+from ..utils.amp import autocast
 from .ulysses import distributed_attention
 from .util import gather_forward, get_rank, get_world_size
 
 
 def pad_freqs(original_tensor: ms.Tensor, target_len: int) -> ms.Tensor:
-    seq_len, s1, s2 = original_tensor.shape
+    seq_len, s1, s2, _ = original_tensor.shape
     pad_size = target_len - seq_len
-    padding_tensor = mint.ones(pad_size, s1, s2, dtype=original_tensor.dtype)
+    padding_tensor = mint.ones((pad_size, s1, s2, 2), dtype=original_tensor.dtype)
     padded_tensor = mint.cat([original_tensor, padding_tensor], dim=0)
     return padded_tensor
 
@@ -26,6 +26,8 @@ def rope_apply(x: ms.Tensor, grid_sizes: ms.Tensor, freqs: ms.Tensor) -> ms.Tens
     grid_sizes: [B, 3].
     freqs:      [M, C // 2].
     """
+    dtype = x.dtype
+    x = x.to(ms.float32)
     s, n, c = x.shape[1], x.shape[2], x.shape[3] // 2
     # split freqs
     freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
@@ -36,28 +38,28 @@ def rope_apply(x: ms.Tensor, grid_sizes: ms.Tensor, freqs: ms.Tensor) -> ms.Tens
         seq_len = f * h * w
 
         # precompute multipliers
-        x_i = view_as_complex(x[i, :s].to(ms.float64).reshape(s, n, -1, 2))
+        x_i = x[i, :seq_len].to(ms.float32).reshape(s, n, -1, 2)
         freqs_i = mint.cat(
             [
-                freqs[0][:f].view(f, 1, 1, -1).expand((f, h, w, -1)),
-                freqs[1][:h].view(1, h, 1, -1).expand((f, h, w, -1)),
-                freqs[2][:w].view(1, 1, w, -1).expand((f, h, w, -1)),
+                freqs[0][:f].view(f, 1, 1, -1, 2).expand((f, h, w, -1, 2)),
+                freqs[1][:h].view(1, h, 1, -1, 2).expand((f, h, w, -1, 2)),
+                freqs[2][:w].view(1, 1, w, -1, 2).expand((f, h, w, -1, 2)),
             ],
-            dim=-1,
-        ).reshape(seq_len, 1, -1)
+            dim=-2,
+        ).reshape(seq_len, 1, -1, 2)
 
         # apply rotary embedding
         sp_size = get_world_size()
         sp_rank = get_rank()
         freqs_i = pad_freqs(freqs_i, s * sp_size)
         s_per_rank = s
-        freqs_i_rank = freqs_i[(sp_rank * s_per_rank) : ((sp_rank + 1) * s_per_rank), :, :]
-        x_i = ops.view_as_real(x_i * freqs_i_rank).flatten(2)
+        freqs_i_rank = freqs_i[(sp_rank * s_per_rank) : ((sp_rank + 1) * s_per_rank), :, :, :]
+        x_i = complex_mult(x_i, freqs_i_rank).flatten(2)
         x_i = mint.cat([x_i, x[i, s:]])
 
         # append to collection
         output.append(x_i)
-    return mint.stack(output).float()
+    return mint.stack(output).to(dtype)
 
 
 def sp_dit_forward(
@@ -85,22 +87,23 @@ def sp_dit_forward(
     x = [u.flatten(2).transpose(1, 2) for u in x]
     seq_lens = ms.tensor([u.shape[1] for u in x], dtype=ms.int64)
     assert seq_lens.max() <= seq_len
-    x = mint.cat([mint.cat([u, u.new_zeros(1, seq_len - u.shape[1], u.shape[2])], dim=1) for u in x])
+    x = mint.cat([mint.cat([u, u.new_zeros((1, seq_len - u.shape[1], u.shape[2]))], dim=1) for u in x])
 
     # time embeddings
-    if len(t.size) == 1:
+    if len(t.shape) == 1:
         t = t.expand((t.shape[0], seq_len))
-    # with torch.amp.autocast("cuda", dtype=ms.float32):
-    bt = t.shape[0]
-    t = t.flatten()
-    e = self.time_embedding(unflatten(sinusoidal_embedding_1d(self.freq_dim, t), 0, (bt, seq_len)).float())
-    e0 = unflatten(self.time_projection(e), 2, (6, self.dim))
-    assert e.dtype == ms.float32 and e0.dtype == ms.float32
+    with autocast(dtype=ms.float32):
+        bt = t.shape[0]
+        t = t.flatten()
+        e = self.time_embedding(unflatten(sinusoidal_embedding_1d(self.freq_dim, t), 0, (bt, seq_len)).float())
+        e0 = unflatten(self.time_projection(e), 2, (6, self.dim))
+        assert e.dtype == ms.float32 and e0.dtype == ms.float32
 
     # context
     context_lens = None
+    context = [u.to(self.dtype) for u in context]
     context = self.text_embedding(
-        mint.stack([mint.cat([u, u.new_zeros(self.text_len - u.shape[0], u.shape[1])]) for u in context])
+        mint.stack([mint.cat([u, u.new_zeros((self.text_len - u.shape[0], u.shape[1]))]) for u in context])
     )
 
     # Context Parallel
@@ -113,6 +116,7 @@ def sp_dit_forward(
         e=e0, seq_lens=seq_lens, grid_sizes=grid_sizes, freqs=self.freqs, context=context, context_lens=context_lens
     )
 
+    x = x.to(self.dtype)
     for block in self.blocks:
         x = block(x, **kwargs)
 
@@ -158,7 +162,7 @@ def sp_attn_forward(
         half(v),
         seq_lens,
         window_size=self.window_size,
-    )
+    ).to(q.dtype)
 
     # output
     x = x.flatten(2)

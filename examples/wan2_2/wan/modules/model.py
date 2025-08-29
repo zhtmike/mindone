@@ -484,6 +484,7 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # context
         context_lens = None
+        context = [u.to(self.dtype) for u in context]
         context = self.text_embedding(
             mint.stack([mint.cat([u, u.new_zeros((self.text_len - u.shape[0], u.shape[1]))]) for u in context])
         )

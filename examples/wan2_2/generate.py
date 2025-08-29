@@ -161,6 +161,7 @@ def generate(args):
         logging.info(f"offload_model is not specified, set to {args.offload_model}.")
     if world_size > 1:
         dist.init_process_group(backend="hccl", init_method="env://", rank=rank, world_size=world_size)
+        ms.set_auto_parallel_context(parallel_mode=ms.ParallelMode.DATA_PARALLEL)
     else:
         assert not (
             args.t5_fsdp or args.dit_fsdp
