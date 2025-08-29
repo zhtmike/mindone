@@ -17,7 +17,7 @@ import mindspore.mint as mint
 import mindspore.mint.distributed as dist
 import mindspore.nn as nn
 
-from .distributed.fsdp import shard_model
+from .distributed.fsdp import free_model, shard_model
 from .distributed.sequence_parallel import sp_attn_forward, sp_dit_forward
 from .distributed.util import get_world_size
 from .modules.model import WanModel
@@ -314,7 +314,7 @@ class WanTI2V:
             context = self.text_encoder([input_prompt])
             context_null = self.text_encoder([n_prompt])
             if offload_model:
-                raise NotImplementedError
+                free_model(self.text_encoder)
         else:
             context = self.text_encoder([input_prompt])
             context_null = self.text_encoder([n_prompt])
@@ -358,9 +358,6 @@ class WanTI2V:
             arg_c = {"context": context, "seq_len": seq_len}
             arg_null = {"context": context_null, "seq_len": seq_len}
 
-            if offload_model or self.init_on_cpu:
-                raise NotImplementedError
-
             for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
                 timestep = [t]
@@ -382,7 +379,7 @@ class WanTI2V:
                 latents = [temp_x0.squeeze(0)]
             x0 = latents
             if offload_model:
-                raise NotImplementedError
+                free_model(self.model)
             if self.rank == 0:
                 videos = self.vae.decode(x0)
 
@@ -494,7 +491,7 @@ class WanTI2V:
             context = self.text_encoder([input_prompt])
             context_null = self.text_encoder([n_prompt])
             if offload_model:
-                raise NotImplementedError
+                free_model(self.text_encoder)
         else:
             context = self.text_encoder([input_prompt])
             context_null = self.text_encoder([n_prompt])
@@ -536,9 +533,6 @@ class WanTI2V:
 
             arg_null = {"context": context_null, "seq_len": seq_len}
 
-            if offload_model or self.init_on_cpu:
-                ms.empty_cache()
-
             for _, t in enumerate(tqdm(timesteps)):
                 latent_model_input = [latent]
                 timestep = [t]
@@ -550,11 +544,7 @@ class WanTI2V:
                 timestep = temp_ts.unsqueeze(0)
 
                 noise_pred_cond = self.model(latent_model_input, t=timestep, **arg_c)[0]
-                if offload_model:
-                    ms.empty_cache()
                 noise_pred_uncond = self.model(latent_model_input, t=timestep, **arg_null)[0]
-                if offload_model:
-                    ms.empty_cache()
                 noise_pred = noise_pred_uncond + guide_scale * (noise_pred_cond - noise_pred_uncond)
 
                 temp_x0 = sample_scheduler.step(
@@ -567,7 +557,7 @@ class WanTI2V:
                 del latent_model_input, timestep
 
             if offload_model:
-                raise NotImplementedError
+                free_model(self.model)
 
             if self.rank == 0:
                 videos = self.vae.decode(x0)
