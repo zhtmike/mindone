@@ -1,16 +1,18 @@
 import mindspore.nn as nn
+from mindspore.mint.optim import AdamW
 
 from mindone.peft import LoraConfig, PeftModel, get_peft_model
 
 
 class LoRATrainer:
-    def __init__(self, pipeline, train_loader, val_loader, training_config, generation_config):
+    def __init__(self, pipeline, train_loader, training_config, generation_config):
         self.pipeline = pipeline
-        self.pipeline.model = self._configure_peft(self.pipeline.model)
         self.train_loader = train_loader
-        self.val_loader = val_loader
         self.training_config = training_config
         self.generation_config = generation_config
+
+        self.pipeline.model = self._configure_peft(self.pipeline.model)
+        self.create_optimizer(self.pipeline.model)
 
     def _configure_peft(self, model: nn.Cell) -> PeftModel:
         target_modules = ["q", "k", "v", "o"]
@@ -23,6 +25,13 @@ class LoRATrainer:
         model: PeftModel = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
         return model
+
+    def create_optimizer(self, model: nn.Cell):
+        self.optimizer = AdamW(
+            model.trainable_params(),
+            lr=self.training_config.get("learning_rate", 1e-4),
+            weight_decay=self.training_config.get("weight_decay", 0.01),
+        )
 
     def train_epoch(self):
         self.pipeline.model.set_train(True)

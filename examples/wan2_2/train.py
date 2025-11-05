@@ -18,6 +18,7 @@ import wan
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
 from wan.distributed.util import init_distributed_group
 from wan.trainer import LoRATrainer
+from wan.utils.utils import str2bool
 
 EXAMPLE_PROMPT = {
     "t2v-A14B": {
@@ -34,15 +35,6 @@ EXAMPLE_PROMPT = {
     "ti2v-5B": {
         "prompt": "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage.",
     },
-    "s2v-14B": {
-        "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. "
-        "The fluffy-furred feline gazes directly at the camera with a relaxed expression. "
-        "Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. "
-        "The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. "
-        "A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
-        "image": "examples/i2v_input.JPG",
-        "audio": "examples/talk.wav",
-    },
 }
 
 
@@ -56,8 +48,6 @@ def _validate_args(args):
         args.prompt = EXAMPLE_PROMPT[args.task]["prompt"]
     if args.image is None and "image" in EXAMPLE_PROMPT[args.task]:
         args.image = EXAMPLE_PROMPT[args.task]["image"]
-    if args.audio is None and "audio" in EXAMPLE_PROMPT[args.task]:
-        args.audio = EXAMPLE_PROMPT[args.task]["audio"]
 
     if args.task == "i2v-A14B":
         assert args.image is not None, "Please specify the image path for i2v."
@@ -78,10 +68,9 @@ def _validate_args(args):
 
     args.base_seed = args.base_seed if args.base_seed >= 0 else random.randint(0, sys.maxsize)
     # Size check
-    if "s2v" not in args.task:
-        assert (
-            args.size in SUPPORTED_SIZES[args.task]
-        ), f"Unsupported size {args.size} for task {args.task}, supported sizes are: {', '.join(SUPPORTED_SIZES[args.task])}"
+    assert (
+        args.size in SUPPORTED_SIZES[args.task]
+    ), f"Unsupported size {args.size} for task {args.task}, supported sizes are: {', '.join(SUPPORTED_SIZES[args.task])}"
 
 
 def _parse_args():
@@ -100,8 +89,15 @@ def _parse_args():
         "--frame_num", type=int, default=None, help="How many frames of video are generated. The number should be 4n+1"
     )
     parser.add_argument("--ckpt_dir", type=str, default=None, help="The path to the checkpoint directory.")
+    parser.add_argument(
+        "--offload_model",
+        type=str2bool,
+        default=None,
+        help="Whether to offload the model to CPU after each model forward, reducing GPU memory usage.",
+    )
     parser.add_argument("--ulysses_size", type=int, default=1, help="The size of the ulysses parallelism in DiT.")
     parser.add_argument("--t5_zero3", action="store_true", default=False, help="Whether to use ZeRO3 for T5.")
+    parser.add_argument("--t5_cpu", action="store_true", default=False, help="Whether to place T5 model on CPU.")
     parser.add_argument("--dit_zero3", action="store_true", default=False, help="Whether to use ZeRO3 for DiT.")
     parser.add_argument("--save_file", type=str, default=None, help="The file to save the generated video to.")
     parser.add_argument("--prompt", type=str, default=None, help="The prompt to generate the video from.")
@@ -115,11 +111,10 @@ def _parse_args():
         "--sample_shift", type=float, default=None, help="Sampling shift factor for flow matching schedulers."
     )
     parser.add_argument("--sample_guide_scale", type=float, default=None, help="Classifier free guidance scale.")
-    parser.add_argument(
-        "--convert_model_dtype", action="store_true", default=False, help="Whether to convert model paramerters dtype."
-    )
     parser.add_argument("--text_dropout_rate", type=float, default=0.1, help="The dropout rate for text encoder.")
     parser.add_argument("--validation_interval", type=int, default=100, help="The interval for validation.")
+    parser.add_argument("--learning_rate", type=float, default=1e-4, help="The learning rate for training.")
+    parser.add_argument("--weight_decay", type=float, default=0.01, help="The weight decay for training.")
 
     args = parser.parse_args()
 
@@ -145,6 +140,13 @@ def train(args):
     rank = int(os.getenv("RANK_ID", 0))
     world_size = int(os.getenv("RANK_SIZE", 1))
     _init_logging(rank)
+
+    if args.offload_model is None:
+        args.offload_model = False
+        logging.info(f"offload_model is not specified, set to {args.offload_model}.")
+
+    if args.offload_model:
+        raise ValueError("offload_model is not supported in training currently.")
 
     if world_size > 1:
         dist.init_process_group(backend="hccl", init_method="env://", rank=rank, world_size=world_size)
@@ -191,13 +193,14 @@ def train(args):
             dit_zero3=args.dit_zero3,
             use_sp=(args.ulysses_size > 1),
             t5_cpu=args.t5_cpu,
-            convert_model_dtype=args.convert_model_dtype,
+            convert_model_dtype=True,
         )
 
         logging.info("Prepare trainer ...")
         train_loader = None
-        val_loader = None
         training_config = dict(
+            learning_rate=args.learning_rate,
+            weight_decay=args.weight_decay,
             validation_interval=args.validation_interval,
         )
         generation_config = dict(
@@ -213,12 +216,10 @@ def train(args):
             seed=args.base_seed,
             offload_model=args.offload_model,
         )
-        trainer = LoRATrainer(wan_ti2v, train_loader, val_loader, training_config, generation_config)
+        trainer = LoRATrainer(wan_ti2v, train_loader, training_config, generation_config)
 
         logging.info("Start training ...")
         trainer.train()
-    elif "s2v" in args.task:
-        raise NotImplementedError
     else:
         raise NotImplementedError
 
