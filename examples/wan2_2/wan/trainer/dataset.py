@@ -5,7 +5,7 @@ import decord
 import numpy as np
 import pandas as pd
 
-from mindspore.dataset import GeneratorDataset, transforms, vision
+from mindspore.dataset import GeneratorDataset, vision
 from mindspore.dataset.vision import Inter
 
 from mindone.diffusers.utils import get_logger
@@ -23,6 +23,7 @@ class VideoDataset:
         frame_num: int = 81,
         size_buckets: Tuple[Tuple[int, int], ...] = ((1280, 704), (704, 1280)),
         image_to_video: bool = False,
+        text_drop_prob: float = 0.1,
     ) -> None:
         super().__init__()
 
@@ -33,6 +34,7 @@ class VideoDataset:
         self.frame_num = frame_num
         self.size_buckets = size_buckets
         self.image_to_video = image_to_video
+        self.text_drop_prob = text_drop_prob
 
         if self.image_to_video:
             raise NotImplementedError("image_to_video is not supported yet.")
@@ -59,18 +61,7 @@ class VideoDataset:
                 f"Expected length of prompts and videos to be the same but found len(self.prompts)={len(self.prompts)} and len(self.video_paths)={len(self.video_paths)}. Please ensure that the number of caption prompts and videos match in your dataset."  # noqa: E501
             )
 
-        self.video_transforms = transforms.Compose(
-            [
-                self.scale_transform,
-                vision.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], is_hwc=False),
-            ]
-        )
-
         self.valid_indices = set()
-
-    @staticmethod
-    def scale_transform(x):
-        return x / 255.0
 
     def __len__(self) -> int:
         return len(self.video_paths)
@@ -87,7 +78,11 @@ class VideoDataset:
         return item
 
     def read_video(self, index: int) -> Dict[str, Any]:
-        prompt = self.prompts[index]
+        if np.random.rand() < self.text_drop_prob:
+            prompt = ""
+        else:
+            prompt = self.prompts[index]
+
         video_path = self.video_paths[index]
 
         image, video = self._preprocess_video(video_path)
@@ -155,7 +150,10 @@ class VideoDataset:
         frames = np.stack(
             [vision.Resize(size=(bucket[1], bucket[0]), interpolation=Inter.BICUBIC)(frame) for frame in frames], axis=0
         )
-        frames = frames.transpose(0, 3, 1, 2)
+        frames = frames.transpose(3, 0, 1, 2)  # C, F, H, W
+
+        # normalize to [−1, 1]
+        frames = frames.astype(np.float32) / 127.5 - 1.0
         image = frames[:1].copy() if self.image_to_video else None
 
         return image, frames
@@ -176,6 +174,7 @@ def create_video_dataset(
     num_parallel_workers: int = 4,
     num_shards=None,
     shard_id=None,
+    text_drop_prob: float = 0.1,
 ):
     dataset = VideoDataset(
         data_root=data_root,
@@ -185,6 +184,7 @@ def create_video_dataset(
         frame_num=frame_num,
         size_buckets=size_buckets,
         image_to_video=image_to_video,
+        text_drop_prob=text_drop_prob,
     )
 
     column_names = ["prompt", "video"]

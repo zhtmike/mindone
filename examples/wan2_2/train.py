@@ -17,7 +17,7 @@ sys.path.insert(0, mindone_lib_path)
 import wan
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
 from wan.distributed.util import init_distributed_group
-from wan.trainer import LoRATrainer
+from wan.trainer import LoRATrainer, create_video_dataset
 from wan.utils.utils import str2bool
 
 EXAMPLE_PROMPT = {
@@ -113,8 +113,20 @@ def _parse_args():
     parser.add_argument("--sample_guide_scale", type=float, default=None, help="Classifier free guidance scale.")
     parser.add_argument("--text_dropout_rate", type=float, default=0.1, help="The dropout rate for text encoder.")
     parser.add_argument("--validation_interval", type=int, default=100, help="The interval for validation.")
+    parser.add_argument("--save_interval", type=int, default=100, help="The interval for saving checkpoints.")
+    parser.add_argument("--output_dir", type=str, default="./output", help="The output directory to save checkpoints.")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="The learning rate for training.")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="The weight decay for training.")
+    parser.add_argument("--data_root", type=str, default=None, help="The root directory of training data.")
+    parser.add_argument("--dataset_file", type=str, default=None, help="The dataset file for training data.")
+    parser.add_argument("--caption_column", type=str, default="caption", help="The caption column in the dataset file.")
+    parser.add_argument("--video_column", type=str, default="video", help="The video column in the dataset file.")
+    parser.add_argument("--batch_size", type=int, default=1, help="The batch size for training.")
+    parser.add_argument(
+        "--text_drop_prob", type=float, default=0.1, help="The probability of dropping text input during training."
+    )
+    parser.add_argument("--num_epochs", type=int, default=1, help="The number of epochs for training.")
+    parser.add_argument("--max_grad_norm", type=float, default=1.0, help="The maximum gradient norm for clipping.")
 
     args = parser.parse_args()
 
@@ -197,11 +209,30 @@ def train(args):
         )
 
         logging.info("Prepare trainer ...")
-        train_loader = None
+        size_buckets = tuple(SIZE_CONFIGS[size] for size in SUPPORTED_SIZES[args.task])
+        train_loader = create_video_dataset(
+            data_root=args.data_root,
+            dataset_file=args.dataset_file,
+            caption_column=args.caption_column,
+            video_column=args.video_column,
+            frame_num=args.frame_num,
+            size_buckets=size_buckets,
+            batch_size=args.batch_size,
+            num_shards=world_size,
+            shard_id=rank,
+            text_drop_prob=args.text_drop_prob,
+        )
         training_config = dict(
             learning_rate=args.learning_rate,
             weight_decay=args.weight_decay,
             validation_interval=args.validation_interval,
+            save_interval=args.save_interval,
+            output_dir=args.output_dir,
+            frame_num=args.frame_num,
+            num_train_timesteps=cfg.num_train_timesteps,
+            vae_stride=cfg.vae_stride,
+            patch_size=cfg.patch_size,
+            max_grad_norm=args.max_grad_norm,
         )
         generation_config = dict(
             input_prompt=args.prompt,
@@ -219,7 +250,7 @@ def train(args):
         trainer = LoRATrainer(wan_ti2v, train_loader, training_config, generation_config)
 
         logging.info("Start training ...")
-        trainer.train()
+        trainer.train(args.num_epochs)
     else:
         raise NotImplementedError
 
